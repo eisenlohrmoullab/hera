@@ -69,18 +69,13 @@ if (length(time_vars) < length(time_vars_to_run)) {
 ```{r}
 # --- Define Outcomes to Model ---
 outcomes <- c(
-   # --- Substance Use & Craving ---
   "numdrinkstoday" = "Number of Drinks",
-  
-   # --- DRSP Aggregate Scores ---
   "drsp_total"       = "DRSP Total",
   "drsp_distress"    = "Distress (DRSP)",
   "drsp_labilsocsx"  = "Social/Affect Lability (DRSP)",
   "drsp_breastpain"  = "Breast Sx (DRSP)",
   "drsp_eatsx"       = "Eating Sx",
   "drsp_lowarousal"  = "Low Arousal Sx (DRSP)",
-
-  # --- Mood & Affect (DRSP/PMDD) ---
   "drsp_1"              = "Depression",
   "drsp_2"         = "Hopelessness",
   "drsp_3"        = "Worthlessness",
@@ -92,10 +87,6 @@ outcomes <- c(
   "drsp_9"    = "Loss of Interest",
   "drsp_16"        = "Feeling Overwhelmed",
   "drsp_17"     = "Feeling Out of Control",
-
- 
-
-  # --- Physical & Cognitive Symptoms ---
   "drsp_10"        = "Difficulty Concentrating",
   "drsp_11"            = "Fatigue/Lethargy",
   "drsp_14"       = "Hypersomnia",
@@ -107,28 +98,6 @@ outcomes <- c(
   "drsp_20"         = "Headache",
   "drsp_21"          = "Joint/Muscle Pain"
 )
-
-# --- Define Categories for organization ---
-outcome_categories <- tribble(
-  ~category, ~variable,
-  "Number of Drinks", "DRSP Total", "Distress (DRSP)", "Social/Affect Lability (DRSP)", "Breast Sx (DRSP)", "Eating Sx", "Low Arousal Sx (DRSP)", "Depression", "Hopelessness", "Worthlessness", "Anxiety", "Mood Swings", "Rejection Sensitivity", "Anger/Irritability", "Interpersonal Conflicts", "Loss of Interest", "Feeling Overwhelmed", "Feeling Out of Control", "Difficulty Concentrating", "Fatigue/Lethargy", "Hypersomnia", "Insomnia", "Overeating", "Specific Food Cravings", "Breast Tenderness", "Breast Swelling", "Headache", "Joint/Muscle Pain"
-) %>%
-  right_join(enframe(outcomes, name = "variable", value = "outcome_label"), by = "variable")
-
-# --- Define custom page layouts ---
-page_definitions <- c(
-  list(
-    CSS_Page = outcome_categories %>% filter(category == "ADHD Symptoms (CSS)") %>% pull(outcome_label),
-    Hormone_Page = outcome_categories %>% filter(category == "Hormone") %>% pull(outcome_label),
-    Cog_EF_Page = c("Response Inhibition (Robot Factory)", "Response Inhibition Sx (BDEFS)",
-                    "Working Memory Score (Pinball)", "Working Memory Sx (BDEFS)")
-  ),
-  split(
-    outcome_categories %>% filter(grepl("DRSP", category)) %>% pull(outcome_label),
-    ceiling(seq_along(outcome_categories %>% filter(grepl("DRSP", category)) %>% pull(outcome_label)) / 9)
-  )
-)
-names(page_definitions)[4:length(page_definitions)] <- paste0("DRSP_Page_", 1:(length(page_definitions)-3))
 
 # --- Pre-calculate log-transformations ---
 for (var in names(outcomes)) {
@@ -307,7 +276,7 @@ for (current_id in ids_to_run) {
   }
   grDevices::pdf(pdf_filename, width = 11, height = 8.5)   # LANDSCAPE
 
-  # ---- COVER: Compact counts by category x time_var ----
+  # ---- COVER: Compact counts by time_var ----
   sig_all_clean <- sig_all %>%
     dplyr::mutate(
       stars = dplyr::case_when(
@@ -316,19 +285,16 @@ for (current_id in ids_to_run) {
         is.finite(p.value) & p.value < 0.05  ~ "*",
         TRUE ~ ""
       )
-    ) %>%
-    dplyr::left_join(dplyr::select(outcome_categories, variable, category), by = "variable")
+    )
 
   cover_counts <- sig_all_clean %>%
-    dplyr::group_by(category, time_var) %>%
+    dplyr::group_by(time_var) %>%
     dplyr::summarise(
       tested = dplyr::n(),
       n_sig  = sum(stars != "", na.rm = TRUE),
       .groups = "drop"
     ) %>%
-    tidyr::unite("count", n_sig, tested, sep = " / ") %>%
-    tidyr::pivot_wider(names_from = time_var, values_from = count, values_fill = "0 / 0") %>%
-    dplyr::arrange(category)
+    tidyr::unite("count", n_sig, tested, sep = " / ")
 
   cover_theme <- gridExtra::ttheme_default(
     base_size = 9,
@@ -343,7 +309,7 @@ for (current_id in ids_to_run) {
 
   title_grob    <- grid::textGrob(paste("Compact Summary — ID:", current_id),
                                   gp = grid::gpar(fontsize = 16, fontface = "bold"))
-  subtitle_grob <- grid::textGrob("Cells show: # significant / # tested (p < .05) per category × time variable",
+  subtitle_grob <- grid::textGrob("Rows show: # significant / # tested (p < .05) for each time variable",
                                   gp = grid::gpar(fontsize = 9))
   cover_grob    <- gridExtra::tableGrob(cover_counts, rows = NULL, theme = cover_theme)
   gridExtra::grid.arrange(title_grob, subtitle_grob, cover_grob,
@@ -365,9 +331,9 @@ for (current_id in ids_to_run) {
         TRUE ~ ""
       )
     ) %>%
-    dplyr::select(category, Outcome, time_var, stars) %>%
+    dplyr::select(Outcome, time_var, stars) %>%
     tidyr::pivot_wider(names_from = time_var, values_from = stars, values_fill = "") %>%
-    dplyr::arrange(category, Outcome)
+    dplyr::arrange(Outcome)
 
   if (nrow(compact_stars) > 0) {
     compact_theme <- gridExtra::ttheme_default(
@@ -392,7 +358,6 @@ sig_ranked <- sig_all_clean %>%
     Outcome = ifelse(nchar(Outcome) > 40, variable, Outcome) # shorten long names
   ) %>%
   dplyr::transmute(
-    Category = category,
     Outcome,
     TimeVar  = time_var,
     EDF      = round(edf, 2),
@@ -400,7 +365,7 @@ sig_ranked <- sig_all_clean %>%
     F        = round(F, 2),
     N        = n
   ) %>%
-  dplyr::arrange(dplyr::desc(Range), Category, Outcome, TimeVar)
+  dplyr::arrange(dplyr::desc(Range), Outcome, TimeVar)
 
 if (nrow(sig_ranked) == 0) {
   # show an empty-state page
@@ -446,7 +411,6 @@ if (nrow(sig_ranked) == 0) {
 
     # NA-safe compact significance table (optionally filter to significant only)
     summary_df <- sig_by_tv[[tv]] %>%
-      dplyr::left_join(dplyr::select(outcome_categories, variable, category), by = "variable") %>%
       dplyr::mutate(
         stars = dplyr::case_when(
           is.finite(p.value) & p.value < 0.001 ~ "***",
@@ -456,8 +420,8 @@ if (nrow(sig_ranked) == 0) {
         ),
         Outcome = dplyr::coalesce(outcome_label, variable)
       ) %>%
-      dplyr::select(Category = category, Outcome, N = n, EDF = edf, F = F, Range = range, Sig = stars) %>%
-      dplyr::arrange(Category, Outcome)
+      dplyr::select(Outcome, N = n, EDF = edf, F = F, Range = range, Sig = stars) %>%
+      dplyr::arrange(Outcome)
     # Uncomment to show significant rows only:
     # summary_df <- dplyr::filter(summary_df, Sig != "")
 
@@ -467,10 +431,12 @@ if (nrow(sig_ranked) == 0) {
     gridExtra::grid.arrange(tv_title, tv_table, ncol = 1,
                             heights = grid::unit(c(0.12, 0.88), "npc"))
 
-    # Plots by predefined pages
+    # Plots paginated across all outcomes
     combined_plot_data <- preds_by_tv[[tv]]
-    for (page_name in names(page_definitions)) {
-      page_outcomes <- page_definitions[[page_name]]
+    all_outcome_labels <- unique(combined_plot_data$outcome_label)
+    outcome_pages <- split(all_outcome_labels, ceiling(seq_along(all_outcome_labels) / max_plots_per_page))
+
+    for (page_outcomes in outcome_pages) {
       page_data <- dplyr::filter(combined_plot_data, outcome_label %in% page_outcomes)
       if (nrow(page_data) == 0) next
 
