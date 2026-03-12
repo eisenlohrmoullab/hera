@@ -1,5 +1,5 @@
 ---
-title: "UKALC_GAMMs_cyclic"
+title: "HERA_GAMMs_cyclic"
 author: "Tory Eisenlohr-Moul, PhD"
 date: "`r Sys.Date()`"
 output:
@@ -49,7 +49,7 @@ output:
 ```{r setup-packages}
 # Source R File with Setup, Package Loading, and Output Folder Creation
 # This loads all required packages and creates the dated output folder
-source("UKALC_00_setup.R")
+source("HERA_00_setup.R")
 
 # Create subfolder for GAMM outputs (keep root-level output_folder unchanged)
 gamms_folder <- file.path(output_folder, "03_gamms")
@@ -80,7 +80,7 @@ if (!dir.exists(gamms_folder)) {
 # LOAD LATEST CLEAN DATA FILE 
 
 # Load the dataset
-df <- readRDS("data/analysis_ready_withsessiondow.rds")
+df <- readRDS('/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/02_datasets_output/HERA_20260312_clean.rds')
 
 message(paste0("Data loaded successfully: ", nrow(df), " rows, ", ncol(df), " columns"))
 ```
@@ -113,7 +113,23 @@ if (!has_cycledata_check) {
   message("WARNING: cycledata_check() function not found. Data availability plots will be skipped.")
 }
 ```
-'
+
+```{r}
+# set saturday as the reference level 
+
+df$day_of_week <- factor(
+  df$day_of_week,
+  levels = c(
+    "Saturday",
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday"
+  )
+)
+```
 
 
 ```{r}
@@ -122,344 +138,344 @@ names(df)
 
 
 
-# =============================================================================
-# BINARY OUTCOMES: GAMMs for Dichotomous Variables
-# =============================================================================
-# This section analyzes binary outcomes (0/1) using logistic GAMMs.
-# Each outcome is modeled with both menses-centered and ovulation-centered
-# time frames to capture different aspects of cyclical patterns.
-#
-# BINARY OUTCOMES ANALYZED:
-# - drink_today: Whether participant drank alcohol (yes/no)
-# - fourplustoday: Whether participant had 4+ drinks (binge drinking)
-# - felt_drunk: Whether participant reported feeling drunk
-#
-# MODEL SPECIFICATION:
-# - Family: Binomial with logit link
-# - Fixed effects: day_of_week, session_today
-# - Cyclic smooth: s(cyclic_time, bs='cc') - captures average cycle pattern
-# - Random intercept: s(id, bs='re') - accounts for baseline differences
-# - Random cyclic slope: s(cyclic_time, id, bs=c('re','cc')) - individual variation
-#
-# OUTPUTS FOR EACH VARIABLE:
-# - Rolling average plots (menses and ovulation centered)
-# - Data availability check plot
-# - Model objects (.rds files)
-# - Model summaries (.txt files)
-# - Prediction plots with confidence bands
-# =============================================================================
+<!-- # ============================================================================= -->
+<!-- # BINARY OUTCOMES: GAMMs for Dichotomous Variables -->
+<!-- # ============================================================================= -->
+<!-- # This section analyzes binary outcomes (0/1) using logistic GAMMs. -->
+<!-- # Each outcome is modeled with both menses-centered and ovulation-centered -->
+<!-- # time frames to capture different aspects of cyclical patterns. -->
+<!-- # -->
+<!-- # BINARY OUTCOMES ANALYZED: -->
+<!-- # - drink_today: Whether participant drank alcohol (yes/no) -->
+<!-- # - fourplustoday: Whether participant had 4+ drinks (binge drinking) -->
+<!-- # - felt_drunk: Whether participant reported feeling drunk -->
+<!-- # -->
+<!-- # MODEL SPECIFICATION: -->
+<!-- # - Family: Binomial with logit link -->
+<!-- # - Fixed effects: day_of_week, session_today -->
+<!-- # - Cyclic smooth: s(cyclic_time, bs='cc') - captures average cycle pattern -->
+<!-- # - Random intercept: s(id, bs='re') - accounts for baseline differences -->
+<!-- # - Random cyclic slope: s(cyclic_time, id, bs=c('re','cc')) - individual variation -->
+<!-- # -->
+<!-- # OUTPUTS FOR EACH VARIABLE: -->
+<!-- # - Rolling average plots (menses and ovulation centered) -->
+<!-- # - Data availability check plot -->
+<!-- # - Model objects (.rds files) -->
+<!-- # - Model summaries (.txt files) -->
+<!-- # - Prediction plots with confidence bands -->
+<!-- # ============================================================================= -->
 
-```{r binary-outcomes-gamms}
-# -------------------------------------------------------------------------
-# 1. SETUP: Define Binary Outcome Variables
-# -------------------------------------------------------------------------
+<!-- ```{r binary-outcomes-gamms} -->
+<!-- # ------------------------------------------------------------------------- -->
+<!-- # 1. SETUP: Define Binary Outcome Variables -->
+<!-- # ------------------------------------------------------------------------- -->
 
-# List of binary outcome variable names to analyze
-binary_vars <- c("drink_today") #, "felt_drunk") 
+<!-- # List of binary outcome variable names to analyze -->
+<!-- binary_vars <- c("drink_today") #, "felt_drunk")  -->
 
-# Helper function to convert p-values to significance stars
-# *** p < 0.001, ** p < 0.01, * p < 0.05, . p < 0.1
-get_stars <- function(p) {
-  stats::symnum(p, corr = FALSE, na = FALSE, 
-                cutpoints = c(0, 0.001, 0.01, 0.05, 0.1, 1), 
-                symbols = c("***", "**", "*", ".", " "))
-}
+<!-- # Helper function to convert p-values to significance stars -->
+<!-- # *** p < 0.001, ** p < 0.01, * p < 0.05, . p < 0.1 -->
+<!-- get_stars <- function(p) { -->
+<!--   stats::symnum(p, corr = FALSE, na = FALSE,  -->
+<!--                 cutpoints = c(0, 0.001, 0.01, 0.05, 0.1, 1),  -->
+<!--                 symbols = c("***", "**", "*", ".", " ")) -->
+<!-- } -->
 
-# -------------------------------------------------------------------------
-# 2. LOOP THROUGH EACH BINARY OUTCOME
-# -------------------------------------------------------------------------
+<!-- # ------------------------------------------------------------------------- -->
+<!-- # 2. LOOP THROUGH EACH BINARY OUTCOME -->
+<!-- # ------------------------------------------------------------------------- -->
 
-for (outcome_name in binary_vars) {
-  
-  message(paste0("\n===== Processing Binary Outcome: ", outcome_name, " ====="))
-  
-  # Create outcome-specific subdirectory in the gamms_folder
-  # This keeps all outputs for each variable organized together
-  save_dir <- file.path(gamms_folder, paste0(outcome_name, "_gamm"))
-  
-  if (!dir.exists(save_dir)) {
-    dir.create(save_dir, recursive = TRUE)
-    message(paste0("Created directory: ", save_dir))
-  }
-  
-  # -----------------------------------------------------------------------
-  # 3. RAW DATA VISUALIZATION: Rolling Averages
-  # -----------------------------------------------------------------------
-  # These plots show the observed data patterns before model fitting.
-  # Rolling averages smooth out day-to-day noise to reveal trends.
-  
-  # --- Menses-Centered Rolling Average Plot ---
-  # Time axis: ovulation (-1) to menses (0) to ovulation (+1)
-  if (has_cycle_plot) {
-    message("  Creating menses-centered rolling average plot...")
-    tryCatch({
-      rollplot_menses <- cycle_plot(
-        df,
-        outcome_name,
-        centering = "menses",
-        include_impute = TRUE,
-        y_scale = "person-centered_roll",
-        se = TRUE
-      )
-      
-      save_png(
-        plot = rollplot_menses$plot,
-        filename = "rollplot_menses.png",
-        folder = save_dir
-      )
-    }, error = function(e) {
-      message(paste0("  Error creating menses-centered plot: ", e$message))
-    })
-  } else {
-    message("  Skipping menses-centered rolling average plot (cycle_plot not available)")
-  }
-  
-  # --- Ovulation-Centered Rolling Average Plot ---
-  # Time axis: menses (-1) to ovulation (0) to menses (+1)
-  if (has_cycle_plot) {
-    message("  Creating ovulation-centered rolling average plot...")
-    tryCatch({
-      rollplot_ov <- cycle_plot(
-        df,
-        outcome_name,
-        centering = "ovulation",
-        include_impute = TRUE,
-        y_scale = "person-centered_roll", 
-        se = TRUE
-      )
-      
-      save_png(
-        plot = rollplot_ov$plot,
-        filename = "rollplot_ovulation.png",
-        folder = save_dir
-      )
-    }, error = function(e) {
-      message(paste0("  Error creating ovulation-centered plot: ", e$message))
-    })
-  } else {
-    message("  Skipping ovulation-centered rolling average plot (cycle_plot not available)")
-  }
-  
-  # --- Data Availability Check ---
-  # Visualizes which participants have data at which cycle times
-  if (has_cycledata_check) {
-    message("  Creating data availability plot...")
-    tryCatch({
-      checkdata <- cycledata_check(df, symptom_columns = c(outcome_name))
-      
-      save_png(
-        plot = checkdata$data_symptom_plots,
-        filename = paste0("data_availability_", outcome_name, ".png"),
-        folder = save_dir
-      )
-    }, error = function(e) {
-      message(paste0("  Error creating data availability plot: ", e$message))
-    })
-  } else {
-    message("  Skipping data availability plot (cycledata_check not available)")
-  }
-  
-  # -----------------------------------------------------------------------
-  # 4. GAMM: MENSES-CENTERED MODEL
-  # -----------------------------------------------------------------------
-  # Fits a logistic GAMM with menses onset as the reference point (time = 0).
-  # This model estimates the probability of the outcome across the cycle.
-  
-  message("  Fitting menses-centered GAMM...")
-  
-  # Prepare data: keep only complete cases for required variables
-  selected_vars <- c("cyclic_time", "day_of_week", "session_today", outcome_name, "id")
-  dat_menses <- df[complete.cases(df[selected_vars]), ]
-  dat_menses$id <- as.factor(dat_menses$id)
-  
-  # Construct model formula
-  # - day_of_week: controls for weekday effects
-  # - session_today: controls for laboratory visit effects
-  # - s(cyclic_time, bs='cc'): cyclic smooth for average effect
-  # - s(id, bs='re'): random intercept for each person
-  # - s(cyclic_time, id, bs=c('re','cc')): random cyclic slope
-  f_menses <- as.formula(paste(outcome_name, "~ day_of_week + session_today + s(cyclic_time, bs = 'cc') + s(id, bs = 're') + s(cyclic_time, id, bs = c('re', 'cc'))"))
-  
-  # Fit the model
-  gamm_menses <- mgcv::gam(
-    formula = f_menses,
-    knots = list(cyclic_time = c(-1, 1)),
-    data = dat_menses, 
-    method = 'REML',
-    family = binomial(link = "logit")
-  )
-  
-  # Save model object and text summary
-  saveRDS(gamm_menses, file = file.path(save_dir, "model_menses.rds"))
-  
-  sink(file.path(save_dir, "summary_menses.txt"))
-  summ_menses <- summary(gamm_menses)
-  print(summ_menses)
-  sink()
-  
-  # --- Extract Statistics for Plot Annotation ---
-  edf_fixed <- round(summ_menses$s.table[1, "edf"], 2)
-  stars_fixed <- get_stars(summ_menses$s.table[1, "p-value"])
-  
-  edf_rand <- round(summ_menses$s.table[3, "edf"], 2)
-  stars_rand <- get_stars(summ_menses$s.table[3, "p-value"])
-  
-  stat_label_menses <- paste0("Average Effect: edf=", edf_fixed, stars_fixed, "\n",
-                              "Individual Differences: edf=", edf_rand, stars_rand)
-  
-  # --- Generate Predictions for Plotting ---
-  message("  Generating predictions for menses-centered model...")
-  
-  # Set reference values for covariates (held constant during prediction)
-  ref_day_menses <- dat_menses$day_of_week[1]
-  ref_session_menses <- dat_menses$session_today[1]
+<!-- for (outcome_name in binary_vars) { -->
 
-  # Create prediction grid
-  grid_list <- list(
-    cyclic_time = seq(-1, 1, by = 0.05),
-    id = 0,
-    day_of_week = ref_day_menses,
-    session_today = ref_session_menses
-  )
-  plotdat_menses <- do.call(expand.grid, grid_list)
-  
-  # Get predictions with confidence intervals
-  pred_menses <- marginaleffects::predictions(
-    gamm_menses,
-    newdata = plotdat_menses,
-    type = "response"
-  )
-  
-  plotdat_menses$estimate <- pred_menses$estimate
-  plotdat_menses$conf.low <- pred_menses$conf.low
-  plotdat_menses$conf.high <- pred_menses$conf.high
-  
-  # --- Create Prediction Plot ---
-  message("  Creating menses-centered prediction plot...")
-  gammplot_menses <- ggplot(plotdat_menses, aes(x = cyclic_time, y = estimate)) +
-    scale_x_continuous(
-      limits = c(-1, 1),
-      breaks = seq(-1, 1, by = 0.50),
-      labels = c("Ovulation", "50%L", "Menses Onset", "50%F", "Ovulation")
-    ) +
-    labs(x = "", y = paste("Probability of", outcome_name, "(Menses-Centered)"),
-         caption = paste("Predictions holding day_of_week at:", ref_day_menses, 
-                        "and session_today at:", ref_session_menses)) +
-    geom_rect(xmin = -0.04, xmax = 0.04, ymin = -Inf, ymax = Inf, fill = "grey70", alpha = 0.2, color = NA) +
-    geom_rect(xmin = 0.92, xmax = 1, ymin = -Inf, ymax = Inf, fill = "grey87", alpha = 0.2, color = NA) +
-    geom_line(linewidth = 1) +
-    geom_ribbon(aes(ymin = conf.low, ymax = conf.high), fill = "lightgrey", alpha = 0.3) +
-    annotate("text", x = -1, y = Inf, label = stat_label_menses, 
-             hjust = 0, vjust = 1.1, size = 5, fontface = "italic") +
-    theme_minimal(base_size = 14) +
-    theme(text = element_text(size = 16),
-          axis.text = element_text(size = 14))
-  
-  save_png(
-    plot = gammplot_menses,
-    filename = "gamm_plot_menses.png",
-    folder = save_dir
-  )
-  
-  # -----------------------------------------------------------------------
-  # 5. GAMM: OVULATION-CENTERED MODEL
-  # -----------------------------------------------------------------------
-  # Fits a logistic GAMM with ovulation as the reference point (time = 0).
-  
-  message("  Fitting ovulation-centered GAMM...")
-  
-  # Prepare data: keep only complete cases for required variables
-  selected_vars_ov <- c("cyclic_time_ov", "day_of_week", "session_today", outcome_name, "id")
-  dat_ov <- df[complete.cases(df[selected_vars_ov]), ]
-  dat_ov$id <- as.factor(dat_ov$id)
-  
-  # Construct model formula
-  f_ov <- as.formula(paste(outcome_name, "~ day_of_week + session_today + s(cyclic_time_ov, bs = 'cc') + s(id, bs = 're') + s(cyclic_time_ov, id, bs = c('re', 'cc'))"))
-  
-  # Fit the model
-  gamm_ov <- mgcv::gam(
-    formula = f_ov,
-    knots = list(cyclic_time_ov = c(-1, 1)),
-    data = dat_ov, 
-    method = 'REML',
-    family = binomial(link = "logit")
-  )
-  
-  # Save model object and text summary
-  saveRDS(gamm_ov, file = file.path(save_dir, "model_ovulation.rds"))
-  
-  sink(file.path(save_dir, "summary_ovulation.txt"))
-  summ_ov <- summary(gamm_ov)
-  print(summ_ov)
-  sink()
-  
-  # --- Extract Statistics for Plot Annotation ---
-  edf_fixed_ov <- round(summ_ov$s.table[1, "edf"], 2)
-  stars_fixed_ov <- get_stars(summ_ov$s.table[1, "p-value"])
-  
-  edf_rand_ov <- round(summ_ov$s.table[3, "edf"], 2)
-  stars_rand_ov <- get_stars(summ_ov$s.table[3, "p-value"])
-  
-  stat_label_ov <- paste0("Average Effect: edf=", edf_fixed_ov, stars_fixed_ov, "\n",
-                          "Individual Differences: edf=", edf_rand_ov, stars_rand_ov)
-  
-  # --- Generate Predictions for Plotting ---
-  message("  Generating predictions for ovulation-centered model...")
-  
-  # Set reference values for covariates
-  ref_day_ov <- dat_ov$day_of_week[1]
-  ref_session_ov <- dat_ov$session_today[1]
-  
-  # Create prediction grid
-  grid_list_ov <- list(
-    cyclic_time_ov = seq(-1, 1, by = 0.05), 
-    id = 0, 
-    day_of_week = ref_day_ov,
-    session_today = ref_session_ov
-  )
-  plotdat_ov <- do.call(expand.grid, grid_list_ov)
-  
-  # Get predictions with confidence intervals
-  pred_ov <- marginaleffects::predictions(
-    gamm_ov,
-    newdata = plotdat_ov,
-    type = "response"
-  )
-  
-  plotdat_ov$estimate <- pred_ov$estimate
-  plotdat_ov$conf.low <- pred_ov$conf.low
-  plotdat_ov$conf.high <- pred_ov$conf.high
-  
-  # --- Create Prediction Plot ---
-  message("  Creating ovulation-centered prediction plot...")
-  gammplot_ov <- ggplot(plotdat_ov, aes(x = cyclic_time_ov, y = estimate)) +
-    scale_x_continuous(
-      limits = c(-1, 1),
-      breaks = seq(-1, 1, by = 0.50),
-      labels = c("Menses", "50%F", "Ovulation", "50%L", "Menses")
-    ) +
-    labs(x = "", y = paste("Probability of", outcome_name, "(Ovulation-Centered)"),
-         caption = paste("Predictions holding day_of_week at:", ref_day_ov,
-                        "and session_today at:", ref_session_ov)) +
-    geom_rect(xmin = -0.04, xmax = 0.04, ymin = -Inf, ymax = Inf, fill = "grey70", alpha = 0.2, color = NA) +
-    geom_rect(xmin = 0.92, xmax = 1, ymin = -Inf, ymax = Inf, fill = "grey87", alpha = 0.2, color = NA) +
-    geom_line(linewidth = 1) +
-    geom_ribbon(aes(ymin = conf.low, ymax = conf.high), fill = "lightgrey", alpha = 0.3) +
-    annotate("text", x = -1, y = Inf, label = stat_label_ov, 
-             hjust = 0, vjust = 1.1, size = 5, fontface = "italic") +
-    theme_minimal(base_size = 14) +
-    theme(text = element_text(size = 16),
-          axis.text = element_text(size = 14))
-  
-  save_png(
-    plot = gammplot_ov,
-    filename = "gamm_plot_ovulation.png",
-    folder = save_dir
-  )
-  
-  message(paste0("===== Completed: ", outcome_name, " =====\n"))
-}
-```
+<!--   message(paste0("\n===== Processing Binary Outcome: ", outcome_name, " =====")) -->
+
+<!--   # Create outcome-specific subdirectory in the gamms_folder -->
+<!--   # This keeps all outputs for each variable organized together -->
+<!--   save_dir <- file.path(gamms_folder, paste0(outcome_name, "_gamm")) -->
+
+<!--   if (!dir.exists(save_dir)) { -->
+<!--     dir.create(save_dir, recursive = TRUE) -->
+<!--     message(paste0("Created directory: ", save_dir)) -->
+<!--   } -->
+
+<!--   # ----------------------------------------------------------------------- -->
+<!--   # 3. RAW DATA VISUALIZATION: Rolling Averages -->
+<!--   # ----------------------------------------------------------------------- -->
+<!--   # These plots show the observed data patterns before model fitting. -->
+<!--   # Rolling averages smooth out day-to-day noise to reveal trends. -->
+
+<!--   # --- Menses-Centered Rolling Average Plot --- -->
+<!--   # Time axis: ovulation (-1) to menses (0) to ovulation (+1) -->
+<!--   if (has_cycle_plot) { -->
+<!--     message("  Creating menses-centered rolling average plot...") -->
+<!--     tryCatch({ -->
+<!--       rollplot_menses <- cycle_plot( -->
+<!--         df, -->
+<!--         outcome_name, -->
+<!--         centering = "menses", -->
+<!--         include_impute = TRUE, -->
+<!--         y_scale = "person-centered_roll", -->
+<!--         se = TRUE -->
+<!--       ) -->
+
+<!--       save_png( -->
+<!--         plot = rollplot_menses$plot, -->
+<!--         filename = "rollplot_menses.png", -->
+<!--         folder = save_dir -->
+<!--       ) -->
+<!--     }, error = function(e) { -->
+<!--       message(paste0("  Error creating menses-centered plot: ", e$message)) -->
+<!--     }) -->
+<!--   } else { -->
+<!--     message("  Skipping menses-centered rolling average plot (cycle_plot not available)") -->
+<!--   } -->
+
+<!--   # --- Ovulation-Centered Rolling Average Plot --- -->
+<!--   # Time axis: menses (-1) to ovulation (0) to menses (+1) -->
+<!--   if (has_cycle_plot) { -->
+<!--     message("  Creating ovulation-centered rolling average plot...") -->
+<!--     tryCatch({ -->
+<!--       rollplot_ov <- cycle_plot( -->
+<!--         df, -->
+<!--         outcome_name, -->
+<!--         centering = "ovulation", -->
+<!--         include_impute = TRUE, -->
+<!--         y_scale = "person-centered_roll",  -->
+<!--         se = TRUE -->
+<!--       ) -->
+
+<!--       save_png( -->
+<!--         plot = rollplot_ov$plot, -->
+<!--         filename = "rollplot_ovulation.png", -->
+<!--         folder = save_dir -->
+<!--       ) -->
+<!--     }, error = function(e) { -->
+<!--       message(paste0("  Error creating ovulation-centered plot: ", e$message)) -->
+<!--     }) -->
+<!--   } else { -->
+<!--     message("  Skipping ovulation-centered rolling average plot (cycle_plot not available)") -->
+<!--   } -->
+
+<!--   # --- Data Availability Check --- -->
+<!--   # Visualizes which participants have data at which cycle times -->
+<!--   if (has_cycledata_check) { -->
+<!--     message("  Creating data availability plot...") -->
+<!--     tryCatch({ -->
+<!--       checkdata <- cycledata_check(df, symptom_columns = c(outcome_name)) -->
+
+<!--       save_png( -->
+<!--         plot = checkdata$data_symptom_plots, -->
+<!--         filename = paste0("data_availability_", outcome_name, ".png"), -->
+<!--         folder = save_dir -->
+<!--       ) -->
+<!--     }, error = function(e) { -->
+<!--       message(paste0("  Error creating data availability plot: ", e$message)) -->
+<!--     }) -->
+<!--   } else { -->
+<!--     message("  Skipping data availability plot (cycledata_check not available)") -->
+<!--   } -->
+
+<!--   # ----------------------------------------------------------------------- -->
+<!--   # 4. GAMM: MENSES-CENTERED MODEL -->
+<!--   # ----------------------------------------------------------------------- -->
+<!--   # Fits a logistic GAMM with menses onset as the reference point (time = 0). -->
+<!--   # This model estimates the probability of the outcome across the cycle. -->
+
+<!--   message("  Fitting menses-centered GAMM...") -->
+
+<!--   # Prepare data: keep only complete cases for required variables -->
+<!--   selected_vars <- c("cyclic_time", "day_of_week", "session_today", outcome_name, "id") -->
+<!--   dat_menses <- df[complete.cases(df[selected_vars]), ] -->
+<!--   dat_menses$id <- as.factor(dat_menses$id) -->
+
+<!--   # Construct model formula -->
+<!--   # - day_of_week: controls for weekday effects -->
+<!--   # - session_today: controls for laboratory visit effects -->
+<!--   # - s(cyclic_time, bs='cc'): cyclic smooth for average effect -->
+<!--   # - s(id, bs='re'): random intercept for each person -->
+<!--   # - s(cyclic_time, id, bs=c('re','cc')): random cyclic slope -->
+<!--   f_menses <- as.formula(paste(outcome_name, "~ day_of_week + session_today + s(cyclic_time, bs = 'cc') + s(id, bs = 're') + s(cyclic_time, id, bs = c('re', 'cc'))")) -->
+
+<!--   # Fit the model -->
+<!--   gamm_menses <- mgcv::gam( -->
+<!--     formula = f_menses, -->
+<!--     knots = list(cyclic_time = c(-1, 1)), -->
+<!--     data = dat_menses,  -->
+<!--     method = 'REML', -->
+<!--     family = binomial(link = "logit") -->
+<!--   ) -->
+
+<!--   # Save model object and text summary -->
+<!--   saveRDS(gamm_menses, file = file.path(save_dir, "model_menses.rds")) -->
+
+<!--   sink(file.path(save_dir, "summary_menses.txt")) -->
+<!--   summ_menses <- summary(gamm_menses) -->
+<!--   print(summ_menses) -->
+<!--   sink() -->
+
+<!--   # --- Extract Statistics for Plot Annotation --- -->
+<!--   edf_fixed <- round(summ_menses$s.table[1, "edf"], 2) -->
+<!--   stars_fixed <- get_stars(summ_menses$s.table[1, "p-value"]) -->
+
+<!--   edf_rand <- round(summ_menses$s.table[3, "edf"], 2) -->
+<!--   stars_rand <- get_stars(summ_menses$s.table[3, "p-value"]) -->
+
+<!--   stat_label_menses <- paste0("Average Effect: edf=", edf_fixed, stars_fixed, "\n", -->
+<!--                               "Individual Differences: edf=", edf_rand, stars_rand) -->
+
+<!--   # --- Generate Predictions for Plotting --- -->
+<!--   message("  Generating predictions for menses-centered model...") -->
+
+<!--   # Set reference values for covariates (held constant during prediction) -->
+<!--   ref_day_menses <- dat_menses$day_of_week[1] -->
+<!--   ref_session_menses <- dat_menses$session_today[1] -->
+
+<!--   # Create prediction grid -->
+<!--   grid_list <- list( -->
+<!--     cyclic_time = seq(-1, 1, by = 0.05), -->
+<!--     id = 0, -->
+<!--     day_of_week = ref_day_menses, -->
+<!--     session_today = ref_session_menses -->
+<!--   ) -->
+<!--   plotdat_menses <- do.call(expand.grid, grid_list) -->
+
+<!--   # Get predictions with confidence intervals -->
+<!--   pred_menses <- marginaleffects::predictions( -->
+<!--     gamm_menses, -->
+<!--     newdata = plotdat_menses, -->
+<!--     type = "response" -->
+<!--   ) -->
+
+<!--   plotdat_menses$estimate <- pred_menses$estimate -->
+<!--   plotdat_menses$conf.low <- pred_menses$conf.low -->
+<!--   plotdat_menses$conf.high <- pred_menses$conf.high -->
+
+<!--   # --- Create Prediction Plot --- -->
+<!--   message("  Creating menses-centered prediction plot...") -->
+<!--   gammplot_menses <- ggplot(plotdat_menses, aes(x = cyclic_time, y = estimate)) + -->
+<!--     scale_x_continuous( -->
+<!--       limits = c(-1, 1), -->
+<!--       breaks = seq(-1, 1, by = 0.50), -->
+<!--       labels = c("Ovulation", "50%L", "Menses Onset", "50%F", "Ovulation") -->
+<!--     ) + -->
+<!--     labs(x = "", y = paste("Probability of", outcome_name, "(Menses-Centered)"), -->
+<!--          caption = paste("Predictions holding day_of_week at:", ref_day_menses,  -->
+<!--                         "and session_today at:", ref_session_menses)) + -->
+<!--     geom_rect(xmin = -0.04, xmax = 0.04, ymin = -Inf, ymax = Inf, fill = "grey70", alpha = 0.2, color = NA) + -->
+<!--     geom_rect(xmin = 0.92, xmax = 1, ymin = -Inf, ymax = Inf, fill = "grey87", alpha = 0.2, color = NA) + -->
+<!--     geom_line(linewidth = 1) + -->
+<!--     geom_ribbon(aes(ymin = conf.low, ymax = conf.high), fill = "lightgrey", alpha = 0.3) + -->
+<!--     annotate("text", x = -1, y = Inf, label = stat_label_menses,  -->
+<!--              hjust = 0, vjust = 1.1, size = 5, fontface = "italic") + -->
+<!--     theme_minimal(base_size = 14) + -->
+<!--     theme(text = element_text(size = 16), -->
+<!--           axis.text = element_text(size = 14)) -->
+
+<!--   save_png( -->
+<!--     plot = gammplot_menses, -->
+<!--     filename = "gamm_plot_menses.png", -->
+<!--     folder = save_dir -->
+<!--   ) -->
+
+<!--   # ----------------------------------------------------------------------- -->
+<!--   # 5. GAMM: OVULATION-CENTERED MODEL -->
+<!--   # ----------------------------------------------------------------------- -->
+<!--   # Fits a logistic GAMM with ovulation as the reference point (time = 0). -->
+
+<!--   message("  Fitting ovulation-centered GAMM...") -->
+
+<!--   # Prepare data: keep only complete cases for required variables -->
+<!--   selected_vars_ov <- c("cyclic_time_ov", "day_of_week", "session_today", outcome_name, "id") -->
+<!--   dat_ov <- df[complete.cases(df[selected_vars_ov]), ] -->
+<!--   dat_ov$id <- as.factor(dat_ov$id) -->
+
+<!--   # Construct model formula -->
+<!--   f_ov <- as.formula(paste(outcome_name, "~ day_of_week + session_today + s(cyclic_time_ov, bs = 'cc') + s(id, bs = 're') + s(cyclic_time_ov, id, bs = c('re', 'cc'))")) -->
+
+<!--   # Fit the model -->
+<!--   gamm_ov <- mgcv::gam( -->
+<!--     formula = f_ov, -->
+<!--     knots = list(cyclic_time_ov = c(-1, 1)), -->
+<!--     data = dat_ov,  -->
+<!--     method = 'REML', -->
+<!--     family = binomial(link = "logit") -->
+<!--   ) -->
+
+<!--   # Save model object and text summary -->
+<!--   saveRDS(gamm_ov, file = file.path(save_dir, "model_ovulation.rds")) -->
+
+<!--   sink(file.path(save_dir, "summary_ovulation.txt")) -->
+<!--   summ_ov <- summary(gamm_ov) -->
+<!--   print(summ_ov) -->
+<!--   sink() -->
+
+<!--   # --- Extract Statistics for Plot Annotation --- -->
+<!--   edf_fixed_ov <- round(summ_ov$s.table[1, "edf"], 2) -->
+<!--   stars_fixed_ov <- get_stars(summ_ov$s.table[1, "p-value"]) -->
+
+<!--   edf_rand_ov <- round(summ_ov$s.table[3, "edf"], 2) -->
+<!--   stars_rand_ov <- get_stars(summ_ov$s.table[3, "p-value"]) -->
+
+<!--   stat_label_ov <- paste0("Average Effect: edf=", edf_fixed_ov, stars_fixed_ov, "\n", -->
+<!--                           "Individual Differences: edf=", edf_rand_ov, stars_rand_ov) -->
+
+<!--   # --- Generate Predictions for Plotting --- -->
+<!--   message("  Generating predictions for ovulation-centered model...") -->
+
+<!--   # Set reference values for covariates -->
+<!--   ref_day_ov <- dat_ov$day_of_week[1] -->
+<!--   ref_session_ov <- dat_ov$session_today[1] -->
+
+<!--   # Create prediction grid -->
+<!--   grid_list_ov <- list( -->
+<!--     cyclic_time_ov = seq(-1, 1, by = 0.05),  -->
+<!--     id = 0,  -->
+<!--     day_of_week = ref_day_ov, -->
+<!--     session_today = ref_session_ov -->
+<!--   ) -->
+<!--   plotdat_ov <- do.call(expand.grid, grid_list_ov) -->
+
+<!--   # Get predictions with confidence intervals -->
+<!--   pred_ov <- marginaleffects::predictions( -->
+<!--     gamm_ov, -->
+<!--     newdata = plotdat_ov, -->
+<!--     type = "response" -->
+<!--   ) -->
+
+<!--   plotdat_ov$estimate <- pred_ov$estimate -->
+<!--   plotdat_ov$conf.low <- pred_ov$conf.low -->
+<!--   plotdat_ov$conf.high <- pred_ov$conf.high -->
+
+<!--   # --- Create Prediction Plot --- -->
+<!--   message("  Creating ovulation-centered prediction plot...") -->
+<!--   gammplot_ov <- ggplot(plotdat_ov, aes(x = cyclic_time_ov, y = estimate)) + -->
+<!--     scale_x_continuous( -->
+<!--       limits = c(-1, 1), -->
+<!--       breaks = seq(-1, 1, by = 0.50), -->
+<!--       labels = c("Menses", "50%F", "Ovulation", "50%L", "Menses") -->
+<!--     ) + -->
+<!--     labs(x = "", y = paste("Probability of", outcome_name, "(Ovulation-Centered)"), -->
+<!--          caption = paste("Predictions holding day_of_week at:", ref_day_ov, -->
+<!--                         "and session_today at:", ref_session_ov)) + -->
+<!--     geom_rect(xmin = -0.04, xmax = 0.04, ymin = -Inf, ymax = Inf, fill = "grey70", alpha = 0.2, color = NA) + -->
+<!--     geom_rect(xmin = 0.92, xmax = 1, ymin = -Inf, ymax = Inf, fill = "grey87", alpha = 0.2, color = NA) + -->
+<!--     geom_line(linewidth = 1) + -->
+<!--     geom_ribbon(aes(ymin = conf.low, ymax = conf.high), fill = "lightgrey", alpha = 0.3) + -->
+<!--     annotate("text", x = -1, y = Inf, label = stat_label_ov,  -->
+<!--              hjust = 0, vjust = 1.1, size = 5, fontface = "italic") + -->
+<!--     theme_minimal(base_size = 14) + -->
+<!--     theme(text = element_text(size = 16), -->
+<!--           axis.text = element_text(size = 14)) -->
+
+<!--   save_png( -->
+<!--     plot = gammplot_ov, -->
+<!--     filename = "gamm_plot_ovulation.png", -->
+<!--     folder = save_dir -->
+<!--   ) -->
+
+<!--   message(paste0("===== Completed: ", outcome_name, " =====\n")) -->
+<!-- } -->
+<!-- ``` -->
 
 
 
@@ -499,688 +515,367 @@ for (outcome_name in binary_vars) {
 
   
 ```{r continuous-outcomes-gamms}
+
 # -------------------------------------------------------------------------
 # 1. SETUP: Define Continuous Outcome Variables
 # -------------------------------------------------------------------------
 
-# List of continuous outcome variable names to analyze
 continuous_vars <- c(
-  # Alcohol and substance use
-  "num_drinks_today",
-#, "bac_peak_percent", "crave_alc_am", "crave_alc_pm", "crave_nic_am", "crave_mar_am",
-  # Impulsivity and reward processing
-#"bdefs_delayaversion", "bdefs_impulsiveaction", "bdefs_total",
-  #"diff_stop", "diff_change", "immed_payoff", "res_urge", 
-  #"diff_long_rew", "diff_res_rew", 
-  # Mood and emotional symptoms
-  "dep", "hopeless", "worthless", "anxious", "mood_swing", "rej_sens", 
-  "angry", "conflicts",
-  # DRSP aggregate scores
-  "drsp_total", "drsp_distress", "drsp_labilsocsx", "drsp_breastpain", 
-  "drsp_eatsx", "drsp_lowarousal", 
-  # Cognitive and physical symptoms
-  "loss_interest", "diff_conc", "tired", 
-  # Appetite and eating
-  "over_eat", "sp_food_crav", 
-  # Sleep
-  "high_sleep", "diff_sleep", 
-  # Other physical and psychological symptoms
-  "overwhelm", "loss_control", "breast_tend", "breast_swell", 
-  "headache", "jm_pain", 
-  # Functioning
-  "loss_prod", "int_relat") #, 
-  # Additional substance cravings (evening assessments)
-  #"crave_alc_pm", "crave_nic_pm", "crave_mar_pm")
+  "numdrinkstoday",
+  "drsp_total", "drsp_distress", "drsp_labilsocsx", "drsp_breastpain",
+  "drsp_eatsx", "drsp_lowarousal",
+  paste0("drsp_", 1:21)
+)
 
-# Helper function to convert p-values to significance stars (same as binary section)
 get_stars <- function(p) {
-  stats::symnum(p, corr = FALSE, na = FALSE, 
-                cutpoints = c(0, 0.001, 0.01, 0.05, 0.1, 1), 
-                symbols = c("***", "**", "*", ".", " "))
+  stats::symnum(
+    p,
+    corr = FALSE,
+    na = FALSE,
+    cutpoints = c(0, 0.001, 0.01, 0.05, 0.1, 1),
+    symbols = c("***", "**", "*", ".", " ")
+  )
+}
+
+# -------------------------------------------------------------------------
+# Helper: Extract Smooth Statistics Safely
+# -------------------------------------------------------------------------
+
+extract_smooth_stats <- function(summary_obj, term_pattern) {
+  s_table <- summary_obj$s.table
+  term_row <- grep(term_pattern, rownames(s_table))
+
+  if (length(term_row) == 0) {
+    return(list(edf = NA, stars = ""))
+  }
+
+  edf <- round(s_table[term_row[1], "edf"], 2)
+  stars <- get_stars(s_table[term_row[1], "p-value"])
+
+  list(edf = edf, stars = stars)
+}
+
+# -------------------------------------------------------------------------
+# Helper: Set Reference Day to Saturday if Available
+# -------------------------------------------------------------------------
+
+get_reference_day <- function(day_vector, preferred_day = "Saturday") {
+  day_vector <- day_vector[!is.na(day_vector)]
+
+  if (length(day_vector) == 0) {
+    return(NA)
+  }
+
+  # Character case
+  if (is.character(day_vector)) {
+    if (preferred_day %in% day_vector) {
+      return(preferred_day)
+    } else {
+      warning(paste0(
+        "Preferred reference day '", preferred_day,
+        "' not found. Using first observed value instead: ", day_vector[1]
+      ))
+      return(day_vector[1])
+    }
+  }
+
+  # Factor case
+  if (is.factor(day_vector)) {
+    day_levels <- levels(day_vector)
+
+    if (preferred_day %in% day_levels) {
+      return(factor(preferred_day, levels = day_levels))
+    } else {
+      warning(paste0(
+        "Preferred reference day '", preferred_day,
+        "' not found in factor levels. Using first observed value instead: ",
+        as.character(day_vector[1])
+      ))
+      return(day_vector[1])
+    }
+  }
+
+  # Fallback for unexpected types
+  warning("day_of_week is neither character nor factor. Using first observed value.")
+  day_vector[1]
 }
 
 # -------------------------------------------------------------------------
 # 2. LOOP THROUGH EACH CONTINUOUS OUTCOME
 # -------------------------------------------------------------------------
 
-for (outcome_name in continuous_vars) {
-  
-  message(paste0("\n===== Processing Continuous Outcome: ", outcome_name, " ====="))
-  
-  # --- Check if Variable Exists and Has Data ---
-  # Skip this outcome if the variable doesn't exist or has no valid data
+for (i in seq_along(continuous_vars)) {
+
+  outcome_name <- continuous_vars[i]
+
+  message("\n--------------------------------------------------")
+  message("Outcome ", i, " of ", length(continuous_vars), ": ", outcome_name)
+  message("--------------------------------------------------")
+
   if (!outcome_name %in% names(df)) {
-    message(paste0("  WARNING: Variable '", outcome_name, "' not found in dataframe. Skipping."))
+    message(paste0("  WARNING: Variable '", outcome_name, "' not found. Skipping."))
     next
   }
-  
+
   outcome_data <- df[[outcome_name]]
+
   if (length(outcome_data) == 0 || all(is.na(outcome_data))) {
-    message(paste0("  WARNING: Variable '", outcome_name, "' has no valid data. Skipping."))
+    message(paste0("  WARNING: Variable '", outcome_name, "' has no data. Skipping."))
     next
   }
-  
-  # --- Create Log-Transformed Variable ---
-  # Log transformation: log(x + 1) handles zeros and reduces skewness
-  # The +1 ensures log(0) = 0 rather than -Inf
+
   log_outcome_name <- paste0(outcome_name, "_log")
   df[[log_outcome_name]] <- log(df[[outcome_name]] + 1)
-  
-  # --- Create Output Directory ---
+
   save_dir <- file.path(gamms_folder, paste0(outcome_name, "_gamm"))
-  
+
   if (!dir.exists(save_dir)) {
     dir.create(save_dir, recursive = TRUE)
-    message(paste0("Created directory: ", save_dir))
   }
-  
+
   # -----------------------------------------------------------------------
-  # 3. RAW DATA VISUALIZATION: Rolling Averages (Original Scale)
+  # 3. RAW DATA VISUALIZATION
   # -----------------------------------------------------------------------
-  # These plots show the observed data patterns before model fitting on the
-  # original (non-logged) scale for interpretability.
-  
-  # --- Menses-Centered Rolling Average Plot ---
+
   if (has_cycle_plot) {
-    message("  Creating menses-centered rolling average plot...")
+
     tryCatch({
+
       rollplot_menses <- cycle_plot(
         df,
         outcome_name,
         centering = "menses",
         include_impute = TRUE,
-        y_scale = "person-centered_roll", 
+        y_scale = "person-centered_roll",
         se = TRUE
       )
-      
+
       save_png(
         plot = rollplot_menses$plot,
         filename = "rollplot_menses_raw.png",
         folder = save_dir
       )
-    }, error = function(e) {
-      message(paste0("  Error creating menses-centered plot: ", e$message))
-    })
-  } else {
-    message("  Skipping menses-centered rolling average plot (cycle_plot not available)")
-  }
-  
-  # --- Ovulation-Centered Rolling Average Plot ---
-  if (has_cycle_plot) {
-    message("  Creating ovulation-centered rolling average plot...")
+
+    }, error = function(e) message(e$message))
+
     tryCatch({
+
       rollplot_ov <- cycle_plot(
         df,
         outcome_name,
         centering = "ovulation",
         include_impute = TRUE,
-        y_scale = "person-centered_roll", 
+        y_scale = "person-centered_roll",
         se = TRUE
       )
-      
+
       save_png(
         plot = rollplot_ov$plot,
         filename = "rollplot_ovulation_raw.png",
         folder = save_dir
       )
-    }, error = function(e) {
-      message(paste0("  Error creating ovulation-centered plot: ", e$message))
-    })
-  } else {
-    message("  Skipping ovulation-centered rolling average plot (cycle_plot not available)")
+
+    }, error = function(e) message(e$message))
   }
-  
+
   # -----------------------------------------------------------------------
-  # 4. GAMM: MENSES-CENTERED MODEL (Log Scale)
+  # 4. MENSES-CENTERED GAMM
   # -----------------------------------------------------------------------
-  # Fits a Gaussian GAMM on log-transformed data with menses onset as
-  # the reference point. Predictions will be back-transformed for plotting.
-  
-  message("  Fitting menses-centered GAMM (on log scale)...")
-  
-  # Prepare data: filter based on LOG variable to ensure proper sample matching
-  selected_vars <- c("cyclic_time", "day_of_week", "session_today", log_outcome_name, "id")
+
+  message("  Fitting menses-centered GAMM...")
+
+  selected_vars <- c("cyclic_time", "day_of_week", log_outcome_name, "id")
+
   dat_menses <- df[complete.cases(df[selected_vars]), ]
-  dat_menses$id <- as.factor(dat_menses$id) 
-  
-  # Construct model formula using logged outcome
-  # - day_of_week: controls for weekday effects
-  # - session_today: controls for laboratory visit effects
-  # - s(cyclic_time, bs='cc'): cyclic smooth for average effect
-  # - s(id, bs='re'): random intercept for each person
-  # - s(cyclic_time, id, bs=c('re','cc')): random cyclic slope
-  f_menses <- as.formula(paste(log_outcome_name, "~ day_of_week + session_today + s(cyclic_time, bs = 'cc') + s(id, bs = 're') + s(cyclic_time, id, bs = c('re', 'cc'))"))
-  
-  # Fit the model
+  dat_menses$id <- as.factor(dat_menses$id)
+
+  f_menses <- as.formula(
+    paste0(
+      log_outcome_name,
+      " ~ day_of_week + s(cyclic_time, bs='cc') + ",
+      "s(id, bs='re') + ",
+      "s(cyclic_time, id, bs=c('re','cc'))"
+    )
+  )
+
   gamm_menses <- mgcv::gam(
     formula = f_menses,
     knots = list(cyclic_time = c(-1, 1)),
-    data = dat_menses, 
-    method = 'REML',
+    data = dat_menses,
+    method = "REML",
     family = gaussian()
   )
-  
-  # Save model object and text summary
-  saveRDS(gamm_menses, file = file.path(save_dir, "model_menses_log.rds"))
-  
+
+  saveRDS(gamm_menses, file.path(save_dir, "model_menses_log.rds"))
+
   sink(file.path(save_dir, "summary_menses_log.txt"))
   summ_menses <- summary(gamm_menses)
   print(summ_menses)
   sink()
-  
-  # --- Extract Statistics for Plot Annotation ---
-  edf_fixed <- round(summ_menses$s.table[1, "edf"], 2)
-  stars_fixed <- get_stars(summ_menses$s.table[1, "p-value"])
-  
-  edf_rand <- round(summ_menses$s.table[3, "edf"], 2)
-  stars_rand <- get_stars(summ_menses$s.table[3, "p-value"])
-  
-  stat_label_menses <- paste0("Average Effect: edf=", edf_fixed, stars_fixed, "\n",
-                              "Individual Differences: edf=", edf_rand, stars_rand)
-  
-  # --- Generate Predictions and Back-Transform to Original Scale ---
-  message("  Generating predictions for menses-centered model...")
-  
-  # Set reference values for covariates
-  ref_day_menses <- dat_menses$day_of_week[1]
-  ref_session_menses <- dat_menses$session_today[1]
-  
-  # Create prediction grid
-  grid_list <- list(
-    cyclic_time = seq(-1, 1, by = 0.05), 
-    id = 0,
-    day_of_week = ref_day_menses,
-    session_today = ref_session_menses
+
+  fixed_stats <- extract_smooth_stats(summ_menses, "^s\\(cyclic_time\\)$")
+  rand_stats  <- extract_smooth_stats(summ_menses, "^s\\(cyclic_time,id\\)$")
+
+  stat_label_menses <- paste0(
+    "Average Effect: edf=", fixed_stats$edf, fixed_stats$stars,
+    "\nIndividual Differences: edf=", rand_stats$edf, rand_stats$stars
   )
-  plotdat_menses <- do.call(expand.grid, grid_list)
-  
-  # Get predictions on log scale
+
+  message("  Generating predictions...")
+
+  ref_day_menses <- get_reference_day(dat_menses$day_of_week, preferred_day = "Saturday")
+
+  plotdat_menses <- expand.grid(
+    cyclic_time = seq(-1, 1, by = 0.05),
+    id = 0,
+    day_of_week = ref_day_menses
+  )
+
   pred_menses <- marginaleffects::predictions(
     gamm_menses,
     newdata = plotdat_menses,
     type = "response"
   )
-  
-  # Back-transform from log scale: exp(y) - 1
-  plotdat_menses$estimate <- exp(pred_menses$estimate) - 1
-  plotdat_menses$conf.low <- exp(pred_menses$conf.low) - 1
+
+  plotdat_menses$estimate  <- exp(pred_menses$estimate) - 1
+  plotdat_menses$conf.low  <- exp(pred_menses$conf.low) - 1
   plotdat_menses$conf.high <- exp(pred_menses$conf.high) - 1
-  
-  # --- Create Prediction Plot (Original Scale) ---
-  message("  Creating menses-centered prediction plot...")
+
   gammplot_menses <- ggplot(plotdat_menses, aes(x = cyclic_time, y = estimate)) +
+    geom_line(linewidth = 1) +
+    geom_ribbon(
+      aes(ymin = conf.low, ymax = conf.high),
+      fill = "lightgrey",
+      alpha = 0.3
+    ) +
+    annotate(
+      "text",
+      x = -1,
+      y = Inf,
+      label = stat_label_menses,
+      hjust = 0,
+      vjust = 1.1,
+      size = 5,
+      fontface = "italic"
+    ) +
     scale_x_continuous(
       limits = c(-1, 1),
-      breaks = seq(-1, 1, by = 0.50),
+      breaks = seq(-1, 1, 0.5),
       labels = c("Ovulation", "50%L", "Menses Onset", "50%F", "Ovulation")
     ) +
-    labs(x = "", y = paste(outcome_name, "(Original Scale)"),
-         caption = paste("Predictions holding day_of_week at:", ref_day_menses, 
-                        "and session_today at:", ref_session_menses)) +
-    geom_rect(xmin = -0.04, xmax = 0.04, ymin = -Inf, ymax = Inf, fill = "grey70", alpha = 0.2, color = NA) +
-    geom_rect(xmin = 0.92, xmax = 1, ymin = -Inf, ymax = Inf, fill = "grey87", alpha = 0.2, color = NA) +
-    geom_line(linewidth = 1) +
-    geom_ribbon(aes(ymin = conf.low, ymax = conf.high), fill = "lightgrey", alpha = 0.3) +
-    annotate("text", x = -1, y = Inf, label = stat_label_menses, 
-             hjust = 0, vjust = 1.1, size = 5, fontface = "italic") +
-    theme_minimal(base_size = 14) +
-    theme(text = element_text(size = 16),
-          axis.text = element_text(size = 14))
-  
+    labs(
+      x = "",
+      y = paste(outcome_name, "(Original Scale)"),
+      caption = paste("Predictions holding day_of_week at:", as.character(ref_day_menses))
+    ) +
+    theme_minimal(base_size = 14)
+
   save_png(
     plot = gammplot_menses,
     filename = "gamm_plot_menses_backtrans.png",
     folder = save_dir
   )
-  
+
   # -----------------------------------------------------------------------
-  # 5. GAMM: OVULATION-CENTERED MODEL (Log Scale)
+  # 5. OVULATION-CENTERED GAMM
   # -----------------------------------------------------------------------
-  # Fits a Gaussian GAMM on log-transformed data with ovulation as
-  # the reference point. Predictions will be back-transformed for plotting.
-  
-  message("  Fitting ovulation-centered GAMM (on log scale)...")
-  
-  # Prepare data: keep only complete cases for required variables
-  selected_vars_ov <- c("cyclic_time_ov", "day_of_week", "session_today", log_outcome_name, "id")
+
+  message("  Fitting ovulation-centered GAMM...")
+
+  selected_vars_ov <- c("cyclic_time_ov", "day_of_week", log_outcome_name, "id")
+
   dat_ov <- df[complete.cases(df[selected_vars_ov]), ]
   dat_ov$id <- as.factor(dat_ov$id)
-  
-  # Construct model formula
-  f_ov <- as.formula(paste(log_outcome_name, "~ day_of_week + session_today + s(cyclic_time_ov, bs = 'cc') + s(id, bs = 're') + s(cyclic_time_ov, id, bs = c('re', 'cc'))"))
-  
-  # Fit the model
+
+  f_ov <- as.formula(
+    paste0(
+      log_outcome_name,
+      " ~ day_of_week + s(cyclic_time_ov, bs='cc') + ",
+      "s(id, bs='re') + ",
+      "s(cyclic_time_ov, id, bs=c('re','cc'))"
+    )
+  )
+
   gamm_ov <- mgcv::gam(
     formula = f_ov,
     knots = list(cyclic_time_ov = c(-1, 1)),
-    data = dat_ov, 
-    method = 'REML',
+    data = dat_ov,
+    method = "REML",
     family = gaussian()
   )
-  
-  # Save model object and text summary
-  saveRDS(gamm_ov, file = file.path(save_dir, "model_ovulation_log.rds"))
-  
+
+  saveRDS(gamm_ov, file.path(save_dir, "model_ovulation_log.rds"))
+
   sink(file.path(save_dir, "summary_ovulation_log.txt"))
   summ_ov <- summary(gamm_ov)
   print(summ_ov)
   sink()
-  
-  # --- Extract Statistics for Plot Annotation ---
-  edf_fixed_ov <- round(summ_ov$s.table[1, "edf"], 2)
-  stars_fixed_ov <- get_stars(summ_ov$s.table[1, "p-value"])
-  
-  edf_rand_ov <- round(summ_ov$s.table[3, "edf"], 2)
-  stars_rand_ov <- get_stars(summ_ov$s.table[3, "p-value"])
-  
-  stat_label_ov <- paste0("Average Effect: edf=", edf_fixed_ov, stars_fixed_ov, "\n",
-                          "Individual Differences: edf=", edf_rand_ov, stars_rand_ov)
-  
-  # --- Generate Predictions and Back-Transform to Original Scale ---
-  message("  Generating predictions for ovulation-centered model...")
-  
-  # Set reference values for covariates
-  ref_day_ov <- dat_ov$day_of_week[1]
-  ref_session_ov <- dat_ov$session_today[1]
-  
-  # Create prediction grid
-  grid_list_ov <- list(
-    cyclic_time_ov = seq(-1, 1, by = 0.05), 
-    id = 0, 
-    day_of_week = ref_day_ov,
-    session_today = ref_session_ov
+
+  fixed_stats_ov <- extract_smooth_stats(summ_ov, "^s\\(cyclic_time_ov\\)$")
+  rand_stats_ov  <- extract_smooth_stats(summ_ov, "^s\\(cyclic_time_ov,id\\)$")
+
+  stat_label_ov <- paste0(
+    "Average Effect: edf=", fixed_stats_ov$edf, fixed_stats_ov$stars,
+    "\nIndividual Differences: edf=", rand_stats_ov$edf, rand_stats_ov$stars
   )
-  plotdat_ov <- do.call(expand.grid, grid_list_ov)
-  
-  # Get predictions on log scale
+
+  ref_day_ov <- get_reference_day(dat_ov$day_of_week, preferred_day = "Saturday")
+
+  plotdat_ov <- expand.grid(
+    cyclic_time_ov = seq(-1, 1, by = 0.05),
+    id = 0,
+    day_of_week = ref_day_ov
+  )
+
   pred_ov <- marginaleffects::predictions(
     gamm_ov,
     newdata = plotdat_ov,
     type = "response"
   )
-  
-  # Back-transform from log scale: exp(y) - 1
-  plotdat_ov$estimate <- exp(pred_ov$estimate) - 1
-  plotdat_ov$conf.low <- exp(pred_ov$conf.low) - 1
+
+  plotdat_ov$estimate  <- exp(pred_ov$estimate) - 1
+  plotdat_ov$conf.low  <- exp(pred_ov$conf.low) - 1
   plotdat_ov$conf.high <- exp(pred_ov$conf.high) - 1
-  
-  # --- Create Prediction Plot (Original Scale) ---
-  message("  Creating ovulation-centered prediction plot...")
+
   gammplot_ov <- ggplot(plotdat_ov, aes(x = cyclic_time_ov, y = estimate)) +
+    geom_line(linewidth = 1) +
+    geom_ribbon(
+      aes(ymin = conf.low, ymax = conf.high),
+      fill = "lightgrey",
+      alpha = 0.3
+    ) +
+    annotate(
+      "text",
+      x = -1,
+      y = Inf,
+      label = stat_label_ov,
+      hjust = 0,
+      vjust = 1.1,
+      size = 5,
+      fontface = "italic"
+    ) +
     scale_x_continuous(
       limits = c(-1, 1),
-      breaks = seq(-1, 1, by = 0.50),
+      breaks = seq(-1, 1, 0.5),
       labels = c("Menses", "50%F", "Ovulation", "50%L", "Menses")
     ) +
-    labs(x = "", y = paste(outcome_name, "(Original Scale)"),
-         caption = paste("Predictions holding day_of_week at:", ref_day_ov, 
-                        "and session_today at:", ref_session_ov)) +
-    geom_rect(xmin = -0.04, xmax = 0.04, ymin = -Inf, ymax = Inf, fill = "grey70", alpha = 0.2, color = NA) +
-    geom_rect(xmin = 0.92, xmax = 1, ymin = -Inf, ymax = Inf, fill = "grey87", alpha = 0.2, color = NA) +
-    geom_line(linewidth = 1) +
-    geom_ribbon(aes(ymin = conf.low, ymax = conf.high), fill = "lightgrey", alpha = 0.3) +
-    annotate("text", x = -1, y = Inf, label = stat_label_ov, 
-             hjust = 0, vjust = 1.1, size = 5, fontface = "italic") +
-    theme_minimal(base_size = 14) +
-    theme(text = element_text(size = 16),
-          axis.text = element_text(size = 14))
-  
+    labs(
+      x = "",
+      y = paste(outcome_name, "(Original Scale)"),
+      caption = paste("Predictions holding day_of_week at:", as.character(ref_day_ov))
+    ) +
+    theme_minimal(base_size = 14)
+
   save_png(
     plot = gammplot_ov,
     filename = "gamm_plot_ovulation_backtrans.png",
     folder = save_dir
   )
-  
+
   message(paste0("===== Completed: ", outcome_name, " =====\n"))
 }
-
 ```
 
-
-# =============================================================================
-# EXPLORATORY ANALYSIS: Day of Week Effects
-# =============================================================================
-# These plots explore whether drinking patterns vary by day of the week
-# across the menstrual cycle. This helps identify potential confounds
-# (e.g., weekend drinking) that need to be controlled in the GAMMs.
-#
-# WHAT IT DOES:
-# 1. Creates person-centered drinking variables
-# 2. Aggregates by cyclic time and day of week
-# 3. Plots smoothed trends separately for each day of week
-#
-# OUTPUTS:
-# - drink_today_by_day_of_week.png: Binary drinking indicator
-# - num_drinks_by_day_of_week.png: Number of drinks consumed
-# =============================================================================
-
-```{r day-of-week-plots}
-library(tidyverse)
-
-# -------------------------------------------------------------------------
-# Plot 1: Binary Drinking Indicator by Day of Week
-# -------------------------------------------------------------------------
-
-message("Creating day-of-week plot for binary drinking...")
-
-# Prepare data: person-center the binary drink_today variable
-plot_data <- df %>%
-  # Calculate each person's average drinking frequency
-  group_by(id) %>% 
-  mutate(
-    person_mean = mean(drink_today, na.rm = TRUE),
-    drink_centered = drink_today - person_mean
-  ) %>%
-  ungroup() %>%
-  # Aggregate to get mean levels for each time point and day of week
-  group_by(cyclic_time, day_of_week) %>%
-  summarize(
-    mean_drink = mean(drink_centered, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-# Create smoothed plot showing trends by day of week
-p_drink_today_dow <- ggplot(plot_data, aes(x = cyclic_time, y = mean_drink, color = day_of_week, fill = day_of_week)) +
-  geom_point(alpha = 0.5) +  # Show actual mean levels
-  # Add loess smoothing to reveal trends
-  geom_smooth(method = "loess", se = FALSE, alpha = 0.2) + 
-  theme_minimal(base_size = 14) +
-  theme(text = element_text(size = 16),
-        axis.text = element_text(size = 14)) +
-  labs(
-    x = "Cycle Time",
-    y = "Mean Person-Centered Drink Levels",
-    color = "Day of Week",
-    fill = "Day of Week",
-    title = "Smoothed Trends of Person-Centered Drinking Across Cycle"
-  )
-
-print(p_drink_today_dow)
-
-save_png(
-  plot = p_drink_today_dow,
-  filename = "drink_today_by_day_of_week.png"
-)
-
-# -------------------------------------------------------------------------
-# Plot 2: Number of Drinks by Day of Week
-# -------------------------------------------------------------------------
-
-message("Creating day-of-week plot for number of drinks...")
-
-# Prepare data: person-center the num_drinks variable
-plot_data <- df %>%
-  group_by(id) %>% 
-  mutate(
-    person_mean = mean(num_drinks, na.rm = TRUE),
-    drink_centered = num_drinks - person_mean
-  ) %>%
-  ungroup() %>%
-  group_by(cyclic_time, day_of_week) %>%
-  summarize(
-    mean_drink = mean(drink_centered, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-# Create smoothed plot
-p_num_drinks_dow <- ggplot(plot_data, aes(x = cyclic_time, y = mean_drink, color = day_of_week, fill = day_of_week)) +
-  geom_point(alpha = 0.5) + 
-  geom_smooth(method = "loess", se = FALSE, alpha = 0.2) + 
-  theme_minimal(base_size = 14) +
-  theme(text = element_text(size = 16),
-        axis.text = element_text(size = 14)) +
-  labs(
-    x = "Cycle Time",
-    y = "Mean Person-Centered Number of Drinks",
-    color = "Day of Week",
-    fill = "Day of Week",
-    title = "Smoothed Trends of Person-Centered Drinks Across Cycle"
-  )
-
-print(p_num_drinks_dow)
-
-save_png(
-  plot = p_num_drinks_dow,
-  filename = "num_drinks_by_day_of_week.png"
-)
-
-
-
-# -------------------------------------------------------------------------
-# Plot 2: Peak BAC Across the Cycle by Day of Week
-# -------------------------------------------------------------------------
-
-message("Creating day-of-week plot for peak BAC...")
-
-# Prepare data: person-center the BAC variable
-plot_data <- df %>%
-  group_by(id) %>% 
-  mutate(
-    person_mean = mean(bac_peak_percent, na.rm = TRUE),
-    bac_centered = bac_peak_percent - person_mean
-  ) %>%
-  ungroup() %>%
-  group_by(cyclic_time, day_of_week) %>%
-  summarize(
-    mean_bac = mean(bac_centered, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-# Create smoothed plot
-p_bac_dow <- ggplot(plot_data, aes(x = cyclic_time, y = mean_bac, color = day_of_week, fill = day_of_week)) +
-  geom_point(alpha = 0.5) + 
-  geom_smooth(method = "loess", se = FALSE, alpha = 0.2) + 
-  theme_minimal(base_size = 14) +
-  theme(text = element_text(size = 16),
-        axis.text = element_text(size = 14)) +
-  labs(
-    x = "Cycle Time",
-    y = "Mean Person-Centered Peak BAC",
-    color = "Day of Week",
-    fill = "Day of Week",
-    title = "Smoothed Trends of Person-Centered Peak BAC Across Cycle"
-  )
-
-print(p_bac_dow)
-
-save_png(
-  plot = p_bac_dow,
-  filename = "peak_bac_by_day_of_week.png"
-)
-
-
-
-```
-
-
-# =============================================================================
-# HORMONE ANALYSIS: Combined Hormone Trajectories
-# =============================================================================
-# This section models hormone levels (E2, P4, LH) across the menstrual cycle
-# and creates a combined visualization. Hormones are analyzed on an
-# ovulation-centered time frame as this is biologically most relevant.
-#
-# HORMONES ANALYZED:
-# - E2 (Estradiol): Primary estrogen, peaks at ovulation
-# - P4 (Progesterone): Rises after ovulation, peaks in luteal phase
-# - LH (Luteinizing Hormone): Triggers ovulation, sharp peak at mid-cycle
-#
-# MODEL SPECIFICATION:
-# - Family: Gaussian on log-transformed data
-# - Data transformation: log(x + 1) to handle zeros
-# - Fixed effects: None (population-level cyclic trend only)
-# - Cyclic smooth: s(cyclic_time_ov, bs='cc', k=10) - captures average pattern
-# - Random intercept: s(id, bs='re') - accounts for baseline differences
-# - Random cyclic slope: s(id, cyclic_time_ov, bs=c('re','cc'), k=c(NA,10))
-#
-# VISUALIZATION:
-# - All three hormones plotted on same axes using standardized (z-scored) values
-# - This allows comparison of relative patterns despite different measurement scales
-# - Predictions are back-transformed to original scale before standardization
-#
-# OUTPUTS:
-# - Combined plot showing all three hormones (hormones_combined/combined_hormone_plot.png)
-# =============================================================================
-
-```{r hormone-analysis}
-# -------------------------------------------------------------------------
-# Setup
-# -------------------------------------------------------------------------
-
-# Define hormone variable names
-hormone_vars <- c("e2", "p4", "lh")
-
-# Use ovulation-centered time (most relevant for hormone patterns)
-time_var <- "cyclic_time_ov"
-
-# Create output subdirectory for combined hormone plots
-save_dir <- file.path(gamms_folder, "hormones_combined")
-if (!dir.exists(save_dir)) {
-  dir.create(save_dir, recursive = TRUE)
-  message(paste0("Created directory: ", save_dir))
-}
-
-# List to store prediction data for all hormones
-all_plotdat <- list() 
-
-# -------------------------------------------------------------------------
-# Loop Through Each Hormone: Fit Models and Generate Predictions
-# -------------------------------------------------------------------------
-
-for (h_name in hormone_vars) {
-  
-  message(paste0("\n===== Processing Hormone: ", h_name, " ====="))
-  
-  # --- Create Log-Transformed Variable ---
-  log_name <- paste0(h_name, "_log")
-  df[[log_name]] <- log(df[[h_name]] + 1)
-  
-  # --- Prepare Data ---
-  selected_vars <- c(time_var, log_name, "id")
-  datSX <- df[complete.cases(df[selected_vars]), ]
-  datSX$id <- as.factor(datSX$id)
-  
-  # --- Fit GAMM ---
-  # - Random intercept for each person
-  # - Cyclic smooth term (k=10 basis functions)
-  # - Random cyclic slope allowing individual variation
-  message(paste0("  Fitting GAMM for ", h_name, "..."))
-  
-  f_hormone <- as.formula(paste(
-    log_name, 
-    "~ s(id, bs = 're') + s(", time_var, ", bs = 'cc', k = 10) + s(id, ", time_var, ", bs = c('re','cc'), k = c(NA, 10))"
-  ))
-  
-  knots_list <- list(c(-1, 1))
-  names(knots_list) <- time_var
-  
-  gamm_model <- mgcv::gam(
-    formula = f_hormone,
-    data = datSX,
-    knots = knots_list,
-    method = 'REML'
-  )
-  
-  # --- Generate Predictions ---
-  message(paste0("  Generating predictions for ", h_name, "..."))
-  
-  # Create prediction grid across cycle
-  # Use setNames to dynamically name the cyclic time variable
-  grid_list <- setNames(list(seq(-1, 1, by = 0.05), 0), c(time_var, "id"))
-  plotdat <- do.call(expand.grid, grid_list)
-  
-  # Get predictions on log-transformed outcome scale
-  pred <- marginaleffects::predictions(
-    gamm_model,
-    newdata = plotdat,
-    type = "response"
-  )
-  
-  plotdat$estimate <- pred$estimate
-  plotdat$conf.low <- pred$conf.low
-  plotdat$conf.high <- pred$conf.high
-  
-  # --- Back-Transform from Log Scale ---
-  plotdat$estimate <- exp(plotdat$estimate) - 1
-  plotdat$conf.low <- exp(plotdat$conf.low) - 1
-  plotdat$conf.high <- exp(plotdat$conf.high) - 1
-  
-  # --- Standardize (Z-Score) for Combined Plotting ---
-  # Puts E2, P4, and LH on the same relative y-axis
-  # Note: Checks for zero SD to prevent Inf/NaN values
-  mean_est <- mean(plotdat$estimate)
-  sd_est <- sd(plotdat$estimate)
-  
-  plotdat <- plotdat %>%
-    mutate(
-      estimate_ss = if_else(is.na(sd_est) | sd_est == 0, NA_real_, (estimate - mean_est) / sd_est),
-      conf.low_ss = if_else(is.na(sd_est) | sd_est == 0, NA_real_, (conf.low - mean_est) / sd_est),
-      conf.high_ss = if_else(is.na(sd_est) | sd_est == 0, NA_real_, (conf.high - mean_est) / sd_est),
-      hormone = h_name
-    )
-  
-  # Store results
-  all_plotdat[[h_name]] <- plotdat
-  
-  message(paste0("===== Completed: ", h_name, " ====="))
-}
-
-# -------------------------------------------------------------------------
-# Combine Data and Create Visualization
-# -------------------------------------------------------------------------
-
-# Merge all hormone data into single dataframe
-combined_df <- do.call(rbind, all_plotdat)
-
-# Define color scheme for hormones
-hormone_colors <- c("e2" = "navy", "p4" = "maroon", "lh" = "forestgreen")
-
-message("\nGenerating combined hormone plot...")
-
-# Create combined plot with all three hormones
-combined_plot <- ggplot(combined_df, aes(x = .data[[time_var]], group = hormone)) +
-  
-  # Shaded background regions for menses and ovulation
-  geom_rect(aes(xmin = -1, xmax = -0.92, ymin = -Inf, ymax = Inf), fill = "grey70", alpha = 0.5, inherit.aes = FALSE) +
-  geom_rect(aes(xmin = -0.04, xmax = 0.04, ymin = -Inf, ymax = Inf), fill = "grey87", alpha = 0.5, inherit.aes = FALSE) +
-  geom_rect(aes(xmin = 0.92, xmax = 1, ymin = -Inf, ymax = Inf), fill = "grey70", alpha = 0.5, inherit.aes = FALSE) +
-  
-  # Lines and confidence bands for each hormone
-  geom_line(aes(y = estimate_ss, color = hormone), linewidth = 1.5) +
-  geom_ribbon(aes(ymin = conf.low_ss, ymax = conf.high_ss, fill = hormone), alpha = 0.1) +
-  
-  # Scales and colors
-  scale_x_continuous(
-    limits = c(-1, 1),
-    breaks = seq(-1, 1, by = 0.50),
-    labels = c("Menses Onset", "50% Fol", "Ovulation", "50% Lut", "Menses Onset")
-  ) +
-  scale_color_manual(values = hormone_colors, name = "Hormone") +
-  scale_fill_manual(values = hormone_colors, name = "Hormone") +
-  
-  # Labels and theme
-  labs(
-    x = "Cycle Phase", 
-    y = "Sample-Standardized Hormone Levels (Z-Score)",
-    title = "Combined Hormone Trajectories (Ovulation-Centered)"
-  ) +
-  theme_minimal(base_size = 14) +
-  theme(
-    text = element_text(size = 16),
-    axis.text = element_text(size = 14),
-    legend.position = "top",
-    plot.title = element_text(hjust = 0.5, face = "bold")
-  )
-
-# Save combined plot
-save_png(
-  plot = combined_plot,
-  filename = "combined_hormone_plot.png",
-  folder = save_dir
-)
-
-message(paste0("\nHormone analysis complete! Check ", save_dir, "/"))
-```
 
 ```{r}
 

@@ -158,7 +158,7 @@ current_date <- format(Sys.Date(), "%Y%m%d")  # Produces date as YYYYMMDD
 
 # ⚠️ CONFIGURE THIS PATH for your Box account:
 output_folder <- paste0(
-  "~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/UKALC/03_analytic_projects/UKALC-Primary ms/02_datasets_output/",
+  "~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/02_datasets_output/",
   current_date
 )
 

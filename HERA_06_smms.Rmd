@@ -1,4 +1,4 @@
-title: "UKALC_06_smms"
+title: "HERA_06_smms"
 output:
   html_document:
     toc: true
@@ -49,7 +49,7 @@ output:
 ```{r setup-smm}
 #Source R File with Setup, Package Loading, and Output Folder Creation
 
-source("UKALC_00_setup.R")
+source("HERA_00_setup.R")
 
 # Create subfolder for SMM outputs (keep output_folder as root-level directory)
 smms_folder <- file.path(output_folder, "04_smms_10")
@@ -92,14 +92,13 @@ set.seed(
 
 
 # Load the dataset
-df <- readRDS("data/analysis_ready_withsessiondow.rds")
 
 ```
 
 # Define the base folder for all outputs
 ```{r}
 
-smm_output_folder <- file.path(smms_folder, "SMMs_Ov_and_Borderline") # Simplified folder name
+smm_output_folder <- file.path(smms_folder, "SMMs") # Simplified folder name
 if (!dir.exists(smm_output_folder)) {
   dir.create(smm_output_folder, recursive = TRUE)
 }
@@ -117,67 +116,41 @@ ovulation_time_variable <- "cyclic_time_imp_ov"
 # Values = pretty labels for plots
 ```{r}
 outcomes <- c(
-  # --- Substance Use & Craving ---
-  "num_drinks_today" = "Number of Drinks",
-  # "bac_peak_percent" = "Peak BAC (%)",
-  # "crave_alc_am"     = "Alcohol Craving (AM)",
-  # "crave_alc_pm"     = "Alcohol Craving (PM)",
-  # "crave_nic_am"     = "Nicotine Craving (AM)",
-  # "crave_nic_pm"     = "Nicotine Craving (PM)",
-  # "crave_mar_am"     = "Marijuana Craving (AM)",
-  # "crave_mar_pm"     = "Marijuana Craving (PM)",
-  # 
-  # # --- Impulsivity & Reward ---
-  # "diff_stop"        = "Difficulty Stopping",
-  # "diff_change"      = "Difficulty Changing",
-  # "immed_payoff"     = "Immediate Payoff Pref.",
-  # "res_urge"         = "Resistance to Urges",
-  # "diff_long_rew"    = "Diff. Waiting Long Reward",
-  # "diff_res_rew"     = "Diff. Resisting Reward",
-  # "bdefs_impulsiveaction" = "Impulsive Action (BDEFS)",
-  # "bdefs_delayaversion" = "Delay Aversion (BDEFS)",
-  # "bdefs_total" = "BDEFS Total",
-  
+   # --- Substance Use & Craving ---
+  "numdrinkstoday" = "Number of Drinks",
+
   # --- Mood & Affect (DRSP/PMDD) ---
-  "dep"              = "Depression",
-  "hopeless"         = "Hopelessness",
-  "worthless"        = "Worthlessness",
-  "anxious"          = "Anxiety",
-  "mood_swing"       = "Mood Swings",
-  "rej_sens"         = "Rejection Sensitivity",
-  "angry"            = "Anger/Irritability",
-  "conflicts"        = "Interpersonal Conflicts",
-  "loss_interest"    = "Loss of Interest",
-  "overwhelm"        = "Feeling Overwhelmed",
-  "loss_control"     = "Feeling Out of Control",
-  "int_relat"        = "Relationship Impairment",
-  
+  "drsp_1"              = "Depression",
+  "drsp_2"         = "Hopelessness",
+  "drsp_3"        = "Worthlessness",
+  "drsp_4"          = "Anxiety",
+  "drsp_5"       = "Mood Swings",
+  "drsp_6"         = "Rejection Sensitivity",
+  "drsp_7"            = "Anger/Irritability",
+  "drsp_8"        = "Interpersonal Conflicts",
+  "drsp_9"    = "Loss of Interest",
+  "drsp_16"        = "Feeling Overwhelmed",
+  "drsp_17"     = "Feeling Out of Control",
+
   # --- DRSP Aggregate Scores ---
   "drsp_total"       = "DRSP Total",
-  "drsp_distress"    = "DRSP Distress",
-  "drsp_labilsocsx"  = "DRSP Social and Affective Lability",
-  "drsp_breastpain"  = "DRSP Breast Sx",
-  "drsp_eatsx"       = "DRSP Eating Sx",
-  "drsp_lowarousal"  = "DRSP Low Arousal Sx",
-  
+  "drsp_distress"    = "Distress (DRSP)",
+  "drsp_labilsocsx"  = "Social/Affect Lability (DRSP)",
+  "drsp_breastpain"  = "Breast Sx (DRSP)",
+  "drsp_eatsx"       = "Eating Sx",
+  "drsp_lowarousal"  = "Low Arousal Sx (DRSP)",
+
   # --- Physical & Cognitive Symptoms ---
-  "diff_conc"        = "Difficulty Concentrating",
-  "tired"            = "Fatigue/Lethargy",
-  "high_sleep"       = "Hypersomnia (High Sleep)",
-  "diff_sleep"       = "Insomnia/Sleep Diff.",
-  "over_eat"         = "Overeating",
-  "sp_food_crav"     = "Specific Food Cravings",
-  "breast_tend"      = "Breast Tenderness",
-  "breast_swell"     = "Breast Swelling",
-  "headache"         = "Headache",
-  "jm_pain"          = "Joint/Muscle Pain",
-  "loss_prod"        = "Decreased Productivity",
-  
-  # --- Hormones  ---
-  "e2"             = "Estradiol (E2)",
-  "p4"             = "Progesterone (P4)",
-  "lh"             = "Luteinizing Hormone (LH)"
-)
+  "drsp_10"        = "Difficulty Concentrating",
+  "drsp_11"            = "Fatigue/Lethargy",
+  "drsp_14"       = "Hypersomnia",
+  "drsp_15"       = "Insomnia",
+  "drsp_12"         = "Overeating",
+  "drsp_13"     = "Specific Food Cravings",
+  "drsp_18"      = "Breast Tenderness",
+  "drsp_19"     = "Breast Swelling",
+  "drsp_20"         = "Headache",
+  "drsp_21"          = "Joint/Muscle Pain")
 
 ```
 

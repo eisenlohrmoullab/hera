@@ -1,4 +1,4 @@
-title: "UKALC_07_smms_binary"
+title: "HERA_07_smms_binary"
 output:
   html_document:
     toc: true
@@ -11,7 +11,7 @@ output:
 # =============================================================================
 # SMOOTHING MIXTURE MODELS (SMMs) - BINARY OUTCOMES ONLY
 # =============================================================================
-# This script is a specialized version of UKALC_06_smms.Rmd focused exclusively
+# This script is a specialized version of HERA_06_smms.Rmd focused exclusively
 # on binary (0/1) drinking outcomes using Bernoulli distribution with logit link.
 #
 # WHAT IT DOES:
@@ -24,7 +24,7 @@ output:
 #
 # DIFFERENCE FROM MAIN SMM SCRIPT:
 # - Uses ONLY run_smm_bernoulli.R (simplified Bernoulli-only implementation)
-# - Main SMM script (UKALC_06_smms.Rmd) uses run_smm_cyclic.R (handles both types)
+# - Main SMM script (HERA_06_smms.Rmd) uses run_smm_cyclic.R (handles both types)
 # - This script kept for legacy compatibility and focused binary analysis
 #
 # OUTPUT STRUCTURE:
@@ -45,14 +45,14 @@ output:
 #
 # SEE ALSO:
 # - scripts/run_smm_bernoulli.R for Bernoulli-specific implementation
-# - UKALC_06_smms.Rmd for unified continuous+binary SMM analysis
+# - HERA_06_smms.Rmd for unified continuous+binary SMM analysis
 # - docs/BINARY_OUTCOME_TESTING_GUIDE.md for testing procedures
 # =============================================================================
 
 ```{r setup-binary-smm}
 # Source R File with Setup, Package Loading, and Output Folder Creation
 # 
-# This chunk loads the UKALC_00_setup.R script which:
+# This chunk loads the HERA_00_setup.R script which:
 # - Loads all required packages (tidyverse, lme4, mgcv, gamm4, etc.)
 # - Sets global options (no scientific notation, 3 decimal places)
 # - Creates date-stamped output folder for all analysis products
@@ -60,7 +60,7 @@ output:
 #
 # Then creates a subfolder specifically for binary SMM outputs
 
-source("UKALC_00_setup.R")
+source("HERA_00_setup.R")
 
 # Create subfolder for Binary SMM outputs (keep output_folder as root-level directory)
 smms_binary_folder <- file.path(output_folder, "04b_smms_binary")
@@ -87,11 +87,11 @@ if (!dir.exists(smms_binary_folder)) {
 #   across analysis runs
 #
 ## IMPORTANT NOTES:
-# - Most packages already loaded by UKALC_00_setup.R
+# - Most packages already loaded by HERA_00_setup.R
 # - slider package: Used for rolling averages (though not needed for binary outcomes)
 # - marginaleffects: Used for model predictions and contrasts
 
-# Load required libraries (most already loaded via UKALC_00_setup.R)
+# Load required libraries (most already loaded via HERA_00_setup.R)
 library(dplyr)
 library(mgcv)
 library(gamm4)
@@ -112,10 +112,10 @@ set.seed(123)
 # Load the data file
 ```{r}
 ## WHAT THIS SECTION DOES:
-# Loads the most recent cleaned/preprocessed UKALC dataset from the data/ folder.
+# Loads the most recent cleaned/preprocessed HERA dataset from the data/ folder.
 #
 ## DATA SOURCE:
-# - Pattern: data/ukalc_YYYYMMDD*.rds
+# - Pattern: data/HERA_YYYYMMDD*.rds
 # - Files are date-stamped (YYYYMMDD format sorts chronologically)
 # - Latest file = most recent data processing run
 #
@@ -186,7 +186,7 @@ if (!dir.exists(smm_output_folder)) {
 ## WHY IT'S NECESSARY:
 # - Different outcomes show clearer patterns with different centering
 # - Allows comparison of trajectory patterns relative to both cycle events
-# - Variables created in UKALC_01_data_prep.Rmd with forward-backward fill imputation
+# - Variables created in HERA_01_data_prep.Rmd with forward-backward fill imputation
 
 menses_time_variable <- "cyclic_time_impute"
 ovulation_time_variable <- "cyclic_time_imp_ov"
