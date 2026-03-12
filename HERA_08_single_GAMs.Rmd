@@ -55,10 +55,10 @@ output_folder <- file.path(gam_output_base, paste0("GAM_Reports_", current_date)
 dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
 
 # --- Load Scaled Dataset ---
-cycle_df_scaled <- get(load("~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/CYCLEADHD/03_analytic_projects/CYCADHD_PRIMARY/03_code_dataedits_output/1_interim_datasets/adhd_daily_df_scaled_20250922.RData"))
+#df
 
 # --- Robustness: Verify time variables exist ---
-time_vars <- intersect(time_vars_to_run, names(cycle_df_scaled))
+time_vars <- intersect(time_vars_to_run, names(df))
 if (length(time_vars) < length(time_vars_to_run)) {
   missing_vars <- setdiff(time_vars_to_run, time_vars)
   warning("The following time_vars were not found and will be skipped: ", paste(missing_vars, collapse = ", "))
@@ -69,38 +69,49 @@ if (length(time_vars) < length(time_vars_to_run)) {
 ```{r}
 # --- Define Outcomes to Model ---
 outcomes <- c(
-  "CSS_Inatt_Count" = "CSS Inattention Sx Count", "CSS_Hyp_Count" = "CSS Hyperactivity Sx Count",
-  "CSS_Imp_Count" = "CSS Impulsivity Sx Count", "CSS_Inatt" = "CSS Inattention Sx Severity",
-  "CSS_HypImp" = "CSS Hyperactivity/Impulsivity Sx Severity", "score_pinball" = "Working Memory Score (Pinball)",
-  "score_robot" = "Response Inhibition (Robot Factory)", "BDEFS_WM_avg" = "Working Memory Sx (BDEFS)",
-  "BDEFS_RI_avg" = "Response Inhibition Sx (BDEFS)", "DRSP_1" = "Depressed Mood", "DRSP_2" = "Hopelessness",
-  "DRSP_3" = "Worthlessness/Guilt", "DRSP_4" = "Anxiety", "DRSP_5" = "Mood Swings",
-  "DRSP_6" = "Rejection Sensitivity", "DRSP_7" = "Irritability", "DRSP_8" = "Interpersonal Conflicts",
-  "DRSP_9" = "Less Interest in Activities", "DRSP_10" = "Difficulty Concentrating", "DRSP_11" = "Lethargy/Fatigue",
-  "DRSP_12" = "Increased Appetite/Overate", "DRSP_13" = "Food Cravings", "DRSP_14" = "Hypersomnia",
-  "DRSP_15" = "Insomnia", "DRSP_16" = "Overwhelmed/Couldn't Cope", "DRSP_17" = "Felt Out of Control",
-  "DRSP_18" = "Breast Tenderness", "DRSP_19" = "Swelling/Bloating", "DRSP_20" = "Headache",
-  "DRSP_21" = "Joint/Muscle Pain", "DRSP_22" = "Work Impairment", "DRSP_23" = "Relationship Impairment",
-  "E2" = "Estradiol", "P4" = "Progesterone", "LH" = "Luteinizing Hormone"
+   # --- Substance Use & Craving ---
+  "numdrinkstoday" = "Number of Drinks",
+  
+   # --- DRSP Aggregate Scores ---
+  "drsp_total"       = "DRSP Total",
+  "drsp_distress"    = "Distress (DRSP)",
+  "drsp_labilsocsx"  = "Social/Affect Lability (DRSP)",
+  "drsp_breastpain"  = "Breast Sx (DRSP)",
+  "drsp_eatsx"       = "Eating Sx",
+  "drsp_lowarousal"  = "Low Arousal Sx (DRSP)",
+
+  # --- Mood & Affect (DRSP/PMDD) ---
+  "drsp_1"              = "Depression",
+  "drsp_2"         = "Hopelessness",
+  "drsp_3"        = "Worthlessness",
+  "drsp_4"          = "Anxiety",
+  "drsp_5"       = "Mood Swings",
+  "drsp_6"         = "Rejection Sensitivity",
+  "drsp_7"            = "Anger/Irritability",
+  "drsp_8"        = "Interpersonal Conflicts",
+  "drsp_9"    = "Loss of Interest",
+  "drsp_16"        = "Feeling Overwhelmed",
+  "drsp_17"     = "Feeling Out of Control",
+
+ 
+
+  # --- Physical & Cognitive Symptoms ---
+  "drsp_10"        = "Difficulty Concentrating",
+  "drsp_11"            = "Fatigue/Lethargy",
+  "drsp_14"       = "Hypersomnia",
+  "drsp_15"       = "Insomnia",
+  "drsp_12"         = "Overeating",
+  "drsp_13"     = "Specific Food Cravings",
+  "drsp_18"      = "Breast Tenderness",
+  "drsp_19"     = "Breast Swelling",
+  "drsp_20"         = "Headache",
+  "drsp_21"          = "Joint/Muscle Pain"
 )
 
 # --- Define Categories for organization ---
 outcome_categories <- tribble(
   ~category, ~variable,
-  "ADHD Symptoms (CSS)", "CSS_Inatt_Count", "ADHD Symptoms (CSS)", "CSS_Hyp_Count",
-  "ADHD Symptoms (CSS)", "CSS_Imp_Count", "ADHD Symptoms (CSS)", "CSS_Inatt",
-  "ADHD Symptoms (CSS)", "CSS_HypImp",
-  "Cognitive Score", "score_pinball", "Cognitive Score", "score_robot",
-  "Executive Function (BDEFS)", "BDEFS_WM_avg", "Executive Function (BDEFS)", "BDEFS_RI_avg",
-  "Hormone", "E2", "Hormone", "P4", "Hormone", "LH",
-  "Mood & Physical (DRSP)", "DRSP_1", "Mood & Physical (DRSP)", "DRSP_2", "Mood & Physical (DRSP)", "DRSP_3",
-  "Mood & Physical (DRSP)", "DRSP_4", "Mood & Physical (DRSP)", "DRSP_5", "Mood & Physical (DRSP)", "DRSP_6",
-  "Mood & Physical (DRSP)", "DRSP_7", "Mood & Physical (DRSP)", "DRSP_8", "Mood & Physical (DRSP)", "DRSP_9",
-  "Mood & Physical (DRSP)", "DRSP_10", "Mood & Physical (DRSP)", "DRSP_11", "Mood & Physical (DRSP)", "DRSP_12",
-  "Mood & Physical (DRSP)", "DRSP_13", "Mood & Physical (DRSP)", "DRSP_14", "Mood & Physical (DRSP)", "DRSP_15",
-  "Mood & Physical (DRSP)", "DRSP_16", "Mood & Physical (DRSP)", "DRSP_17", "Mood & Physical (DRSP)", "DRSP_18",
-  "Mood & Physical (DRSP)", "DRSP_19", "Mood & Physical (DRSP)", "DRSP_20", "Mood & Physical (DRSP)", "DRSP_21",
-  "Impairment (DRSP)", "DRSP_22", "Impairment (DRSP)", "DRSP_23"
+  "Number of Drinks", "DRSP Total", "Distress (DRSP)", "Social/Affect Lability (DRSP)", "Breast Sx (DRSP)", "Eating Sx", "Low Arousal Sx (DRSP)", "Depression", "Hopelessness", "Worthlessness", "Anxiety", "Mood Swings", "Rejection Sensitivity", "Anger/Irritability", "Interpersonal Conflicts", "Loss of Interest", "Feeling Overwhelmed", "Feeling Out of Control", "Difficulty Concentrating", "Fatigue/Lethargy", "Hypersomnia", "Insomnia", "Overeating", "Specific Food Cravings", "Breast Tenderness", "Breast Swelling", "Headache", "Joint/Muscle Pain"
 ) %>%
   right_join(enframe(outcomes, name = "variable", value = "outcome_label"), by = "variable")
 
@@ -121,9 +132,9 @@ names(page_definitions)[4:length(page_definitions)] <- paste0("DRSP_Page_", 1:(l
 
 # --- Pre-calculate log-transformations ---
 for (var in names(outcomes)) {
-  if (var %in% names(cycle_df_scaled)) {
+  if (var %in% names(df)) {
     log_var_name <- paste0(var, "_Log")
-    cycle_df_scaled[[log_var_name]] <- log(cycle_df_scaled[[var]] + 1)
+    df[[log_var_name]] <- log(df[[var]] + 1)
   }
 }
 
@@ -238,7 +249,7 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list) {
 report_folder <- file.path(output_folder, "Participant_Reports_PDF_byID")
 dir.create(report_folder, showWarnings = FALSE, recursive = TRUE)
 
-ids_to_run    <- unique(cycle_df_scaled$id)   # set to subset for testing, e.g., c("203","109")
+ids_to_run    <- unique(df$id)   # set to subset for testing, e.g., c("203","109")
 skip_existing <- TRUE                         # set FALSE to overwrite
 
 # collector for a single CSV at the end
@@ -254,7 +265,7 @@ table_theme <- gridExtra::ttheme_default(
 
 for (current_id in ids_to_run) {
   message(sprintf("--- Processing ID: %s ---", current_id))
-  datSX_id <- subset(cycle_df_scaled, id == current_id)
+  datSX_id <- subset(df, id == current_id)
 
   # Pass 1: fit & collect
   preds_by_tv <- list()

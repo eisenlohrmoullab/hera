@@ -233,7 +233,7 @@ for (i in 1:nrow(analysis_combinations)) {
     g = 2:4,
     centering = current_centering,
     save_dir = smm_output_folder,
-    covariates = c("day_of_week", "session_today")  # EXPLICIT
+    covariates = c("day_of_week")  # EXPLICIT
   )
 
   list_name <- paste0(current_outcome, "_", current_centering)
@@ -259,7 +259,7 @@ for (i in 1:nrow(analysis_combinations)) {
   smm_result = smm_results,
   centering = current_centering,
   save_dir = smm_output_folder,
-  covariates = c("day_of_week", "session_today")  # EXPLICIT - must match run_smm_cyclic
+  covariates = c("day_of_week")  # EXPLICIT - must match run_smm_cyclic
 )
     all_gam_results[[list_name]] <- gams
   }
@@ -355,6 +355,18 @@ if (!file.exists("scripts/create_outcome_pdf_report.R")) {
   message(glue("📄 Generated {length(pdf_report_result$report_files)} PDF files"))
 }
 ```
+
+
+# HERA END HERE 2026-03-12
+
+
+
+
+
+
+
+
+
 
 
 # --- 4. SELECT CONFIGURATION FOR EACH OUTCOME (OPTIONAL) ---
