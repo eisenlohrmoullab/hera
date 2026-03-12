@@ -1,0 +1,880 @@
+title: "UKALC_07_smms_binary"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    fig_caption: true
+    code_folding: show
+    self_contained: true
+---
+
+# =============================================================================
+# SMOOTHING MIXTURE MODELS (SMMs) - BINARY OUTCOMES ONLY
+# =============================================================================
+# This script is a specialized version of UKALC_06_smms.Rmd focused exclusively
+# on binary (0/1) drinking outcomes using Bernoulli distribution with logit link.
+#
+# WHAT IT DOES:
+# 1. Sources setup file and loads preprocessed data
+# 2. Configures SMM analyses for binary alcohol outcomes (drink_today, fourplustoday, felt_drunk)
+# 3. Runs run_smm_bernoulli() for each outcome/centering/g combination
+# 4. Generates probability-scale trajectory plots and classification results
+# 5. Compares models via BIC to identify optimal group numbers
+# 6. Saves all outputs (models, plots, classifications, BIC tables)
+#
+# DIFFERENCE FROM MAIN SMM SCRIPT:
+# - Uses ONLY run_smm_bernoulli.R (simplified Bernoulli-only implementation)
+# - Main SMM script (UKALC_06_smms.Rmd) uses run_smm_cyclic.R (handles both types)
+# - This script kept for legacy compatibility and focused binary analysis
+#
+# OUTPUT STRUCTURE:
+# - Base directory: output_folder/04b_smms_binary/SMMs_Binary_Only/
+# - Organized by: date (YYYYMMDD) → centering (menses/ovulation) → outcome/
+# - Per outcome/g: classification CSVs, trajectory plots (mean/roll/centered), BIC
+#
+# KEY FEATURES:
+# - Bernoulli distribution with logit link for binary outcomes
+# - Random intercepts only (no random slopes due to convergence issues with sparse data)
+# - Predictions on probability scale (0-1) for interpretability
+# - EM algorithm with RSS-based group assignment using Pearson residuals
+#
+# BINARY OUTCOMES ANALYZED:
+# - drink_today: Any alcohol consumption (0=no, 1=yes)
+# - fourplustoday: Heavy drinking episode (0=<4 drinks, 1=4+ drinks)
+# - felt_drunk: Subjective intoxication (0=no, 1=yes)
+#
+# SEE ALSO:
+# - scripts/run_smm_bernoulli.R for Bernoulli-specific implementation
+# - UKALC_06_smms.Rmd for unified continuous+binary SMM analysis
+# - docs/BINARY_OUTCOME_TESTING_GUIDE.md for testing procedures
+# =============================================================================
+
+```{r setup-binary-smm}
+# Source R File with Setup, Package Loading, and Output Folder Creation
+# 
+# This chunk loads the UKALC_00_setup.R script which:
+# - Loads all required packages (tidyverse, lme4, mgcv, gamm4, etc.)
+# - Sets global options (no scientific notation, 3 decimal places)
+# - Creates date-stamped output folder for all analysis products
+# - Sources graphics configuration for consistent plotting
+#
+# Then creates a subfolder specifically for binary SMM outputs
+
+source("UKALC_00_setup.R")
+
+# Create subfolder for Binary SMM outputs (keep output_folder as root-level directory)
+smms_binary_folder <- file.path(output_folder, "04b_smms_binary")
+if (!dir.exists(smms_binary_folder)) {
+  dir.create(smms_binary_folder, recursive = TRUE)
+  cat("Created Binary SMMs subfolder:", smms_binary_folder, "\n")
+}
+
+# Note: Do not overwrite output_folder; use smms_binary_folder explicitly for Binary SMM-specific files
+
+```
+
+
+# --- 1. SETUP & PARAMETERS ---
+
+```{r}
+## WHAT THIS SECTION DOES:
+# Loads required libraries and sets random seed for reproducible analyses.
+#
+## WHY IT'S NECESSARY:
+# - Libraries provide statistical modeling (gamm4, mgcv), data manipulation (dplyr, tidyr),
+#   and visualization (ggplot2) functionality
+# - Random seed ensures k-means initialization produces consistent group assignments
+#   across analysis runs
+#
+## IMPORTANT NOTES:
+# - Most packages already loaded by UKALC_00_setup.R
+# - slider package: Used for rolling averages (though not needed for binary outcomes)
+# - marginaleffects: Used for model predictions and contrasts
+
+# Load required libraries (most already loaded via UKALC_00_setup.R)
+library(dplyr)
+library(mgcv)
+library(gamm4)
+library(ggplot2)
+library(glue)
+library(tidyr)
+library(purrr)
+library(lubridate)
+library(zoo)
+library(marginaleffects)
+  
+# Set random seed for reproducibility
+set.seed(123)
+
+```
+
+
+# Load the data file
+```{r}
+## WHAT THIS SECTION DOES:
+# Loads the most recent cleaned/preprocessed UKALC dataset from the data/ folder.
+#
+## DATA SOURCE:
+# - Pattern: data/ukalc_YYYYMMDD*.rds
+# - Files are date-stamped (YYYYMMDD format sorts chronologically)
+# - Latest file = most recent data processing run
+#
+## PROCESSING:
+# - Lists all files matching pattern
+# - Sorts in descending order (newest first)
+# - Loads first (most recent) file
+#
+## OUTPUT:
+# - df: Main analysis dataframe with all participants and variables
+
+# LOAD LATEST CLEAN DATA FILE 
+
+# Get all files matching the pattern
+files <- list.files(path = "data", 
+                   pattern = "^analysis_ready_\\d{8}.*\\.rds$", 
+                   full.names = TRUE)
+
+# Sort files (dates in YYYYMMDD format will sort correctly alphabetically)
+latest_file <- sort(files, decreasing = TRUE)[1]
+
+# Load the dataset
+df <- readRDS(latest_file)
+
+# Print which file was loaded
+cat("Loaded dataset from:", latest_file, "\n")
+
+
+# Optional: Create sensitivity analysis subset (currently commented out)
+# Uncomment to restrict analyses to participants with confirmed ovulatory cycles
+# create df_sens that selects only those for whom Ov_Status = "Ovulatory"
+#df_sens <- df %>%
+  #filter(Ov_Status == "Ovulatory")
+
+#df <- df_sens
+```
+
+# Define the base folder for all outputs
+```{r}
+## WHAT THIS SECTION DOES:
+# Creates the output folder for all Binary SMM analysis products.
+#
+## FOLDER STRUCTURE:
+# - Base: smms_binary_folder (created in setup chunk)
+# - Subfolder: SMMs_Binary_Only
+# - Date-stamped subfolders created automatically by run_smm_bernoulli()
+#
+## WHY IT'S NECESSARY:
+# - Organizes outputs separate from continuous/mixed SMM analyses
+# - Prevents overwriting of other analysis products
+# - Facilitates comparison between binary-only and full SMM approaches
+
+smm_output_folder <- file.path(smms_binary_folder, "SMMs_OvandBord_Binary_Only")
+if (!dir.exists(smm_output_folder)) {
+  dir.create(smm_output_folder, recursive = TRUE)
+}
+```
+
+# Choose your time variables
+```{r}
+## WHAT THIS SECTION DOES:
+# Defines cyclic time variables for menses-centered and ovulation-centered analyses.
+#
+## TIME VARIABLES:
+# - cyclic_time_impute: Menses-centered time (-1 to +1, where 0 = menses onset)
+# - cyclic_time_imp_ov: Ovulation-centered time (-1 to +1, where 0 = ovulation)
+#
+## WHY IT'S NECESSARY:
+# - Different outcomes show clearer patterns with different centering
+# - Allows comparison of trajectory patterns relative to both cycle events
+# - Variables created in UKALC_01_data_prep.Rmd with forward-backward fill imputation
+
+menses_time_variable <- "cyclic_time_impute"
+ovulation_time_variable <- "cyclic_time_imp_ov"
+```
+
+
+# Define binary outcomes
+```{r}
+## WHAT THIS SECTION DOES:
+# Defines the complete list of BINARY outcomes to analyze with SMMs.
+#
+## FORMAT:
+# - Names: Technical variable names in the dataframe
+# - Values: Human-readable labels for plot titles
+#
+## IMPORTANT NOTES:
+# - All outcomes MUST be binary (0/1) variables
+# - run_smm_bernoulli() validates binary format and will error if not 0/1
+# - These are the only outcomes analyzed in this script (no continuous variables)
+#
+## BINARY DRINKING OUTCOMES:
+# - drink_today_bin: Any alcohol consumption (yes/no)
+# - fourplustoday_bin: Binge drinking, defined as 4+ drinks in one day
+# - felt_drunk_today_bin: Self-reported subjective intoxication
+
+binary_outcomes <- c(
+  # --- Binary Substance Use Outcomes ---
+  "drink_today_bin"      = "Any Drinking Today",
+  "fourplustoday_bin"    = "Binge Drinking (4+)",
+  "felt_drunk_today_bin" = "Felt Drunk"
+)
+
+```
+
+
+
+# --- 2. AUTOMATED ANALYSIS LOOP ---
+
+# Source helper functions
+```{r}
+## WHAT THIS SECTION DOES:
+# Loads helper functions for SMM analysis pipeline.
+#
+## FUNCTIONS LOADED:
+# - preprocess_outcome.R: Log transformation and person-centering (NOT USED for binary)
+# - subset_by_phase_cyclic.R: Filters to participants with sufficient observations per phase
+# - run_smm_bernoulli.R: Binary-only SMM fitting with Bernoulli distribution
+# - model_plot_modx_gam_cyclic.R: Generates GAM plots with moderator effects
+# - compare_bic_cyclic.R: Creates BIC comparison plots across group sizes
+#
+## WHY IT'S NECESSARY:
+# - Modular functions enable reuse across different outcome types
+# - Centralized functions ensure consistent analysis approach
+# - Easier debugging and maintenance than inline code
+
+# Source function files
+source("scripts/preprocess_outcome.R")
+source("scripts/subset_by_phase_cyclic.R")
+source("scripts/run_smm_bernoulli.R")
+source("scripts/model_plot_modx_gam_cyclic.R")
+source("scripts/compare_bic_cyclic.R")
+
+```
+
+```{r}
+## WHAT THIS SECTION DOES:
+# Runs Smoothing Mixture Models (SMMs) for all binary outcomes with both
+# menses-centered and ovulation-centered time variables.
+#
+## ANALYSIS PIPELINE:
+# For each outcome × centering combination:
+# 1. Preprocess outcome (though binary outcomes skip log/centering transformations)
+# 2. Subset to participants with ≥4 observations per phase (sufficient data)
+# 3. Fit SMM models with g=2, 3, and 4 groups
+# 4. Generate BIC comparison plots
+# 5. Generate GAM plots showing group trajectories
+# 6. Save all results (classifications, plots, BIC tables)
+#
+## COVARIATES:
+# - day_of_week: Fixed effect for day-of-week patterns (Friday = reference level)
+# - session_today: Fixed effect for lab session presence (0/1)
+#
+## ERROR HANDLING:
+# - Skips outcomes with insufficient data (<15 total observations after subsetting)
+# - Singular matrix errors handled gracefully within run_smm_bernoulli()
+# - Convergence issues logged but do not halt pipeline
+#
+## OUTPUTS:
+# - all_smm_results: List of SMM model objects and classifications
+# - all_bic_results: List of BIC comparison data
+# - all_gam_results: List of GAM smoothing results
+
+# --- AUTOMATED ANALYSIS LOOP ---
+analysis_combinations <- expand.grid(
+  outcome = names(binary_outcomes),
+  centering = c("menses", "ovulation"),
+  stringsAsFactors = FALSE
+)
+
+all_smm_results <- list()
+all_bic_results <- list()
+all_gam_results <- list()
+
+# Set reference levels for covariates (before analysis loop)
+# Check if covariates exist in the data
+if ("day_of_week" %in% names(df)) {
+  # Set Friday as reference for day_of_week
+  df$day_of_week <- relevel(factor(df$day_of_week), ref = "Friday")
+} else {
+  warning("Column 'day_of_week' not found in data. Covariates will not be used.")
+}
+
+if ("session_today" %in% names(df)) {
+  # Ensure session_today is numeric 0/1 (0 is automatically the reference)
+  df$session_today <- as.numeric(df$session_today)
+} else {
+  warning("Column 'session_today' not found in data. Covariates will not be used.")
+}
+
+for (i in 1:nrow(analysis_combinations)) {
+  current_outcome <- analysis_combinations$outcome[i]
+  current_centering <- analysis_combinations$centering[i]
+  current_plot_label <- binary_outcomes[current_outcome]
+  current_time_var <- ifelse(current_centering == "menses", menses_time_variable, ovulation_time_variable)
+
+  message(paste0("\n🚀 Starting analysis for: '", current_plot_label, "' (", current_centering, "-centered)"))
+
+  # For binary outcomes, preprocess_outcome is not strictly needed (no log transform),
+  # but we call it for consistency with the pipeline structure
+  preprocessed_data <- preprocess_outcome(data = df, outcome = current_outcome)
+
+  subset_result <- subset_by_phase_cyclic(
+    data = preprocessed_data,
+    outcome = current_outcome,
+    time_var = current_time_var,
+    min_obs = 4  # Require at least 4 observations per phase
+  )
+  data_for_analysis <- subset_result$data_subset
+
+  if (nrow(data_for_analysis) < 10) { # Require at least 10 total observations to proceed
+      message(paste0("⚠️ Skipping '", current_plot_label, "' due to insufficient data after subsetting."))
+      next
+  }
+
+  smm_results <- run_smm_bernoulli(
+    data = data_for_analysis,
+    outcome = current_outcome,
+    time_var = current_time_var,
+    plot_label = current_plot_label,
+    g = 2:4,
+    centering = current_centering,
+    save_dir = smm_output_folder,
+    covariates = c("day_of_week", "session_today")  # EXPLICIT
+  )
+
+  list_name <- paste0(current_outcome, "_", current_centering)
+  all_smm_results[[list_name]] <- smm_results
+
+  # Generate BIC comparison plot
+  if (!is.null(smm_results) && length(smm_results$all_results) > 0) {
+    bic_result <- compare_bic_cyclic(
+      data = data_for_analysis,
+      outcome = current_outcome,
+      time_var = current_time_var,
+      centering = current_centering,
+      smm_results = smm_results,
+      save_dir = smm_output_folder
+    )
+    all_bic_results[[list_name]] <- bic_result
+
+    gams <- model_plot_modx_gam_cyclic(
+  data = data_for_analysis,
+  outcome = current_outcome,
+  time_var = current_time_var,
+  smm_result = smm_results,
+  centering = current_centering,
+  save_dir = smm_output_folder,
+  covariates = c("day_of_week", "session_today")  # EXPLICIT - must match run_smm_bernoulli
+)
+    all_gam_results[[list_name]] <- gams
+  }
+
+  message(paste0("✅ Finished analysis for: '", current_plot_label, "' (", current_centering, "-centered)"))
+}
+
+message("\n🏁 ALL BINARY OUTCOMES PROCESSED! 🏁")
+```
+
+
+# --- 3. SAVE ALL RESULTS ---
+
+```{r}
+## WHAT THIS SECTION DOES:
+# Saves all Smoothing Mixture Model (SMM) analysis results to RDS files for:
+# - all_smm_results: SMM model objects, classifications, and posterior probabilities
+# - all_bic_results: BIC comparison data for model selection
+# - all_gam_results: GAM (Generalized Additive Model) smoothing results
+#
+## WHY IT'S NECESSARY:
+# - Enables reloading results in future R sessions without re-running analyses
+# - SMM analyses can take considerable time; saving results improves workflow efficiency
+# - Allows iterative labeling and exploration without recalculating models
+#
+## IMPORTANT NOTES:
+# - Files saved to smm_output_folder (defined in Section 1)
+# - Each RDS file preserves complete R objects with all metadata
+# - To reload: use readRDS() as shown in Section 7
+
+message("\n💾 Saving results objects...")
+
+saveRDS(all_smm_results, file = file.path(smm_output_folder, "all_smm_results.rds"))
+message("✅ Saved: all_smm_results.rds")
+
+saveRDS(all_bic_results, file = file.path(smm_output_folder, "all_bic_results.rds"))
+message("✅ Saved: all_bic_results.rds")
+
+saveRDS(all_gam_results, file = file.path(smm_output_folder, "all_gam_results.rds"))
+message("✅ Saved: all_gam_results.rds")
+
+message(glue("\n📁 All results saved to {smm_output_folder}"))
+```
+
+
+# --- 4. SELECT CONFIGURATION FOR EACH OUTCOME (OPTIONAL) ---
+
+```{r}
+## WHAT THIS SECTION DOES:
+# Selects optimal cycle centering (menses vs ovulation) AND group size (g) for each 
+# outcome based on:
+# - BIC values from Section 2 analysis loop
+# - Visual inspection of trajectory plots
+# - Domain knowledge about binary drinking patterns
+#
+## HOW IT INTEGRATES WITH PREVIOUS SECTIONS:
+# - Section 2 runs SMM analyses for ALL outcomes with BOTH centering methods and g=2:4
+# - This section lets you choose specific centering + g combinations for each outcome
+# - Selected configurations are used for labeling in Section 5
+#
+## USER DECISIONS NEEDED:
+# - Review BIC comparison plots (saved by Section 2)
+# - Adjust outcome_config_selections dataframe as needed
+# - You can now select MULTIPLE versions per outcome (e.g., multiple g values or centering methods)
+# - Default: All binary outcomes with both menses and ovulation centering with g=2:4
+#
+## WHY SELECT CONFIGURATIONS?
+# Different outcomes may fit better with different centering:
+# - Drinking patterns may align better with menses-centered (premenstrual drinking)
+# - Or ovulation-centered (mid-cycle drinking patterns)
+# 
+# You can select multiple versions per outcome. For example:
+# - drink_today_bin: 2-group menses-centered, 3-group ovulation-centered, 4-group ovulation-centered
+# - fourplustoday_bin: 3-group menses-centered, 4-group menses-centered
+# 
+# Select the best centering + g combinations based on BIC values and visual inspection.
+
+# Set to TRUE to enable configuration selection (recommended)
+# Set to FALSE to label all centering methods and group sizes for all outcomes
+use_selected_configs <- TRUE
+
+if (use_selected_configs) {
+  # Only include outcomes that actually have SMM results available in `all_smm_results`
+  # Extract outcome names by removing the centering suffix (_menses or _ovulation)
+  available_outcomes <- unique(sub("_(menses|ovulation)$", "", names(all_smm_results)))
+  selected_outcomes <- intersect(names(binary_outcomes), available_outcomes)
+  
+  # Inform the user if any outcomes were excluded because they had no SMM results
+  excluded_outcomes <- setdiff(names(binary_outcomes), selected_outcomes)
+  if (length(excluded_outcomes) > 0L) {
+    message(
+      "⚠️  Excluding outcomes with no SMM results from configuration selection: ",
+      paste(excluded_outcomes, collapse = ", ")
+    )
+  }
+  
+  # ===== EASIER CONFIGURATION APPROACH (Recommended for multiple outcomes) =====
+  # 
+  # Instead of manually building dataframes, use this compact list-based approach:
+  # - Specify configurations per outcome using named lists
+  # - Much easier to read and maintain with many outcomes
+  # - Each outcome can have different centering methods and g values
+  
+  # Define your configuration as a named list
+  # Format: outcome_name = list(menses = c(g_values), ovulation = c(g_values))
+  smm_config <- list(
+    # Binary drinking outcomes - typically test both menses and ovulation centering
+    drink_today_bin      = list(menses = 2:4, ovulation = 2:4),
+    fourplustoday_bin    = list(menses = 2:4, ovulation = 2:4),
+    felt_drunk_today_bin = list(menses = 2:4, ovulation = 2:4)
+  )
+  
+  # Example customizations:
+  # - Select only specific g values: drink_today_bin = list(menses = c(2, 4))  # Skip g=3
+  # - Mix centering methods: drink_today_bin = list(menses = 2, ovulation = c(3, 4))
+  # - Single version only: fourplustoday_bin = list(menses = 3)
+  
+  # Convert the compact list format to the dataframe format
+  outcome_config_selections <- do.call(rbind, lapply(names(smm_config), function(outcome) {
+    config <- smm_config[[outcome]]
+    rows <- list()
+    for (centering_method in names(config)) {
+      g_values <- config[[centering_method]]
+      for (g_val in g_values) {
+        rows[[length(rows) + 1]] <- data.frame(
+          outcome = outcome,
+          centering = centering_method,
+          g = g_val,
+          stringsAsFactors = FALSE
+        )
+      }
+    }
+    do.call(rbind, rows)
+  }))
+  
+  # Filter to only outcomes with available results
+  outcome_config_selections <- subset(
+    outcome_config_selections,
+    outcome %in% selected_outcomes
+  )
+  
+  # Validate selections exist in results
+  message("\n📋 Configuration selections:")
+  print(outcome_config_selections)
+  
+  valid_selections <- TRUE
+  for (config_idx in 1:nrow(outcome_config_selections)) {
+    outcome <- outcome_config_selections$outcome[config_idx]
+    centering <- outcome_config_selections$centering[config_idx]
+    g <- outcome_config_selections$g[config_idx]
+    list_name <- paste0(outcome, "_", centering)
+    
+    if (!(list_name %in% names(all_smm_results))) {
+      message(glue("⚠️  Configuration not found: {list_name}"))
+      valid_selections <- FALSE
+    } else if (!(as.character(g) %in% names(all_smm_results[[list_name]]$all_results))) {
+      message(glue("⚠️  Group size g={g} not found for: {list_name}"))
+      valid_selections <- FALSE
+    }
+  }
+  
+  if (valid_selections) {
+    message("✅ All selected configurations found in results!")
+  } else {
+    message("⚠️  Some configurations not found. Available:")
+    print(names(all_smm_results))
+  }
+} else {
+  outcome_config_selections <- NULL
+  message("ℹ️  Configuration selection disabled - will process all centering methods")
+}
+```
+
+
+# --- 5. INTERACTIVE GROUP LABELING (OPTIONAL BUT RECOMMENDED) ---
+
+```{r}
+## WHAT IT DOES:
+# - Loads helper functions for interactive group labeling
+# - Builds list of labeling targets based on configuration selections
+# - Sets up batch processing for assigning meaningful names to trajectory groups
+#
+## WHY IT'S NECESSARY:
+# - SMM assigns arbitrary group numbers (1, 2, 3) with no inherent meaning
+# - Meaningful labels (e.g., "Luteal-Peak", "Stable-Low") improve interpretability
+# - Consistent labeling ensures clarity in manuscripts and presentations
+#
+## IMPORTANT NOTES:
+# - Labeling functions: defined in scripts/label_smm_groups.R
+# - Common label patterns for binary outcomes:
+#   * Timing-based: "Perimenstrual-High", "Luteal-Peak", "Follicular-Low"
+#   * Pattern-based: "Stable-Low", "Cyclic-Pattern", "Stable-High"
+#   * Probability-based: "High-Risk", "Low-Risk", "Variable"
+# - Labels are saved to CSV files alongside plots for reproducibility
+# - With the new configuration format, you can now select specific g values per outcome
+
+# Load labeling functions
+if (!file.exists("scripts/label_smm_groups.R")) {
+  stop("Required file not found: scripts/label_smm_groups.R")
+}
+source("scripts/label_smm_groups.R")
+
+# Safety check: if user requested selected configs, ensure selections are available
+if (isTRUE(use_selected_configs) &&
+    (!exists("outcome_config_selections") || is.null(outcome_config_selections))) {
+  stop(
+    "use_selected_configs is TRUE, but 'outcome_config_selections' is not available.\n",
+    "Please run the configuration selection step before this labeling chunk."
+  )
+}
+
+# Define which analyses to label
+labeling_targets <- list()
+
+if (use_selected_configs && !is.null(outcome_config_selections)) {
+  # Use selected configurations - now includes specific g values per outcome
+  message("\n🏷️  Setting up labeling for selected configurations...")
+  
+  for (config_idx in 1:nrow(outcome_config_selections)) {
+    outcome <- outcome_config_selections$outcome[config_idx]
+    centering <- outcome_config_selections$centering[config_idx]
+    g <- outcome_config_selections$g[config_idx]
+    
+    # Add labeling target with the specific g value from configuration
+    labeling_targets[[length(labeling_targets) + 1]] <- list(
+      outcome = outcome,
+      centering = centering,
+      g = g
+    )
+  }
+} else {
+  # Manual configuration - example for key binary outcomes
+  message("\n🏷️  Add your own labeling targets...")
+  
+  # Example: Label drinking with menses-centered, 3 groups
+  # labeling_targets[[1]] <- list(outcome = "drink_today_bin", centering = "menses", g = 3)
+  
+  # Example: Label binge drinking with ovulation-centered, 3 groups
+  # labeling_targets[[2]] <- list(outcome = "fourplustoday_bin", centering = "ovulation", g = 3)
+}
+
+message(glue("📝 Total labeling targets: {length(labeling_targets)}"))
+```
+
+```{r eval=FALSE}
+# INTERACTIVE LABELING
+# 
+# TO RUN THIS INTERACTIVELY:
+# - Either change `eval=FALSE` to `eval=TRUE` in the chunk header above, OR
+# - Run this chunk manually (Ctrl+Enter / Cmd+Enter in RStudio)
+# 
+# When run, this code will prompt you to view plots and enter labels for each group.
+#
+# DEPENDENCIES:
+# This chunk requires objects created in earlier sections:
+# - labeling_targets: list of labeling configurations (from Section 5)
+# - all_smm_results: SMM model results (from Section 2)
+# - smm_output_folder: output directory (from Section 1)
+#
+# If you enable this chunk without running the preceding setup and model-fitting
+# sections, these objects will be missing and the code will fail.
+
+# Safety check to ensure required objects exist before proceeding
+required_objects <- c("labeling_targets", "all_smm_results", "smm_output_folder")
+missing_objects <- required_objects[!vapply(required_objects, exists, logical(1))]
+if (length(missing_objects) > 0) {
+  stop(
+    "This interactive labeling chunk depends on objects created in earlier chunks:\n",
+    "  - labeling_targets (Section 5)\n",
+    "  - all_smm_results (Section 2)\n",
+    "  - smm_output_folder (Section 1)\n\n",
+    "The following objects are missing: ",
+    paste(missing_objects, collapse = ", "), "\n",
+    "Please run the SMM setup and model-fitting chunks before enabling this chunk."
+  )
+}
+
+if (length(labeling_targets) > 0) {
+  date_folder <- format(Sys.Date(), "%Y%m%d")
+  all_group_labels <- list()
+  
+  for (target in labeling_targets) {
+    outcome <- target$outcome
+    centering <- target$centering
+    g <- target$g
+    
+    message(glue("\n{strrep('=', 80)}"))
+    message(glue("🏷️  LABELING: {outcome} ({centering}-centered, g={g})"))
+    message(glue("{strrep('=', 80)}\n"))
+    
+    # Check if this analysis exists
+    list_name <- paste0(outcome, "_", centering)
+    if (!list_name %in% names(all_smm_results)) {
+      message(glue("⚠️  Skipping - no results found for {list_name}"))
+      next
+    }
+    
+    # Check if this group size exists
+    if (!as.character(g) %in% names(all_smm_results[[list_name]]$all_results)) {
+      message(glue("⚠️  Skipping - g={g} not available for {list_name}"))
+      next
+    }
+    
+    # Interactive labeling
+    labels <- label_smm_groups(
+      base_save_dir = smm_output_folder,
+      outcome = outcome,
+      centering = centering,
+      g = g,
+      date_folder = date_folder,
+      interactive = TRUE
+    )
+    
+    # Save labels to CSV
+    save_group_labels(
+      labels_df = labels,
+      base_save_dir = smm_output_folder,
+      outcome = outcome,
+      centering = centering,
+      g = g,
+      date_folder = date_folder
+    )
+    
+    # Store in list
+    label_key <- glue("{outcome}_{centering}_g{g}")
+    all_group_labels[[label_key]] <- labels
+    
+    message(glue("✅ Labels saved for {label_key}\n"))
+  }
+  
+  message("\n🎉 ALL LABELING COMPLETE!")
+  
+  # Save all labels object
+  saveRDS(all_group_labels, file = file.path(smm_output_folder, "all_group_labels.rds"))
+  message(glue("💾 Saved: all_group_labels.rds"))
+}
+```
+
+
+# --- 6. APPLY LABELS TO CLASSIFICATION DATA ---
+
+```{r}
+## WHAT THIS SECTION DOES:
+# Applies human-readable labels to SMM classification dataframes by:
+# - Merging group labels (from Section 5) with classification results (from Section 2)
+# - Creating labeled dataframes ready for downstream analyses
+# - Saving labeled classifications for use in subsequent R sessions
+#
+## INPUT DATA:
+# - all_group_labels: Label mappings created in interactive labeling (Section 5)
+#   Structure: list of dataframes with smm_group and group_label columns
+#
+## PROCESSING:
+# - Parses label keys to extract outcome, centering, and group size
+# - Retrieves corresponding classification dataframe from all_smm_results
+# - Applies labels via apply_group_labels() helper function
+# - Preserves all original columns (id, smm_group, posterior probabilities)
+#
+## OUTPUT:
+# - all_labeled_classifications.rds: List of labeled classification dataframes
+#   saved to smm_output_folder for merging with main analysis dataset
+
+# Check if labels exist (defined here for chunk independence)
+has_labels <- exists("all_group_labels") && length(all_group_labels) > 0
+
+if (has_labels) {
+  message("\n📊 Applying labels to classification dataframes...")
+  
+  all_labeled_classifications <- list()
+  
+  for (label_key in names(all_group_labels)) {
+    # Parse the key: expected pattern "outcome_centering_g#"
+    # Use regex to safely handle outcome names that may contain underscores or "g"
+    key_match <- regexec("^(.*)_g([0-9]+)$", label_key)
+    match_vec <- regmatches(label_key, key_match)[[1]]
+    # If the key does not match the expected pattern, skip to avoid mis-parsing
+    if (length(match_vec) != 3L) next
+    
+    outcome_centering <- match_vec[2]
+    g <- as.numeric(match_vec[3])
+    
+    # Check if results exist
+    if (!outcome_centering %in% names(all_smm_results)) next
+    if (!as.character(g) %in% names(all_smm_results[[outcome_centering]]$all_results)) next
+    
+    # Get classification dataframe
+    class_df <- all_smm_results[[outcome_centering]]$all_results[[as.character(g)]]$class
+    
+    # Apply labels
+    class_labeled <- apply_group_labels(class_df, all_group_labels[[label_key]])
+    
+    # Store
+    all_labeled_classifications[[label_key]] <- class_labeled
+    
+    message(glue("✅ Applied labels to {label_key}"))
+  }
+  
+  # Save labeled classifications
+  saveRDS(all_labeled_classifications, 
+          file = file.path(smm_output_folder, "all_labeled_classifications.rds"))
+  message(glue("\n💾 Saved: all_labeled_classifications.rds"))
+}
+```
+
+
+# --- 7. LOAD SAVED RESULTS (FOR FUTURE SESSIONS) ---
+
+```{r}
+## WHAT THIS SECTION PROVIDES:
+# Template code for reloading saved SMM results in future R sessions without
+# re-running the computationally intensive analyses from Section 2.
+#
+## WHEN TO USE:
+# - Starting a new R session after completing SMM analyses
+# - Returning to labeling or exploration after closing RStudio
+# - Sharing results with collaborators who don't need to refit models
+#
+## WHAT CAN BE LOADED:
+# - all_smm_results.rds: Complete SMM model objects and classifications
+# - all_bic_results.rds: BIC comparison data for model selection
+# - all_gam_results.rds: GAM smoothing results
+# - all_group_labels.rds: Interactive label mappings (if previously created)
+# - all_labeled_classifications.rds: Labeled classification dataframes
+# - Individual label CSV files: Specific labels for outcome/centering/g combinations
+#
+## IMPORTANT NOTES:
+# - All lines below are commented by default
+# - Uncomment only the lines you need for your current session
+# - Ensure file paths match your output folder structure
+
+## If you need to reload results from a previous session:
+
+# Load all results
+# all_smm_results <- readRDS(file.path(smm_output_folder, "all_smm_results.rds"))
+# all_bic_results <- readRDS(file.path(smm_output_folder, "all_bic_results.rds"))
+# all_gam_results <- readRDS(file.path(smm_output_folder, "all_gam_results.rds"))
+
+# Load labels (if you've already created them)
+# all_group_labels <- readRDS(file.path(smm_output_folder, "all_group_labels.rds"))
+# all_labeled_classifications <- readRDS(file.path(smm_output_folder, "all_labeled_classifications.rds"))
+
+# Or load specific labels from CSV:
+# labels_drink_g3 <- load_group_labels(
+#   base_save_dir = smm_output_folder,
+#   outcome = "drink_today_bin",
+#   centering = "menses",
+#   g = 3,
+#   date_folder = "20260107"
+# )
+```
+
+
+# --- 8. ANALYSIS SUMMARY ---
+
+```{r}
+## WHAT THIS SECTION DOES:
+# Provides a comprehensive summary of the completed Binary SMM analyses including:
+# - Count of outcomes successfully analyzed
+# - List of available results with centering methods and group sizes
+# - Configurations that have been labeled (if Section 5 was run)
+# - Locations of all saved output files
+#
+## USE CASE:
+# Quick reference to understand what was accomplished in this session and
+# what files are available for downstream analyses or future sessions.
+
+# Check if labels exist (defined here for chunk independence)
+# Note: Redefined here to allow Section 8 to run independently of Section 6
+has_labels <- exists("all_group_labels") && length(all_group_labels) > 0
+
+message("\n📊 ========== BINARY SMM ANALYSIS SUMMARY ==========")
+message(glue("Total outcomes analyzed: {length(all_smm_results)}"))
+message("\n✅ Available results:")
+for (name in names(all_smm_results)) {
+  if (!is.null(all_smm_results[[name]]$all_results)) {
+    group_sizes <- names(all_smm_results[[name]]$all_results)
+    message(glue("  - {name}: g = {paste(group_sizes, collapse=', ')}"))
+  }
+}
+
+if (has_labels) {
+  message("\n🏷️  Labeled configurations:")
+  for (label_key in names(all_group_labels)) {
+    message(glue("  - {label_key}"))
+  }
+}
+
+message("\n📁 Saved files:")
+message(glue("  - all_smm_results.rds"))
+message(glue("  - all_bic_results.rds"))
+message(glue("  - all_gam_results.rds"))
+if (has_labels) {
+  message(glue("  - all_group_labels.rds"))
+  message(glue("  - all_labeled_classifications.rds"))
+}
+
+message(glue("\n📂 Output folder: {smm_output_folder}"))
+message("\n🎉 Binary SMM Analysis complete!")
+```
+
+
+```{r}
+# Restore original dataframe (df_orig) to df to reset any modifications
+# made during the SMM analyses. This prepares for potential subsequent analyses
+# or code chunks that expect the unmodified input data.
+if (exists("df_orig")) {
+  df <- df_orig
+} else {
+  warning("df_orig does not exist; df remains unchanged")
+}
+
+```
+

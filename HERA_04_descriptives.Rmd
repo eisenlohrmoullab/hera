@@ -1,0 +1,1543 @@
+---
+title: "UKALC_ADHDCYCLE_1_Descriptives"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    fig_caption: true
+    code_folding: show
+    self_contained: true
+---
+
+
+```{r}
+#Source R File with Setup, Package Loading, and Output Folder Creation
+
+source("UKALC_00_setup.R")
+
+# Create subfolder for descriptives outputs
+descriptives_folder <- file.path(output_folder, "02_descriptives")
+if (!dir.exists(descriptives_folder)) {
+  dir.create(descriptives_folder, recursive = TRUE)
+  cat("Created descriptives subfolder:", descriptives_folder, "\n")
+}
+
+# LOAD LATEST CLEAN DATA FILE 
+
+# Get all files matching the pattern
+files <- list.files(path = "data", 
+                   pattern = "^analysis_ready_\\d{8}.*\\.rds$", 
+                   full.names = TRUE)
+
+# Sort files (dates in YYYYMMDD format will sort correctly alphabetically)
+latest_file <- sort(files, decreasing = TRUE)[1]
+
+# Load the dataset
+df <- readRDS(latest_file)
+
+# Print which file was loaded
+cat("Loaded dataset from:", latest_file, "\n")
+
+```
+
+
+# Import Data
+```{r}
+# --- 1. Setup ---
+
+# Add all your continuous outcome variable names here
+continuous_vars <- c(
+  "num_drinks_today", "bac_peak_percent", "crave_alc_am", "crave_alc_pm", "crave_nic_am", "crave_mar_am",
+  "diff_stop", "diff_change", "immed_payoff", "res_urge", 
+  "diff_long_rew", "diff_res_rew", "dep", "hopeless", 
+  "worthless", "anxious", "mood_swing", "rej_sens", 
+  "angry", "conflicts", "loss_interest", "diff_conc", 
+  "tired", "over_eat", "sp_food_crav", "high_sleep", 
+  "diff_sleep", "overwhelm", "loss_control", "breast_tend", 
+  "breast_swell", "headache", "jm_pain", "loss_prod", 
+  "int_relat", "crave_alc_pm", "crave_nic_pm", "crave_mar_pm"
+)
+
+outcome_labels <- c(
+  # --- Substance Use & Craving ---
+  "num_drinks_today" = "Number of Drinks",
+  "bac_peak_percent" = "Peak BAC (%)",
+  "drink_today"      = "Any Drinking Today",
+  "fourplustoday"    = "Binge Drinking (4+)",
+  "felt_drunk"       = "Felt Drunk",
+  "crave_alc_am"     = "Alcohol Craving (AM)",
+  "crave_alc_pm"     = "Alcohol Craving (PM)",
+  "crave_nic_am"     = "Nicotine Craving (AM)",
+  "crave_nic_pm"     = "Nicotine Craving (PM)",
+  "crave_mar_am"     = "Marijuana Craving (AM)",
+  "crave_mar_pm"     = "Marijuana Craving (PM)",
+
+  # --- Impulsivity & Reward ---
+  "diff_stop"        = "Difficulty Stopping",
+  "diff_change"      = "Difficulty Changing",
+  "immed_payoff"     = "Immediate Payoff Pref.",
+  "res_urge"         = "Resistance to Urges",
+  "diff_long_rew"    = "Diff. Waiting Long Reward",
+  "diff_res_rew"     = "Diff. Resisting Reward",
+  "bdefs_impulsiveaction" = "Impulsive Action (BDEFS)",
+  "bdefs_delayaversion" = "Delay Aversion (BDEFS)",
+
+  # --- Mood & Affect (DRSP/PMDD) ---
+  "dep"              = "Depression",
+  "hopeless"         = "Hopelessness",
+  "worthless"        = "Worthlessness",
+  "anxious"          = "Anxiety",
+  "mood_swing"       = "Mood Swings",
+  "rej_sens"         = "Rejection Sensitivity",
+  "angry"            = "Anger/Irritability",
+  "conflicts"        = "Interpersonal Conflicts",
+  "loss_interest"    = "Loss of Interest",
+  "overwhelm"        = "Feeling Overwhelmed",
+  "loss_control"     = "Feeling Out of Control",
+  "int_relat"        = "Relationship Conflicts",
+
+  # --- DRSP Aggregate Scores ---
+  "drsp_total"       = "DRSP Total",
+  "drsp_distress"    = "Distress (DRSP)",
+  "drsp_labilsocsx"  = "Social/Affect Lability (DRSP)",
+  "drsp_breastpain"  = "Breast Sx (DRSP)",
+  "drsp_eatsx"       = "Eating Sx",
+  "drsp_lowarousal"  = "Low Arousal Sx (DRSP)",
+
+  # --- Physical & Cognitive Symptoms ---
+  "diff_conc"        = "Difficulty Concentrating",
+  "tired"            = "Fatigue/Lethargy",
+  "high_sleep"       = "Hypersomnia",
+  "diff_sleep"       = "Insomnia",
+  "over_eat"         = "Overeating",
+  "sp_food_crav"     = "Specific Food Cravings",
+  "breast_tend"      = "Breast Tenderness",
+  "breast_swell"     = "Breast Swelling",
+  "headache"         = "Headache",
+  "jm_pain"          = "Joint/Muscle Pain",
+  "loss_prod"        = "Decreased Productivity"
+)
+```
+
+# ------ SMM ELIGIBILITY at 5 OBS PER PHASE - MORNING/ALCOHOL OUTCOMES ------
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyr) # For pivot_longer in the combined plot
+
+# 1. DATA PREP ------------------------------------------------------------
+# Save smm eligibility data
+alcsmmelig <- cycledata_check(df, "drink_today")
+
+# Merge back to df by id
+df <- df %>%
+  left_join(alcsmmelig$by_id %>% select(id, drink_today_follicular, drink_today_luteal), by = "id")
+
+# Create a clean plotting dataset with an explicit "Low Data" flag
+# This makes the ggplot logic much simpler
+plot_data <- alcsmmelig$by_id %>%
+  mutate(
+    # Create a boolean flag: TRUE if EITHER phase is < 5
+    low_data_flag = drink_today_follicular < 5 | drink_today_luteal < 5,
+    # Convert to factor for nice legend labels
+    status = ifelse(low_data_flag, "Excluded (<5 days)", "Included")
+  )
+
+# 2. INDIVIDUAL PLOTS -----------------------------------------------------
+
+# Follicular Plot
+p_drink_follicular <- ggplot(plot_data, aes(x = id, y = drink_today_follicular, fill = status)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_hline(yintercept = 5, linetype = "dashed", color = "red") +
+  scale_fill_manual(values = c("Excluded (<5 days)" = "red", "Included" = "lightblue")) +
+  annotate("text", x = Inf, y = 5, label = "5-day threshold", hjust = 1.1, vjust = -0.5, color = "red", size = 4) +
+  labs(title = "Follicular Phase Drinking Days", y = "Days", x = "Participant ID") +
+  theme_minimal()
+
+print(p_drink_follicular)
+
+# Luteal Plot (Fixed the object name to p_drink_luteal)
+p_drink_luteal <- ggplot(plot_data, aes(x = id, y = drink_today_luteal, fill = status)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_hline(yintercept = 5, linetype = "dashed", color = "red") +
+  scale_fill_manual(values = c("Excluded (<5 days)" = "red", "Included" = "lightblue")) +
+  annotate("text", x = Inf, y = 5, label = "5-day threshold", hjust = 1.1, vjust = -0.5, color = "red", size = 4) +
+  labs(title = "Luteal Phase Drinking Days", y = "Days", x = "Participant ID") +
+  theme_minimal()
+
+print(p_drink_luteal)
+
+
+# 3. COMBINED PLOT --------------------------------------------------------
+
+# To show both phases side-by-side per ID, we pivot to long format
+p_combined_drink <- plot_data %>%
+  pivot_longer(cols = c(drink_today_follicular, drink_today_luteal), 
+               names_to = "phase", 
+               values_to = "days") %>%
+  mutate(phase = recode(phase, "drink_today_follicular" = "Follicular", "drink_today_luteal" = "Luteal")) %>%
+  ggplot(aes(x = id, y = days, fill = status)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) + # 'dodge' puts bars side-by-side
+  geom_hline(yintercept = 5, linetype = "dashed", color = "gray50") +
+  scale_fill_manual(values = c("Excluded (<5 days)" = "red", "Included" = "lightblue")) +
+  labs(title = "Drinking Days by Phase (Red = <5 days in EITHER phase)", 
+       y = "Number of Drinking Days", 
+       x = "Participant ID") +
+  facet_wrap(~phase, ncol = 1) + # Optional: Split panels if you have many IDs
+  theme_minimal(base_size = 14)
+
+print(p_combined_drink)
+
+save_png(plot = p_combined_drink,
+         filename = "combined_drink_data_availability.png",
+         folder = descriptives_folder,
+         width = 10,
+         height = 8,
+         dpi = 300)
+
+
+# 4. COUNTS ---------------------------------------------------------------
+
+# Count number of ids where either follicular or luteal is <5
+# We can use the flag we created earlier
+num_ids_below_threshold <- sum(plot_data$low_data_flag)
+cat("Number of IDs with fewer than 5 drinking days in either phase:", num_ids_below_threshold, "\n")
+
+# Add number that do have >=5 in both phases
+num_ids_above_threshold <- sum(!plot_data$low_data_flag)
+cat("Number of IDs with 5 or more drinking days in both phases:", num_ids_above_threshold, "\n")
+```
+
+# ------ SMM ELIGIBILITY at 5 OBS PER PHASE - EVENING/DRSP OUTCOMES ------
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# 1. DATA PREP ------------------------------------------------------------
+# Save smm eligibility data for 'dep'
+depsmmelig <- cycledata_check(df, "dep")
+
+# Merge back to df by id
+df <- df %>%
+  left_join(depsmmelig$by_id %>% select(id, dep_follicular, dep_luteal), by = "id")
+
+# Create a clean plotting dataset with an explicit "Low Data" flag
+plot_data <- depsmmelig$by_id %>%
+  mutate(
+    # Create a boolean flag: TRUE if EITHER phase is < 5
+    low_data_flag = dep_follicular < 5 | dep_luteal < 5,
+    # Convert to factor for nice legend labels
+    status = ifelse(low_data_flag, "Excluded (<5 days)", "Included")
+  )
+
+# 2. INDIVIDUAL PLOTS -----------------------------------------------------
+
+# Follicular Plot
+p_dep_follicular <- ggplot(plot_data, aes(x = id, y = dep_follicular, fill = status)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_hline(yintercept = 5, linetype = "dashed", color = "red") +
+  scale_fill_manual(values = c("Excluded (<5 days)" = "red", "Included" = "lightblue")) +
+  annotate("text", x = Inf, y = 5, label = "5-day threshold", hjust = 1.1, vjust = -0.5, color = "red", size = 4) +
+  labs(title = "Follicular Phase Data (Dep)", y = "Days Present", x = "Participant ID") +
+  theme_minimal()
+
+print(p_dep_follicular)
+
+# Luteal Plot
+p_dep_luteal <- ggplot(plot_data, aes(x = id, y = dep_luteal, fill = status)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_hline(yintercept = 5, linetype = "dashed", color = "red") +
+  scale_fill_manual(values = c("Excluded (<5 days)" = "red", "Included" = "lightblue")) +
+  annotate("text", x = Inf, y = 5, label = "5-day threshold", hjust = 1.1, vjust = -0.5, color = "red", size = 4) +
+  labs(title = "Luteal Phase Data (Dep)", y = "Days Present", x = "Participant ID") +
+  theme_minimal()
+
+print(p_dep_luteal)
+
+
+# 3. COMBINED PLOT --------------------------------------------------------
+
+# Pivot to long format to show both phases side-by-side
+p_combined_dep <- plot_data %>%
+  pivot_longer(cols = c(dep_follicular, dep_luteal), 
+               names_to = "phase", 
+               values_to = "days") %>%
+  mutate(phase = recode(phase, "dep_follicular" = "Follicular", "dep_luteal" = "Luteal")) %>%
+  ggplot(aes(x = id, y = days, fill = status)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) + 
+  geom_hline(yintercept = 5, linetype = "dashed", color = "gray50") +
+  scale_fill_manual(values = c("Excluded (<5 days)" = "red", "Included" = "lightblue")) +
+  labs(title = "Data Availability by Phase (Red = <5 days in EITHER phase)", 
+       y = "Number of Days with Data", 
+       x = "Participant ID") +
+  facet_wrap(~phase, ncol = 1) + 
+  theme_minimal(base_size = 14)
+
+print(p_combined_dep)
+
+save_png(plot = p_combined_dep,
+         filename = "combined_dep_data_availability.png",
+         folder = descriptives_folder,
+         width = 10,
+         height = 8,
+         dpi = 300)
+
+# 4. COUNTS ---------------------------------------------------------------
+
+# Count number of ids where either follicular or luteal is <5
+num_ids_below_threshold <- sum(plot_data$low_data_flag)
+cat("Number of IDs with fewer than 5 days of 'dep' data in either phase:", num_ids_below_threshold, "\n")
+
+# Add number that do have >=5 in both phases
+num_ids_above_threshold <- sum(!plot_data$low_data_flag)
+cat("Number of IDs with 5 or more 'dep' days in both phases:", num_ids_above_threshold, "\n")
+```
+
+# ------ OVERLAP IN AM/PM ELIGBILITY at 5 OBS PER PHASE ------
+
+```{r}
+# Create a venn diagram of (1) those with >=5 observations in both phases for drink_today, (2) those with >=5 observations in both phases for dep 
+
+
+library(ggvenn)
+# Step 1: Identify ids with >=5 non-missing observations for each variable in both phases
+ids_with_drink_today <- alcsmmelig$by_id %>%
+  filter(drink_today_follicular >= 5 & drink_today_luteal >= 5) %>%
+  pull(id)
+
+ids_with_dep <- depsmmelig$by_id %>%
+  filter(dep_follicular >= 5 & dep_luteal >= 5) %>%
+  pull(id)
+
+# Step 2: Create a list of sets for the Venn diagram
+sets <- list(
+  DrinkToday = ids_with_drink_today,
+  Dep = ids_with_dep
+)
+
+# Generate the Venn diagram
+venn_plot <- ggvenn(
+  sets, 
+  show_percentage = FALSE,   # Show percentages in each intersection
+  fill_color = c("#E69F00", "pink"),  # Colors for each circle
+  stroke_size = 0.8,        # Border thickness
+  set_name_size = 20,        # Set names size (Surveys, Hormones, CycleData)
+  text_size = 20            # Size of numbers/percentages in intersections
+) +
+  ggtitle("Overlap of IDs with >=5 Observations in Both Phases for:") +
+  theme(
+    plot.title = element_text(size = 50, hjust = 0.5),  # Larger, centered title
+    text = element_text(size = 20)                      # General text size adjustments
+  )
+
+# Display the plot
+print(venn_plot)
+# Save the plot with high resolution
+save_png(plot = venn_plot, 
+         filename = "venn_diagram_drink_dep.png",
+         folder = descriptives_folder,
+         height = 8)  # Keep taller for Venn diagram
+
+
+
+```
+
+
+
+
+```{r}
+# ------ SMM ELIGIBILITY at 4 OBS PER PHASE - MORNING/ALCOHOL OUTCOMES ------
+library(dplyr)
+library(ggplot2)
+library(tidyr) 
+
+# 1. DATA PREP ------------------------------------------------------------
+# Save smm eligibility data (saved as unique object '_4')
+alcsmmelig_4 <- cycledata_check(df, "drink_today")
+
+# Merge back to df by id - ensuring we don't overwrite main df columns if running multiple times
+# (We select specific columns to avoid duplication issues if you run this repeatedly)
+df <- df %>%
+  left_join(alcsmmelig_4$by_id %>% select(id, drink_today_follicular, drink_today_luteal), by = "id", suffix = c("", "_4obs"))
+
+# Create a clean plotting dataset 
+plot_data_4 <- alcsmmelig_4$by_id %>%
+  mutate(
+    # Create a boolean flag: TRUE if EITHER phase is < 4
+    low_data_flag = drink_today_follicular < 4 | drink_today_luteal < 4,
+    status = ifelse(low_data_flag, "Excluded (<4 days)", "Included")
+  )
+
+# 2. INDIVIDUAL PLOTS -----------------------------------------------------
+
+# Follicular Plot (Object renamed to end in _4)
+p_drink_follicular_4 <- ggplot(plot_data_4, aes(x = id, y = drink_today_follicular, fill = status)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_hline(yintercept = 4, linetype = "dashed", color = "red") +
+  scale_fill_manual(values = c("Excluded (<4 days)" = "red", "Included" = "lightblue")) +
+  annotate("text", x = Inf, y = 4, label = "4-day threshold", hjust = 1.1, vjust = -0.5, color = "red", size = 4) +
+  labs(title = "Follicular Phase Drinking Days (4 Obs Threshold)", y = "Days", x = "Participant ID") +
+  theme_minimal()
+
+print(p_drink_follicular_4)
+
+# Luteal Plot
+p_drink_luteal_4 <- ggplot(plot_data_4, aes(x = id, y = drink_today_luteal, fill = status)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_hline(yintercept = 4, linetype = "dashed", color = "red") +
+  scale_fill_manual(values = c("Excluded (<4 days)" = "red", "Included" = "lightblue")) +
+  annotate("text", x = Inf, y = 4, label = "4-day threshold", hjust = 1.1, vjust = -0.5, color = "red", size = 4) +
+  labs(title = "Luteal Phase Drinking Days (4 Obs Threshold)", y = "Days", x = "Participant ID") +
+  theme_minimal()
+
+print(p_drink_luteal_4)
+
+
+# 3. COMBINED PLOT --------------------------------------------------------
+
+p_combined_drink_4 <- plot_data_4 %>%
+  pivot_longer(cols = c(drink_today_follicular, drink_today_luteal), 
+               names_to = "phase", 
+               values_to = "days") %>%
+  mutate(phase = recode(phase, "drink_today_follicular" = "Follicular", "drink_today_luteal" = "Luteal")) %>%
+  ggplot(aes(x = id, y = days, fill = status)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) + 
+  geom_hline(yintercept = 4, linetype = "dashed", color = "gray50") +
+  scale_fill_manual(values = c("Excluded (<4 days)" = "red", "Included" = "lightblue")) +
+  labs(title = "Drinking Days by Phase (Red = <4 days in EITHER phase)", 
+       y = "Number of Drinking Days", 
+       x = "Participant ID") +
+  facet_wrap(~phase, ncol = 1) + 
+  theme_minimal(base_size = 14)
+
+print(p_combined_drink_4)
+
+# SAVE WITH UNIQUE FILENAME
+save_png(plot = p_combined_drink_4,
+         filename = "combined_drink_data_availability_4obs.png", 
+         folder = descriptives_folder,
+         width = 10,
+         height = 8,
+         dpi = 300)
+
+
+# 4. COUNTS ---------------------------------------------------------------
+
+num_ids_below_threshold_4 <- sum(plot_data_4$low_data_flag)
+cat("IDs with fewer than 4 drinking days in either phase:", num_ids_below_threshold_4, "\n")
+
+num_ids_above_threshold_4 <- sum(!plot_data_4$low_data_flag)
+cat("IDs with 4 or more drinking days in both phases:", num_ids_above_threshold_4, "\n")
+```
+
+
+```{r}
+# ------ SMM ELIGIBILITY at 4 OBS PER PHASE - EVENING/DRSP OUTCOMES ------
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# 1. DATA PREP ------------------------------------------------------------
+# Save smm eligibility data unique object
+depsmmelig_4 <- cycledata_check(df, "dep")
+
+# Merge back
+df <- df %>%
+  left_join(depsmmelig_4$by_id %>% select(id, dep_follicular, dep_luteal), by = "id", suffix = c("", "_4obs"))
+
+# Create plotting dataset
+plot_data_dep_4 <- depsmmelig_4$by_id %>%
+  mutate(
+    # Create a boolean flag: TRUE if EITHER phase is < 4
+    low_data_flag = dep_follicular < 4 | dep_luteal < 4,
+    status = ifelse(low_data_flag, "Excluded (<4 days)", "Included")
+  )
+
+# 2. INDIVIDUAL PLOTS -----------------------------------------------------
+
+# Follicular Plot
+p_dep_follicular_4 <- ggplot(plot_data_dep_4, aes(x = id, y = dep_follicular, fill = status)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_hline(yintercept = 4, linetype = "dashed", color = "red") +
+  scale_fill_manual(values = c("Excluded (<4 days)" = "red", "Included" = "lightblue")) +
+  annotate("text", x = Inf, y = 4, label = "4-day threshold", hjust = 1.1, vjust = -0.5, color = "red", size = 4) +
+  labs(title = "Follicular Phase Data (Dep) - 4 Obs", y = "Days Present", x = "Participant ID") +
+  theme_minimal()
+
+print(p_dep_follicular_4)
+
+# Luteal Plot
+p_dep_luteal_4 <- ggplot(plot_data_dep_4, aes(x = id, y = dep_luteal, fill = status)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  geom_hline(yintercept = 4, linetype = "dashed", color = "red") +
+  scale_fill_manual(values = c("Excluded (<4 days)" = "red", "Included" = "lightblue")) +
+  annotate("text", x = Inf, y = 4, label = "4-day threshold", hjust = 1.1, vjust = -0.5, color = "red", size = 4) +
+  labs(title = "Luteal Phase Data (Dep) - 4 Obs", y = "Days Present", x = "Participant ID") +
+  theme_minimal()
+
+print(p_dep_luteal_4)
+
+
+# 3. COMBINED PLOT --------------------------------------------------------
+
+p_combined_dep_4 <- plot_data_dep_4 %>%
+  pivot_longer(cols = c(dep_follicular, dep_luteal), 
+               names_to = "phase", 
+               values_to = "days") %>%
+  mutate(phase = recode(phase, "dep_follicular" = "Follicular", "dep_luteal" = "Luteal")) %>%
+  ggplot(aes(x = id, y = days, fill = status)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.7) + 
+  geom_hline(yintercept = 4, linetype = "dashed", color = "gray50") +
+  scale_fill_manual(values = c("Excluded (<4 days)" = "red", "Included" = "lightblue")) +
+  labs(title = "Data Availability by Phase (Red = <4 days in EITHER phase)", 
+       y = "Number of Days with Data", 
+       x = "Participant ID") +
+  facet_wrap(~phase, ncol = 1) + 
+  theme_minimal(base_size = 14)
+
+print(p_combined_dep_4)
+
+# SAVE WITH UNIQUE FILENAME
+save_png(plot = p_combined_dep_4,
+         filename = "combined_dep_data_availability_4obs.png",
+         folder = descriptives_folder,
+         width = 10,
+         height = 8,
+         dpi = 300)
+
+# 4. COUNTS ---------------------------------------------------------------
+
+num_ids_below_dep_4 <- sum(plot_data_dep_4$low_data_flag)
+cat("IDs with fewer than 4 days of 'dep' data in either phase:", num_ids_below_dep_4, "\n")
+
+num_ids_above_dep_4 <- sum(!plot_data_dep_4$low_data_flag)
+cat("IDs with 4 or more 'dep' days in both phases:", num_ids_above_dep_4, "\n")
+```
+
+
+```{r}
+# ------ OVERLAP IN AM/PM ELIGBILITY at 4 OBS PER PHASE ------
+
+library(ggvenn)
+
+# Step 1: Use the new unique objects (_4) to filter
+ids_with_drink_today_4 <- alcsmmelig_4$by_id %>%
+  filter(drink_today_follicular >= 4 & drink_today_luteal >= 4) %>%
+  pull(id)
+
+ids_with_dep_4 <- depsmmelig_4$by_id %>%
+  filter(dep_follicular >= 4 & dep_luteal >= 4) %>%
+  pull(id)
+
+# Step 2: Create a list of sets
+sets_4 <- list(
+  DrinkToday = ids_with_drink_today_4,
+  Dep = ids_with_dep_4
+)
+
+# Generate the Venn diagram
+venn_plot_4 <- ggvenn(
+  sets_4, 
+  show_percentage = FALSE, 
+  fill_color = c("#E69F00", "pink"), 
+  stroke_size = 0.8,         
+  set_name_size = 20,         
+  text_size = 20             
+) +
+  ggtitle("Overlap of IDs with >=4 Observations in Both Phases") +
+  theme(
+    plot.title = element_text(size = 40, hjust = 0.5), # Slightly adjusted title size
+    text = element_text(size = 20)                      
+  )
+
+print(venn_plot_4)
+
+# SAVE WITH UNIQUE FILENAME
+save_png(plot = venn_plot_4, 
+         filename = "venn_diagram_drink_dep_4obs.png",
+         folder = descriptives_folder,
+         height = 8)
+```
+
+
+
+
+
+
+# Visualize >10 (non-SMM) data availability - BDEFS/DRSP outcomes
+```{r venn-diagram-overlap-horm-surv-cyc, message=FALSE, warning=FALSE}
+# Create a venn diagram (using ggvenn) to visualize the overlap of (1) ids with more than ten nonmissing observations of "dep", (2) ids with more than 10 nonmissing observations of e2, and (3) ids with more than 10 nonmissing observations of cyclic_time_impute_ov
+
+# Step 1: Identify ids with more than 10 non-missing observations for each variable
+ids_with_dep <- df %>%
+  group_by(id) %>%
+  summarize(nonmissing_dep = sum(!is.na(dep))) %>%
+  filter(nonmissing_dep > 10) %>%
+  pull(id)
+
+ids_with_e2 <- df %>%
+  group_by(id) %>%
+  summarize(nonmissing_e2 = sum(!is.na(e2))) %>%
+  filter(nonmissing_e2 > 10) %>%
+  pull(id)
+
+ids_with_cyclic_time_impute <- df %>%
+  group_by(id) %>%
+  summarize(nonmissing_cyclic_time_impute = sum(!is.na(cyclic_time_impute))) %>%
+  filter(nonmissing_cyclic_time_impute > 10) %>%
+  pull(id)
+
+# Step 2: Create a list of sets for the Venn diagram
+sets <- list(
+  PMSurveys = ids_with_dep,
+  Hormones = ids_with_e2,
+  CycleData = ids_with_cyclic_time_impute
+)
+
+# Generate the Venn diagram
+venn_plot <- ggvenn(
+  sets, 
+  show_percentage = FALSE,   # Show percentages in each intersection
+  fill_color = c("pink", "#56B4E9", "#009E73"),  # Colors for each circle
+  stroke_size = 0.8,        # Border thickness
+  set_name_size = 20,        # Set names size (Surveys, Hormones, CycleData)
+  text_size = 20            # Size of numbers/percentages in intersections
+) +
+  ggtitle("Overlap of IDs with More Than 10 Observations of:") +
+  theme(
+    plot.title = element_text(size = 50, hjust = 0.5),  # Larger, centered title
+    text = element_text(size = 20)                      # General text size adjustments
+  )
+
+# Display the plot
+print(venn_plot)
+
+# Save the plot with high resolution
+save_png(plot = venn_plot, 
+         filename = "venn_diagram_drink_e2_scaledcycleday.png",
+         folder = descriptives_folder,
+         height = 8)  # Keep taller for Venn diagram
+
+
+```
+# Visualize data availability - Alcohol outcomes
+```{r venn-diagram-overlap-horm-surv-cyc, message=FALSE, warning=FALSE}
+# Create a venn diagram (using ggvenn) to visualize the overlap of (1) ids with more than ten nonmissing observations of "drink_today", (2) ids with more than 10 nonmissing observations of e2, and (3) ids with more than 10 nonmissing observations of cyclic_time_impute_ov
+
+# Step 1: Identify ids with more than 10 non-missing observations for each variable
+ids_with_drink_today <- df %>%
+  group_by(id) %>%
+  summarize(nonmissing_drink_today = sum(!is.na(drink_today))) %>%
+  filter(nonmissing_drink_today > 10) %>%
+  pull(id)
+
+ids_with_e2 <- df %>%
+  group_by(id) %>%
+  summarize(nonmissing_e2 = sum(!is.na(e2))) %>%
+  filter(nonmissing_e2 > 10) %>%
+  pull(id)
+
+ids_with_cyclic_time_impute <- df %>%
+  group_by(id) %>%
+  summarize(nonmissing_cyclic_time_impute = sum(!is.na(cyclic_time_impute))) %>%
+  filter(nonmissing_cyclic_time_impute > 10) %>%
+  pull(id)
+
+# Step 2: Create a list of sets for the Venn diagram
+sets <- list(
+  AMSurveys = ids_with_drink_today,
+  Hormones = ids_with_e2,
+  CycleData = ids_with_cyclic_time_impute
+)
+
+# Generate the Venn diagram
+venn_plot <- ggvenn(
+  sets, 
+  show_percentage = FALSE,   # Show percentages in each intersection
+  fill_color = c("#E69F00", "#56B4E9", "#009E73"),  # Colors for each circle
+  stroke_size = 0.8,        # Border thickness
+  set_name_size = 20,        # Set names size (Surveys, Hormones, CycleData)
+  text_size = 20            # Size of numbers/percentages in intersections
+) +
+  ggtitle("Overlap of IDs with More Than 10 Observations of:") +
+  theme(
+    plot.title = element_text(size = 50, hjust = 0.5),  # Larger, centered title
+    text = element_text(size = 20)                      # General text size adjustments
+  )
+
+# Display the plot
+print(venn_plot)
+
+# Save the plot with high resolution
+save_png(plot = venn_plot, 
+         filename = "venn_diagram_drink_today_e2_scaledcycleday.png",
+         folder = descriptives_folder,
+         height = 8)  # Keep taller for Venn diagram
+
+
+```
+
+
+# Visualize Percentage of Days Drinking
+```{r}
+# 1. First, ensure your data exists and has values
+# Check if df exists
+if (!exists("df")) stop("Dataframe 'df' not found!")
+
+# Check if the column is empty
+if (all(is.na(df$drink_today))) stop("Column 'drink_today' is strictly N/A!")
+
+# 2. Prepare data
+drink_table <- table(df$drink_today, useNA = "no")
+
+# Check if table is empty after removing NAs
+if (length(drink_table) == 0) stop("Table is empty. Check if all data was NA.")
+
+drink_percentages <- round(100 * prop.table(drink_table), 1)
+drink_labels <- paste(names(drink_table), ": ", drink_table, " (", drink_percentages, "%)", sep = "")
+
+# 3. PLOT TO SCREEN FIRST (Debug step)
+# We run this WITHOUT png() to ensure the code works visually.
+pie(drink_table, 
+    labels = drink_labels, 
+    col = c("skyblue", "lightcoral"), 
+    main = "Percentage of Days Drinking")
+
+# 4. Save to file using ragg device
+# define output_folder if it doesn't exist (using current directory as fallback)
+if (!exists("output_folder")) {
+  output_folder <- getwd() 
+  message("output_folder was missing. Saving to current directory: ", output_folder)
+}
+
+# Save PNG using ragg device
+ragg::agg_png(filename = file.path(output_folder, "drink_today_pie_chart.png"), 
+              width = 7, height = 5, units = "in", res = 300, bg = "white")
+pie(drink_table, labels = drink_labels, col = c("skyblue", "lightcoral"), main = "Percentage of Days Drinking")
+dev.off()
+
+# Save SVG version with proper text sizing
+# Set pointsize = 14 to match our standard base_size and prevent text overlap
+svg(filename = file.path(output_folder, "drink_today_pie_chart.svg"), 
+    width = 7, height = 5, bg = "white", pointsize = 14)
+pie(drink_table, labels = drink_labels, col = c("skyblue", "lightcoral"), main = "Percentage of Days Drinking")
+dev.off()
+
+# Visualize percentage of days drinking by id
+drink_by_id <- df %>%
+  group_by(id) %>%
+  summarize(
+    total_days = n(),
+    drinking_days = sum(drink_today == 1, na.rm = TRUE),
+    percent_drinking = (drinking_days / total_days) * 100
+  )
+# Boxplot of percent drinking by id
+p_drink_by_id <- ggplot(drink_by_id, aes(x = id, y = percent_drinking)) +
+  geom_boxplot(fill = "lightgreen", alpha = 0.7) +
+  labs(title = "Percentage of Days Drinking by Participant ID", x = "Participant ID", y = "Percentage of Days Drinking") +
+  theme_minimal(base_size = 14)
+print(p_drink_by_id)
+save_png(plot = p_drink_by_id, 
+         filename = "percent_drinking_by_id_boxplot.png",
+         folder = descriptives_folder)
+
+# hsitogram of days drinking by id
+p_hist_drink_by_id <- ggplot(drink_by_id, aes(x = percent_drinking)) +
+  geom_histogram(binwidth = 5, fill = "lightblue", color = "black", alpha = 0.7) +
+  labs(title = "Histogram of Percentage of Days Drinking by Participant ID", x = "Percentage of Days Drinking", y = "Count of Participants") +
+  theme_minimal(base_size = 14)
+print(p_hist_drink_by_id)
+save_png(plot = p_hist_drink_by_id, 
+         filename = "histogram_percent_drinking_by_id.png",
+         folder = descriptives_folder)
+```
+
+
+```{r}
+# Source the function and create variables
+
+# Variables needed for this plotting chunk - only use variables that exist
+drsp_vars <- c(
+  "dep", "hopeless", "worthless", "anxious", "mood_swing", "rej_sens", 
+  "angry", "conflicts", "loss_interest", "diff_conc", "tired", 
+  "over_eat", "sp_food_crav", "high_sleep", "diff_sleep", "overwhelm", 
+  "loss_control", "breast_tend", "breast_swell", "headache", 
+  "jm_pain", "loss_prod", "int_relat"
+)
+
+bdefs_vars <- c(
+  "diff_inhib", "diff_stop", "diff_change", "immed_payoff", 
+  "res_urge", "diff_long_rew", "diff_res_rew"
+)
+
+hormlist <- c("e2", "p4", "lh")
+hormwinsor <- c("e2_w", "p4_w", "lh_w")
+
+daily_items_raw <- c(
+  "num_drinks_today", "drink_today", "drink_today_bin", "fourplustoday", "fourplustoday_bin",
+  "crave_alc_am", "crave_alc_pm", "bdefs_total", "bdefs_delayaversion", "bdefs_impulsiveaction", "drsp_total", "drsp_distress", "drsp_eatsx", "drsp_breastpain", "drsp_lowarousal")
+
+# Combine and filter to only existing variables
+alldailyvars_desired <- unique(c(daily_items_raw, drsp_vars, bdefs_vars, hormlist, hormwinsor))
+alldailyvars <- intersect(alldailyvars_desired, names(df))
+
+
+plot_day_of_week_effects <- function(df, outcome_vars) {
+  # Set output directory path to descriptives subfolder
+  output_folder_path <- descriptives_folder
+  
+  # Ensure day_of_week is an ordered factor
+  df <- df %>%
+    mutate(day_of_week = factor(day_of_week, levels = c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")))
+  
+  # Define sine and cosine positions for each day (without labels)
+  label_positions <- data.frame(
+    day_of_week_sin = sin(2 * pi * (0:6) / 7),
+    day_of_week_cos = cos(2 * pi * (0:6) / 7)
+  )
+  
+  # Create output directory if it doesn’t exist
+  if (!dir.exists(output_folder_path)) {
+    dir.create(output_folder_path, recursive = TRUE)
+  }
+  
+  # Helper function to plot smooth effect (sin/cos) for a given outcome
+  plot_smooth_effect <- function(df, outcome_var, x_var, title_suffix, output_filename) {
+    outcome_sym <- sym(outcome_var)
+    x_sym <- sym(x_var)
+    
+    plot <- ggplot(df %>% filter(!is.na(!!x_sym) & !is.na(!!outcome_sym)), 
+                   aes(x = !!x_sym, y = !!outcome_sym)) +
+      geom_smooth(method = "loess") +
+      labs(
+        title = paste("Effects of Day of Week on", outcome_var, title_suffix),
+        x = paste("Day of Week", title_suffix),
+        y = outcome_var
+      ) +
+      theme_minimal(base_size = 14)
+    
+    # Save the plot
+    save_png(plot = plot, 
+             filename = output_filename,
+             folder = output_folder_path)
+  }
+  
+  # Loop over each outcome variable to generate the plots
+  for (outcome_var in outcome_vars) {
+    # Plot for day_of_week_sin
+    plot_smooth_effect(df, outcome_var, "day_of_week_sin", "(sin)",
+                       paste0("day_of_week_sin_", outcome_var, ".png"))
+    
+    # Plot for day_of_week_cos
+    plot_smooth_effect(df, outcome_var, "day_of_week_cos", "(cos)",
+                       paste0("day_of_week_cos_", outcome_var, ".png"))
+    
+    # Calculate weekly average or proportion for bar plot
+    weekly_summary <- df %>%
+      group_by(day_of_week) %>%
+      summarize(mean_outcome = mean(!!sym(outcome_var), na.rm = TRUE)) %>%
+      ungroup()
+    
+    # Plot the weekly average/proportion by day of the week (bar plot)
+    plot_weekly <- ggplot(weekly_summary, aes(x = day_of_week, y = mean_outcome)) +
+      geom_bar(stat = "identity", fill = "skyblue") +
+      labs(
+        title = paste("Weekly Average of", outcome_var, "by Day of the Week"),
+        x = "Day of the Week",
+        y = paste("Average", outcome_var)
+      ) +
+      theme_minimal(base_size = 14)
+    
+    # Save the bar plot for weekly summary by day of the week
+    save_png(plot = plot_weekly, 
+             filename = paste0("weekly_summary_", outcome_var, ".png"),
+             folder = output_folder_path)
+  }
+  
+  return("Plots generated and saved successfully.")
+}
+
+# Call the function
+plot_day_of_week_effects(df = df, outcome_vars = alldailyvars)
+```
+
+
+```{r summarize-drinks-by-session}
+df %>%
+  group_by(session_today) %>%
+  summarize(mean_drinks = mean(num_drinks_today, na.rm = TRUE),
+            sd_drinks = sd(num_drinks_today, na.rm = TRUE),
+            n = n())
+
+# save to output folder
+write.csv(
+  df %>%
+    group_by(session_today) %>%
+    summarize(mean_drinks = mean(num_drinks_today, na.rm = TRUE),
+              sd_drinks = sd(num_drinks_today, na.rm = TRUE),
+              n = n()),
+  file = file.path(output_folder, "summary_drinks_by_session.csv"),
+  row.names = FALSE
+)
+```
+
+# Print histogram of all e2 variables to visually inspect for outliers
+```{r histograms}
+
+names(df)
+# Visualize distributions of e2, e2.zd, e2.szd, and log(e2 + 1)
+# Histogram of raw e2 values
+
+e2_histogram <- df %>%
+  ggplot(aes(x = e2_w)) +
+  geom_histogram(bins = 100, fill = "blue", alpha = 0.7) +
+  labs(title = "Histogram of e2 Values", x = "e2", y = "Count") +
+  theme_light(base_size = 14)
+
+print(e2_histogram)
+
+save_png(plot = e2_histogram, 
+         filename = "e2_histogram.png",
+         folder = descriptives_folder)
+
+# now do the same for person-standardized values
+e2_person_std_histogram <- df %>%
+  ggplot(aes(x = e2_w.zd)) +
+  geom_histogram(bins = 100, fill = "darkgreen", alpha = 0.7) +
+  labs(title = "Histogram of Person-Standardized e2 Values", x = "e2 Person-Standardized (d)", y = "Count") +
+  theme_light(base_size = 14) 
+print(e2_person_std_histogram)
+save_png(plot = e2_person_std_histogram, 
+         filename = "e2_person_standardized_histogram.png",
+         folder = descriptives_folder)
+
+# now do the same for sample-standardized values
+e2_sample_std_histogram <- df %>%
+  ggplot(aes(x = e2_w.szd)) +
+  geom_histogram(bins = 100, fill = "purple", alpha = 0.7) +
+  labs(title = "Histogram of Sample-Standardized e2 Values", x = "e2 Sample-Standardized (szd)", y = "Count") +
+  theme_light(base_size = 14)
+print(e2_sample_std_histogram)
+save_png(plot = e2_sample_std_histogram, 
+         filename = "e2_sample_standardized_histogram.png",
+         folder = descriptives_folder)
+
+# Test whether a log transform improves the distribution
+e2_log_histogram <- df %>%
+  mutate(E2_log = log(e2_w + 1)) %>% # Add 1
+  ggplot(aes(x = E2_log)) +
+  geom_histogram(bins = 100, fill = "orange", alpha = 0.7)+
+  labs(title
+       = "Histogram of Log-Transformed e2 Values", x = "Log(e2 + 1)", y = "Count") +
+  theme_light(base_size = 14)
+print(e2_log_histogram)
+save_png(plot = e2_log_histogram,
+         filename = "e2_log_transformed_histogram.png",
+         folder = descriptives_folder)
+
+# Stack the four histograms together for comparison
+combined_e2_histograms <- ggarrange(
+  e2_histogram + rremove("x.text") + rremove("x.title"),
+  e2_person_std_histogram + rremove("x.text") + rremove("x.title"),
+  e2_sample_std_histogram + rremove("x.text") + rremove("x.title"),
+  e2_log_histogram,
+  ncol = 1, nrow = 4,
+  labels = c("A", "B", "C", "D"),
+  common.legend = TRUE, legend = "right"
+)
+print(combined_e2_histograms)
+save_png(plot = combined_e2_histograms,
+         filename = "combined_e2_histograms.png",
+         folder = descriptives_folder,
+         height = 16)  # Keep tall height for stacked histograms
+
+```
+# Print histogram of all p4 variables to visually inspect for outliers
+```{r histograms2}
+# Visualize distributions of p4, p4.zd, p4.szd, and
+# log(p4 + 1)
+# Histogram of raw p4 values
+p4_histogram <- df %>%
+  ggplot(aes(x = p4_w)) +
+  geom_histogram(bins = 100, fill = "blue", alpha = 0.7) +
+  labs(title = "Histogram of p4 Values", x = "p4", y = "Count") +
+  theme_light(base_size = 14)
+print(p4_histogram)
+save_png(plot = p4_histogram, 
+         filename = "p4_histogram.png",
+         folder = descriptives_folder)
+
+# now do the same for person-standardized values
+p4_person_std_histogram <- df %>%
+  ggplot(aes(x = p4_w.zd)) +
+  geom_histogram(bins = 100, fill = "darkgreen", alpha = 0.7) +
+  labs(title = "Histogram of Person-Standardized p4 Values", x = "p4 Person-Standardized (d)", y = "Count") +
+  theme_light(base_size = 14)
+print(p4_person_std_histogram)
+save_png(plot = p4_person_std_histogram,
+         filename = "p4_person_standardized_histogram.png",
+         folder = descriptives_folder)
+
+# now do the same for sample-standardized values
+p4_sample_std_histogram <- df %>%
+  ggplot(aes(x = p4_w.szd)) +
+  geom_histogram(bins = 100, fill = "purple", alpha = 0.7) +
+  labs(title = "Histogram of Sample-Standardized p4 Values", x = "p4 Sample-Standardized (szd)", y = "Count") +
+  theme_light(base_size = 14)
+print(p4_sample_std_histogram)
+save_png(plot = p4_sample_std_histogram,
+         filename = "p4_sample_standardized_histogram.png",
+         folder = descriptives_folder)
+
+# Test whether a log transform improves the distribution
+p4_log_histogram <- df %>%
+  mutate(P4_log = log(p4_w + 1)) %>% # Add 1
+  ggplot(aes(x = P4_log)) +
+  geom_histogram(bins = 100, fill = "orange", alpha = 0.7) +
+  labs(title  = "Histogram of Log-Transformed p4 Values", x = "Log(p4 + 1)", y = "Count") +
+  theme_light(base_size = 14)
+print(p4_log_histogram)
+save_png(plot = p4_log_histogram,
+         filename = "p4_log_transformed_histogram.png",
+         folder = descriptives_folder)
+
+# Stack the four histograms together for comparison
+combined_p4_histograms <- ggarrange(
+  p4_histogram + rremove("x.text") + rremove("x.title"),
+  p4_person_std_histogram + rremove("x.text") + rremove("x.title"),
+  p4_sample_std_histogram + rremove("x.text") + rremove("x.title"),
+  p4_log_histogram,
+  ncol = 1, nrow = 4,
+  labels = c("A", "B", "C", "D"),
+  common.legend = TRUE, legend = "right")
+print(combined_p4_histograms)
+save_png(plot = combined_p4_histograms,
+         filename = "combined_p4_histograms.png",
+         folder = descriptives_folder,
+         height = 16)  # Keep tall height for stacked histograms
+
+```
+
+
+```{r}
+# histogram of BAC values
+
+hist(df$bac_peak_percent)
+
+# boxplot of BAC values by id
+p_bac <- ggplot(df, aes(x = as.factor(id), y = bac_peak_percent)) +
+  geom_boxplot() +
+  labs(title = "BAC Peak Percent by Participant ID", x = "Participant ID", y = "BAC Peak Percent") +
+  theme_minimal(base_size = 14)
+
+p_bac
+save_png(plot = p_bac, 
+         filename = "bac_by_id_boxplot.png",
+         folder = descriptives_folder)
+
+# winsorize peak bac at 99th percentile within person 
+df <- df %>%
+  group_by(id) %>%
+  mutate(bac_peak_percent_w = ifelse(
+    bac_peak_percent > quantile(bac_peak_percent, 0.99, na.rm = TRUE),
+    quantile(bac_peak_percent, 0.99, na.rm = TRUE),
+    bac_peak_percent
+  )) %>%
+  ungroup()
+# boxplot of winsorized BAC values by id
+p_bac_w <- ggplot(df, aes(x = as.factor(id), y = bac_peak_percent_w)) +
+  geom_boxplot() +
+  labs(title = "Winsorized BAC Peak Percent by Participant ID", x = "Participant ID", y = "Winsorized BAC Peak Percent") +
+  theme_minimal(base_size = 14)
+p_bac_w
+save_png(plot = p_bac_w, 
+         filename = "winsorized_bac_by_id_boxplot.png",
+         folder = descriptives_folder)
+
+
+
+```
+
+
+```{r}
+# -------------------------------------------------------------------------
+# Violin Plots Loop
+# -------------------------------------------------------------------------
+
+
+# 2. Loop through the variables
+# (Assumes 'continuous_vars' is already defined from your previous scripts)
+for (outcome_name in continuous_vars) {
+  
+  message(paste0("Plotting violin for: ", outcome_name))
+  
+  # Create the plot using .data[[outcome_name]] for dynamic selection
+  p <- ggplot(df, aes(x = "", y = .data[[outcome_name]])) +
+    geom_violin(fill = "lightblue", color = "black", alpha = 0.7) +
+    geom_boxplot(width = 0.1, position = position_dodge(0.9), outlier.color = "red", outlier.size = 2) +
+    labs(
+      title = paste0("Violin Plot of ", outcome_name),
+      y = outcome_name,
+      x = ""
+    ) +
+    theme_light(base_size = 14)
+  
+  # 3. Save the plot
+  save_png(
+    plot = p,
+    filename = paste0("violin_", outcome_name, ".png"),
+    folder = descriptives_folder
+  )
+  
+  # Create a histogram for each and save that too
+  p_hist <- ggplot(df, aes(x = .data[[outcome_name]])) +
+    geom_histogram(bins = 30, fill = "lightblue", color = "black", alpha = 0.7) +
+    labs(
+      title = paste0("Histogram of ", outcome_name),
+      x = outcome_name,
+      y = "Count"
+    ) +
+    theme_light(base_size = 14)
+  save_png(
+    plot = p_hist,
+    filename = paste0("histogram_", outcome_name, ".png"),
+    folder = descriptives_folder
+  )
+}
+
+```
+
+
+
+
+# ICCs, Between- and Within-Person Associations of Study Variables
+```{r f1_corr, echo=TRUE, message=FALSE, warning=FALSE}
+# ===================================================================
+# 1. Load Required Libraries
+# ===================================================================
+library(tidyverse)
+library(rmcorr)
+library(performance)
+library(lme4)
+library(ggplot2)
+
+# ===================================================================
+# 2. Define the Heatmap Generation Function (Final Version)
+# ===================================================================
+generate_correlation_heatmap <- function(
+    data, outcome_vars, id_var, final_labels = NULL, # <-- New argument
+    sig.level = 0.05,
+    highlight_diag = TRUE,
+    show_legend = TRUE,
+    label_size = 4.6,
+    diag_label_size = 6,
+    subtitle_text = "Upper: Within-person (rmcorr); Lower: Between-person (Spearman); Diagonal: ICC"
+) {
+  # (The first part of the function is the same as the last version)
+  n_vars <- length(outcome_vars)
+  results_matrix <- matrix(NA, nrow = n_vars, ncol = n_vars,
+                           dimnames = list(outcome_vars, outcome_vars))
+  pval_matrix <- matrix(NA, nrow = n_vars, ncol = n_vars,
+                        dimnames = list(outcome_vars, outcome_vars))
+  
+  summary_expressions <- purrr::map(outcome_vars, ~ rlang::quo(mean(!!rlang::sym(.x), na.rm = TRUE))) %>%
+    rlang::set_names(outcome_vars)
+    
+  person_means <- data %>%
+    group_by(!!rlang::sym(id_var)) %>%
+    summarise(!!!summary_expressions, .groups = "drop")
+
+  between_corr <- suppressWarnings(
+    cor(person_means[, outcome_vars], method = "spearman", use = "pairwise.complete.obs")
+  )
+
+  for (i in 1:(n_vars - 1)) for (j in (i + 1):n_vars) {
+    x <- person_means[[outcome_vars[i]]]
+    y <- person_means[[outcome_vars[j]]]
+    if (sum(!is.na(x) & !is.na(y)) > 2) {
+      test <- suppressWarnings(cor.test(x, y, method = "spearman"))
+      results_matrix[i, j] <- between_corr[i, j]
+      pval_matrix[i, j] <- test$p.value
+    }
+  }
+
+  for (i in 1:n_vars) {
+    var <- outcome_vars[i]
+    fml <- as.formula(paste0("`", var, "` ~ 1 + (1|`", id_var, "`)"))
+    if (sum(!is.na(data[[var]])) > 1) {
+      model_fit <- try(lmer(fml, data = data), silent = TRUE)
+      if (!inherits(model_fit, "try-error")) {
+        icc_val <- performance::icc(model_fit)$ICC_adjusted
+        results_matrix[i, i] <- icc_val
+        pval_matrix[i, i] <- 0
+      }
+    }
+  }
+
+  for (i in 2:n_vars) for (j in 1:(i - 1)) {
+    var1 <- outcome_vars[i]; var2 <- outcome_vars[j]
+    rmcorr_data <- data %>% select(all_of(c(id_var, var1, var2))) %>% drop_na()
+    if (nrow(rmcorr_data) > 2) {
+      rmcorr_result <- rmcorr::rmcorr(participant = id_var, measure1 = var1, measure2 = var2, dataset = rmcorr_data)
+      results_matrix[i, j] <- rmcorr_result$r
+      pval_matrix[i, j] <- rmcorr_result$p
+    }
+  }
+
+  within_corr_matrix <- results_matrix
+  within_corr_matrix[upper.tri(within_corr_matrix, diag = TRUE)] <- 0
+  dist_matrix <- as.dist(1 - abs(within_corr_matrix))
+  hclust_obj <- hclust(dist_matrix, method = "ward.D2")
+  corr_order <- rownames(within_corr_matrix)[hclust_obj$order]
+
+  results_matrix_ordered <- results_matrix[corr_order, corr_order]
+  pval_matrix_ordered    <- pval_matrix[corr_order, corr_order]
+
+  plot_df <- as.data.frame(as.table(results_matrix_ordered))
+  names(plot_df) <- c("Var1", "Var2", "value")
+  plot_df$p.value <- as.vector(pval_matrix_ordered)
+  plot_df$Var1 <- factor(plot_df$Var1, levels = rev(corr_order))
+  plot_df$Var2 <- factor(plot_df$Var2, levels = corr_order)
+
+  no_leading_zero <- function(x) {
+    ifelse(is.na(x), NA_character_, sub("^(-?)0\\.", "\\1.", sprintf("%.2f", x)))
+  }
+
+  plot_df <- plot_df %>%
+    mutate(
+      is_diag = as.character(Var1) == as.character(Var2),
+      is_sig  = p.value < sig.level,
+      label   = no_leading_zero(value)
+    )
+
+  diag_df    <- plot_df %>% filter(is_diag)
+  sig_df     <- plot_df %>% filter(!is_diag & is_sig)
+  nonsig_df  <- plot_df %>% filter(!is_diag & !is_sig)
+
+  p <- ggplot() +
+    geom_tile(data = plot_df %>% filter(!is_diag),
+              aes(x = Var2, y = Var1, fill = value), color = "gray70", linewidth = 0.5) +
+    geom_tile(data = diag_df, aes(x = Var2, y = Var1),
+              fill = "gray92", color = "gray70", linewidth = 0.5) +
+    scale_fill_gradient2(low = "#6D9EC1", mid = "white", high = "#E46726",
+                       midpoint = 0, limits = c(-1, 1), name = "Correlation") +
+    labs(title = "Multilevel Correlation Matrix of Daily Outcomes", subtitle = subtitle_text) +
+    theme_light(base_size = 14) +
+    theme(
+      plot.title    = element_text(hjust = 0.5, face = "bold", size = 20),
+      plot.subtitle = element_text(hjust = 0.5, face = "italic", size = 12, margin = margin(b = 6)),
+      axis.text.x   = element_text(angle = 45, vjust = 1, hjust = 1),
+      axis.text.y   = element_text(face = "bold"),
+      axis.title    = element_blank(),
+      legend.position = if (show_legend) "right" else "none",
+      panel.grid.major = element_blank()
+    )
+
+  p <- p +
+    geom_text(data = sig_df, aes(x = Var2, y = Var1, label = label),
+              fontface = "bold", color = "black", size = label_size, na.rm = TRUE) +
+    geom_text(data = nonsig_df, aes(x = Var2, y = Var1, label = label),
+              color = "gray40", size = label_size, na.rm = TRUE)
+
+  if (highlight_diag && nrow(diag_df) > 0) {
+    p <- p +
+      geom_text(data = diag_df, aes(x = Var2, y = Var1, label = label),
+                fontface = "bold", color = "#4B0082", size = diag_label_size, na.rm = TRUE)
+  }
+  
+  # === NEW CODE TO RELABEL AXES AT THE END ===
+  if (!is.null(final_labels)) {
+    p <- p +
+      scale_x_discrete(labels = final_labels) +
+      scale_y_discrete(labels = final_labels)
+  }
+  # ===========================================
+
+  return(p)
+}
+
+# ===================================================================
+# 3. Define Parameters and Run the Plot
+# ===================================================================
+# Technical names mapped to the desired "pretty" labels
+corrplotlist <- c(
+  # --- Substance Use & Craving ---
+  "num_drinks_today" = "Number of Drinks",
+  "bac_peak_percent" = "Peak BAC (%)",
+  #"drink_today"      = "Any Drinking Today",
+  #"fourplustoday"    = "Binge Drinking (4+)",
+  #"felt_drunk"       = "Felt Drunk",
+  #"crave_alc_am"     = "Alcohol Craving (AM)",
+  "crave_alc_pm"     = "Alcohol Craving (PM)",
+  #"crave_nic_am"     = "Nicotine Craving (AM)",
+  #"crave_nic_pm"     = "Nicotine Craving (PM)",
+  #"crave_mar_am"     = "Marijuana Craving (AM)",
+  #"crave_mar_pm"     = "Marijuana Craving (PM)",
+
+  # --- Impulsivity & Reward ---
+  #"diff_stop"        = "Difficulty Stopping",
+  #"diff_change"      = "Difficulty Changing",
+  #"immed_payoff"     = "Immediate Payoff Pref.",
+  #"res_urge"         = "Resistance to Urges",
+  #"diff_long_rew"    = "Diff. Waiting Long Reward",
+  #"diff_res_rew"     = "Diff. Resisting Reward",
+  "bdefs_impulsiveaction" = "Impulsive Action (BDEFS)",
+  "bdefs_delayaversion" = "Delay Aversion (BDEFS)",
+
+  # --- Mood & Affect (DRSP/PMDD) ---
+  #"dep"              = "Depression",
+  #"hopeless"         = "Hopelessness",
+  #"worthless"        = "Worthlessness",
+  #"anxious"          = "Anxiety",
+  #"mood_swing"       = "Mood Swings",
+  #"rej_sens"         = "Rejection Sensitivity",
+  #"angry"            = "Anger/Irritability",
+  #"conflicts"        = "Interpersonal Conflicts",
+  #"loss_interest"    = "Loss of Interest",
+  #"overwhelm"        = "Feeling Overwhelmed",
+  #"loss_control"     = "Feeling Out of Control",
+  #"int_relat"        = "Relationship Impairment",
+  
+    # --- DRSP Aggregate Scores ---
+  "drsp_total"       = "DRSP Total",
+  "drsp_distress"    = "Distress (DRSP)",
+  "drsp_labilsocsx"  = "Social/Affect Lability (DRSP)",
+  "drsp_breastpain"  = "Breast Sx (DRSP)",
+  "drsp_eatsx"       = "Eating Sx",
+  "drsp_lowarousal"  = "Low Arousal Sx (DRSP)",
+
+  # --- Physical & Cognitive Symptoms ---
+  #"diff_conc"        = "Difficulty Concentrating",
+  #"tired"            = "Fatigue/Lethargy",
+  #"high_sleep"       = "Hypersomnia (High Sleep)",
+  "diff_sleep"       = "Insomnia/Sleep Diff.",
+  #"over_eat"         = "Overeating",
+  #"sp_food_crav"     = "Specific Food Cravings",
+  #"breast_tend"      = "Breast Tenderness",
+  #"breast_swell"     = "Breast Swelling",
+  #"headache"         = "Headache",
+  "jm_pain"          = "Joint/Muscle Pain",
+  #"loss_prod"        = "Decreased Productivity",
+  
+  # --- Hormones  ---
+  "e2_w"             = "Estradiol (E2)",
+  "p4_w"             = "Progesterone (P4)",
+  "lh_w"             = "Luteinizing Hormone (LH)"
+)
+
+# This assumes `df` exists in your environment
+if (exists("df") && exists("corrplotlist")) {
+
+  # === NEW: Create safe labels for calculation and a lookup table for plotting ===
+  # 1. Create safe labels (e.g., "Hyperactive.Impulsive.Sx") for calculations
+  safe_labels <- make.names(corrplotlist)
+  
+  # 2. Create a lookup table to map safe labels back to pretty labels
+  label_lookup <- setNames(corrplotlist, safe_labels)
+  # ===============================================================================
+
+  # Prepare the data by renaming columns to the SAFE labels
+  original_vars <- names(corrplotlist)
+  plot_data <- df[, c("id", original_vars)]
+  names(plot_data)[match(original_vars, names(plot_data))] <- safe_labels # Use safe_labels here
+
+  # Call the function with the safe labels for calculation AND the lookup table for the final plot
+  correlation_heatmap <- generate_correlation_heatmap(
+    data = plot_data,
+    outcome_vars = safe_labels, # Use safe_labels here
+    id_var = "id",
+    final_labels = label_lookup # Pass the lookup table for final relabeling
+  )
+
+  print(correlation_heatmap)
+
+  # Define the final filename, including today's date
+dated_output_file <- file.path(output_folder, 
+                               paste0("Fig1_corr_", 
+                                      format(Sys.Date(), "%Y%m%d"), 
+                                      ".png"))
+
+# Save the plot directly to the final, dated file
+save_png(plot = correlation_heatmap,
+         filename = paste0("Fig1_corr_", 
+                          format(Sys.Date(), "%Y%m%d"), 
+                          ".png"),
+         folder = descriptives_folder,
+         width = 11,
+         height = 8.5)
+
+} else {
+  
+  stop("Error: 'df' or 'corrplotlist' not found in the environment.")
+}
+```
+
+```{r} 
+
+# Load necessary libraries
+library(tidyverse)
+library(tibble)
+library(Hmisc) # Required for rcorr()
+
+# 1. Define Variable Lists
+# ---------------------------------------------------------
+# Daily/EMA variables (Key = Raw Name, Value = Pretty Label)
+corrplotlist <- c(
+  "num_drinks_today"      = "Number of Drinks",
+  "bac_peak_percent"      = "Peak BAC (%)",
+  "crave_alc_pm"          = "Alcohol Craving (PM)",
+  "bdefs_impulsiveaction" = "Impulsive Action (BDEFS)",
+  "bdefs_delayaversion"   = "Delay Aversion (BDEFS)",
+  "drsp_total"            = "DRSP Total",
+  "drsp_distress"         = "Distress (DRSP)",
+  "drsp_labilsocsx"       = "Social/Affect Lability (DRSP)",
+  "drsp_breastpain"       = "Breast Sx (DRSP)",
+  "drsp_eatsx"            = "Eating Sx",
+  "drsp_lowarousal"       = "Low Arousal Sx (DRSP)",
+  "diff_sleep"            = "Insomnia/Sleep Diff.",
+  "jm_pain"               = "Joint/Muscle Pain",
+  "e2_w"                  = "Estradiol (E2)",
+  "p4_w"                  = "Progesterone (P4)",
+  "lh_w"                  = "Luteinizing Hormone (LH)"
+)
+
+# Trait variables (Raw Names)
+trait_vars_raw <- c("age", "audit_score", "weight_kg", "height_cm", 
+                    "tlfb30d_daysdrank", "tlfb30d_cumuldrinks", 
+                    "tlfb30d_daysbinge", "tlfb30d_daysdrunk", 
+                    "pdhq_daysdrinkperwk", "pdhq_numtypicaldrinks", 
+                    "pdhq_hrstypdrinking")
+
+# Create a mapping for trait vars too (Raw Name -> Raw Name) 
+# so they can be processed by the same logic
+trait_list <- setNames(trait_vars_raw, trait_vars_raw) 
+
+# Combine into one MASTER list (Raw Name -> Pretty Label)
+all_var_map <- c(corrplotlist, trait_list)
+
+
+# 2. Aggregation (Create the Data)
+# ---------------------------------------------------------
+# A. Summarize Traits (First non-missing value)
+vars_to_summarize <- setdiff(trait_vars_raw, "id")
+
+traits <- df %>%
+  group_by(id) %>%
+  summarize(across(all_of(vars_to_summarize), ~ first(na.omit(.x))), .groups = "drop")
+
+# B. Summarize Daily Vars (Mean)
+daily_raw_names <- names(corrplotlist)
+
+trait_means <- df %>%
+  group_by(id) %>%
+  summarize(across(all_of(daily_raw_names), ~ mean(.x, na.rm = TRUE)))
+
+# C. Join
+combined_trait_data <- trait_means %>%
+  inner_join(traits, by = "id") %>%
+  select(-id) # Remove ID before correlation
+
+
+# 3. Apply Your Requested Formatting (Safe Labels & Lookup)
+# ---------------------------------------------------------
+
+# Identify which columns we actually have in the data
+current_cols <- names(combined_trait_data)
+
+# Subset the master map to only variables present in the data
+active_map <- all_var_map[current_cols]
+
+# === THE REQUESTED FORMATTING LOGIC ===
+# 1. Create safe labels (e.g., "Number.of.Drinks") derived from the Pretty Labels
+safe_labels <- make.names(active_map)
+
+# 2. Create a lookup table to map safe labels back to pretty labels
+label_lookup <- setNames(active_map, safe_labels)
+
+# 3. Rename the dataframe columns to the SAFE labels
+names(combined_trait_data) <- safe_labels
+# ======================================
+
+
+# 4. Calculate Correlation AND P-Values
+# ---------------------------------------------------------
+# rcorr requires a matrix
+mat_data <- as.matrix(combined_trait_data)
+
+# Use rcorr to get both correlation (r) and p-values (P)
+cor_res <- rcorr(mat_data, type = "spearman")
+
+# Extract matrices
+r_mat <- cor_res$r
+p_mat <- cor_res$P
+
+# 5. Prepare Data for Plotting
+# ---------------------------------------------------------
+# Flatten correlations
+r_long <- r_mat %>%
+  as.data.frame() %>%
+  rownames_to_column("Var1") %>%
+  pivot_longer(-Var1, names_to = "Var2", values_to = "r_value")
+
+# Flatten p-values
+p_long <- p_mat %>%
+  as.data.frame() %>%
+  rownames_to_column("Var1") %>%
+  pivot_longer(-Var1, names_to = "Var2", values_to = "p_value")
+
+# Join them
+plot_data <- left_join(r_long, p_long, by = c("Var1", "Var2")) %>%
+  mutate(
+    # Apply Lookup for Pretty Labels
+    Label1 = label_lookup[Var1],
+    Label2 = label_lookup[Var2],
+    
+    # Set Factors for ordering based on the matrix structure
+    Label1 = factor(Label1, levels = label_lookup[rownames(r_mat)]),
+    Label2 = factor(Label2, levels = label_lookup[colnames(r_mat)]),
+    
+    # Define significance flag
+    is_sig = !is.na(p_value) & p_value < 0.05
+  )
+
+# 6. Plot
+# ---------------------------------------------------------
+p_trait_corr <- ggplot(plot_data, aes(Label2, Label1, fill = r_value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Spearman\nCorrelation") +
+  
+  # --- CONDITIONAL BOLDING ---
+  geom_text(aes(
+      label = round(r_value, 2), 
+      # Bold if significant (p < .05), Plain otherwise
+      fontface = ifelse(is_sig, "bold", "plain"),
+      # Optional: Dim non-significant numbers slightly?
+      alpha = ifelse(is_sig, 1, 0.7) 
+    ), 
+    size = 3,
+    color = "black" 
+  ) +
+  # ---------------------------
+
+  theme_minimal(base_size = 14) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 10, hjust = 1),
+        axis.title = element_blank()) +
+  coord_fixed() +
+  labs(title = "Between-Person Spearman Correlations",
+       subtitle = "Bold values indicate p < .05")
+
+print(p_trait_corr)
+
+save_png(plot = p_trait_corr, 
+         filename = "between_person_trait_correlation_heatmap_sig.png",
+         folder = descriptives_folder,
+         width = 14, 
+         height = 12)
+
+```
+

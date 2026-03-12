@@ -1,0 +1,3337 @@
+title: "UKALC_primary"
+date: "Last compiled on `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document: 
+    toc: true
+    toc_float: true
+    fig_caption: true
+    code_folding: show
+---
+
+# UKALC Primary Data Preparation Pipeline
+
+## Overview
+
+Prepares CLEAN datasets for R01AA027990: "Estradiol Effects on Behavioral and Reward Sensitivity to Alcohol across the Menstrual Cycle" (PIs: Mark Fillmore & Michelle Martel, University of Kentucky).
+
+**Pipeline:** Import → Clean → Merge surveys (AM/PM) → Integrate cycle data → Merge hormone assays → Generate diagnostics → Save clean output
+
+**Key Outputs:** `ukalc_YYYYMMDD_clean.rds` (clean dataset with NO derived variables), diagnostic plots
+
+**IMPORTANT CHANGE:** This file now outputs clean data ONLY (no rolling averages, person-standardization, or other derived variables). Derived variables are created in UKALC_03_processing_shared.Rmd AFTER merging with ADHD data to ensure both datasets receive identical processing.
+
+
+```{r setup}
+# Load packages, set options, create output folder
+source("UKALC_00_setup.R")
+
+# Create subfolder for data prep outputs
+data_prep_folder <- file.path(output_folder, "01_data_preparation")
+if (!dir.exists(data_prep_folder)) {
+  dir.create(data_prep_folder, recursive = TRUE)
+  cat("Created subfolder:", data_prep_folder, "\n")
+}
+```
+
+```{r source-custom-fxs, quiet=TRUE, message=FALSE, warning=FALSE}
+# Load helper functions from scripts/
+source("scripts/plot_day_of_week.R")
+source("scripts/print_variable_names.R")
+source("scripts/count_rows_ids.R")
+source("scripts/standardize_tubenumber.R")
+
+cat("Custom functions sourced.\n")
+```
+
+## Data Import
+
+```{r import-survey-data}
+# Import AM and PM surveys from REDCap (includes historical Qualtrics data)
+# Handles UTF-8 BOM, standardizes column names, removes blank rows
+
+# Define Box folder path (UPDATE THIS for your machine)
+data_path <- "~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/UKALC/02_datasets/UKALC_DAILYSURVEYS/02_data_prep_workspace"
+
+# Helper function: Load CSV, clean column names, standardize ID
+load_and_clean_survey <- function(filename) {
+  
+  # Read CSV with UTF-8 encoding (handles BOM)
+  df <- read_csv(
+    file.path(data_path, filename), 
+    show_col_types = FALSE,
+    locale = locale(encoding = "UTF-8"),
+    name_repair = "unique_quiet"
+  )
+  
+  # Strip UTF-8 BOM from column names (\ufeffid → id)
+  names(df) <- sub("^\\ufeff", "", names(df))
+  
+  # Standardize all column names to snake_case (MoodSwing → mood_swing)
+  df <- df %>% janitor::clean_names()
+  
+  # Remove empty columns
+  df <- df %>%
+    select(-matches("^x\\d+$")) %>%  # Remove auto-named columns like "x1", "x2"
+    select(where(~ !all(is.na(.))))   # Remove columns with only NA values
+  
+  # Ensure 'id' column exists after cleaning
+  # janitor::clean_names() may have renamed it, so check common variants
+  if (!"id" %in% names(df)) {
+    # Check for common id column names after cleaning
+    id_candidates <- c("subject_id", "participant_id", "record_id", "user_id", "patient_id")
+    id_col <- intersect(id_candidates, names(df))
+    if (length(id_col) > 0) {
+      df <- df %>% rename(id = !!sym(id_col[1]))
+      cat(sprintf("  Renamed '%s' to 'id'\n", id_col[1]))
+    } else {
+      stop(sprintf("Cannot find 'id' column in %s after cleaning. Available columns: %s", 
+                   filename, paste(names(df), collapse=", ")))
+    }
+  }
+  
+  # Keep only digits in 'id' column (handles various ID formats like "UKALC_101" -> "101")
+  df <- df %>%
+    mutate(id = str_extract(as.character(id), "\\d+"))
+  
+  # Remove completely empty rows (where id is NA/empty AND all other non-id columns are NA or whitespace)
+  # Count rows before filtering
+  n_rows_before <- nrow(df)
+  
+  df <- df %>%
+    filter(!is.na(id) & id != "")
+  
+  # Report removed rows
+  n_removed <- n_rows_before - nrow(df)
+  if (n_removed > 0) {
+    cat(sprintf("  Removed %d rows with missing/empty id from %s\n", n_removed, filename))
+  }
+  
+  # Standardize hormone column names (E2, P4) - inlined from rename_id_E2_P4.R
+  # Standardize estradiol/estrogen-related column names to start with "e2"
+  # Only rename columns where the hormone term is the leading identifier (e.g., "estradiol_ng_ml"),
+  # avoiding changes to names where it appears later (e.g., "phase2_estrogen_level").
+  df <- df %>%
+    rename_with(
+      ~ gsub("^(estrogen|estradiol|e2)(_?)", "e2\\2", ., ignore.case = TRUE),
+      matches("^(estrogen|estradiol|e2)($|_)", ignore.case = TRUE)
+    )
+  
+  # Standardize progesterone-related column names to start with "p4"
+  # Only rename columns where the hormone term is the leading identifier.
+  df <- df %>%
+    rename_with(
+      ~ gsub("^(progesterone|p4)(_?)", "p4\\2", ., ignore.case = TRUE),
+      matches("^(progesterone|p4)($|_)", ignore.case = TRUE)
+    )
+  
+  # Convert id to factor
+  df <- df %>% mutate(id = as.factor(id))
+  
+  return(df)
+}
+
+# ---- 2. Load & Process Datasets ----
+
+am_rc   <- load_and_clean_survey("AM_REDCap_csv.csv")
+pm_rc   <- load_and_clean_survey("PM_REDCap_csv.csv")
+
+# ---- 3. Diagnostics ----
+
+# Print quick summary of unique IDs per dataset
+datasets <- list(AM_REDCap = am_rc, PM_REDCap = pm_rc)
+
+cat("\n--- Processing Complete ---\n")
+for (name in names(datasets)) {
+  n_ids <- n_distinct(datasets[[name]]$id)
+  n_rows <- nrow(datasets[[name]])
+  cat(sprintf("%s: %d rows, %d unique IDs\n", name, n_rows, n_ids))
+}
+
+```
+
+## Clean AM Survey Data
+
+```{r clean-am-rc, warning=FALSE}
+# Clean morning surveys: alcohol use, cravings, stress, medications
+# Parses dates, standardizes craving names (crav_* → crave_*_am), validates 0-10 scale
+# Imputes num_drinks=0 when craving reported but drinks missing
+
+# ---- 1. Process Dates ----
+# NOTE: janitor::clean_names() has already been applied in load_and_clean_survey()
+# so date_time, tube_number, date_rated are already lowercase
+
+# Parse date_time column to create daterated, handling blank/NA values safely
+am_rc <- am_rc %>%
+  mutate(
+    # Only parse non-empty, non-NA date_time values
+    daterated = if_else(
+      !is.na(date_time) & date_time != "" & !str_detect(date_time, "^\\s*$"),
+      as.Date(suppressWarnings(lubridate::mdy_hm(date_time))),
+      as.Date(NA_character_)
+    )
+  ) %>%
+  select(-date_time)
+
+# ---- 1a. Remove Pre-existing Cleaned Columns (if any) ----
+# Some CSV files may contain pre-cleaned versions of alcohol timing columns
+# (e.g., drink_time_start_clean, drink_dur_hrs) from external processing.
+# Remove these to avoid duplicates, as we will generate our own cleaned versions.
+pre_cleaned_cols <- c("drink_time_start_clean", "drink_dur_hrs")
+existing_pre_cleaned <- intersect(pre_cleaned_cols, names(am_rc))
+
+if (length(existing_pre_cleaned) > 0) {
+  cat(sprintf("\n=== Removing Pre-existing Cleaned Columns ===\n"))
+  cat(sprintf("Found %d pre-cleaned columns in CSV: %s\n", 
+              length(existing_pre_cleaned), 
+              paste(existing_pre_cleaned, collapse=", ")))
+  cat("These will be removed and regenerated using standardized text parsing functions.\n")
+  
+  am_rc <- am_rc %>%
+    select(-any_of(pre_cleaned_cols))
+}
+
+# ---- 1b. Standardize Craving Column Names ----
+# NOTE: janitor::clean_names() has converted crav_alc_AM -> crav_alc_am already
+# Now we just need to change "crav_" prefix to "crave_"
+am_rc <- am_rc %>%
+  rename_with(~ gsub("^crav_", "crave_", .), starts_with("crav_"))
+
+# Validate transformation: Check if any old-format craving columns remain
+remaining_crav <- names(am_rc)[grepl("^crav_", names(am_rc), ignore.case = TRUE)]
+if (length(remaining_crav) > 0) {
+  warning(sprintf("AM: Found %d craving columns that were not transformed: %s", 
+                  length(remaining_crav), paste(remaining_crav, collapse = ", ")))
+}
+
+# ---- 1c. Track Missing Data BEFORE Filtering ----
+# Document missing data patterns before removing any rows
+n_total_rows <- nrow(am_rc)
+n_missing_id <- sum(is.na(am_rc$id))
+n_missing_daterated <- sum(is.na(am_rc$daterated))
+n_missing_both <- sum(is.na(am_rc$id) & is.na(am_rc$daterated))
+
+cat("\n=== AM Survey Missing Data Report (Pre-filtering) ===\n")
+cat(sprintf("Total rows: %d\n", n_total_rows))
+cat(sprintf("Rows with missing id: %d (%.1f%%)\n", n_missing_id, 100 * n_missing_id / n_total_rows))
+cat(sprintf("Rows with missing daterated: %d (%.1f%%)\n", n_missing_daterated, 100 * n_missing_daterated / n_total_rows))
+cat(sprintf("Rows with both missing: %d (%.1f%%)\n", n_missing_both, 100 * n_missing_both / n_total_rows))
+
+# ---- 1d. Filter Rows with Missing Keys ----
+# Drop observations where id or daterated are missing (cannot be matched in merge)
+am_rc <- am_rc %>%
+  filter(!is.na(id), !is.na(daterated))
+
+cat(sprintf("Rows after removing missing id/daterated: %d (removed %d rows)\n\n", 
+            nrow(am_rc), n_total_rows - nrow(am_rc)))
+
+# ---- 2. Clean Alcohol Variables ----
+# Convert drank_alcohol to factor (1/0)
+am_rc <- am_rc %>%
+  mutate(drank_alcohol = as.factor(drank_alcohol))
+
+# Ensure num_drinks is numeric
+am_rc <- am_rc %>% 
+  mutate(num_drinks = as.numeric(num_drinks))
+
+# ---- 2a. Text Parsing Functions for Alcohol Duration and Start Time ----
+# These functions clean free-text responses from participants about drinking timing
+# Adapted from archive/old_scripts/UKALC_textparse.Rmd
+
+#' Clean Time String to HH:MM Format
+#'
+#' Converts free-text time entries (e.g., "7pm", "around 9:30", "10") to 24-hour HH:MM format.
+#' Handles common variations including AM/PM indicators, words like "noon"/"midnight",
+#' and missing/invalid entries.
+#'
+#' @param x Character string representing a time (e.g., "7pm", "21:30", "noon")
+#' @return Character string in HH:MM format (24-hour), or NA if unparseable
+#'
+#' @examples
+#' clean_time_single("7pm")        # Returns "19:00"
+#' clean_time_single("around 9:30") # Returns "21:30" (assumes PM if no indicator)
+#' clean_time_single("noon")       # Returns "12:00"
+#' clean_time_single("midnight")   # Returns "00:00"
+#' clean_time_single("no drink")   # Returns NA
+clean_time_single <- function(x) {
+  if (is.na(x) || x == "") return(NA_character_)
+  x <- str_to_lower(str_trim(x))
+  
+  # Handle explicit "no drinking" responses
+  if (x %in% c("0", "nan", "none", "na") || str_detect(x, "no drink|didn't|consume")) {
+    return(NA_character_)
+  }
+  
+  # Handle special keywords
+  if (str_detect(x, "noon")) return("12:00")
+  if (str_detect(x, "midnight")) return("00:00")
+  
+  # Remove ranges and qualifiers, keep first time mentioned
+  x <- str_trim(str_split(x, "[-/]| and | for ")[[1]][1])
+  x <- str_remove_all(x, "around|at|approx|start|time|about")
+  x <- str_trim(x)
+  
+  # Extract time pattern: digits with optional minutes and AM/PM
+  pattern <- "(\\d{1,2})(?:[:.](\\d{2}))?\\s*([ap]\\.?m?\\.?)?"
+  match <- str_match(x, pattern)
+  
+  if (is.na(match[1,1])) return(NA_character_)
+  
+  h <- as.integer(match[1,2])
+  m <- as.integer(match[1,3])
+  if (is.na(m)) m <- 0
+  ampm <- match[1,4]
+  
+  # Convert to 24-hour format
+  if (!is.na(ampm) && ampm != "") {
+    ampm <- str_remove_all(ampm, "\\.")
+    if (str_detect(ampm, "p") && h < 12) h <- h + 12
+    if (str_detect(ampm, "a") && h == 12) h <- 0
+  } else {
+    # If no AM/PM indicator, assume PM for drinking hours (evening bias)
+    if (h <= 11 && h != 0) h <- h + 12
+    if (h == 24) h <- 0
+  }
+  
+  # Validate time bounds
+  if (h > 23 || m > 59) return(NA_character_)
+  
+  return(sprintf("%02d:%02d", h, m))
+}
+
+#' Clean Duration String to Numeric Hours
+#'
+#' Converts free-text duration entries (e.g., "2-3 hours", "1h 30m", "90 minutes") 
+#' to numeric hours. Handles ranges (takes midpoint), explicit units, and common
+#' text variations.
+#'
+#' @param x Character string representing duration (e.g., "2 hours", "1:30", "90 min")
+#' @return Numeric value in hours, or NA if unparseable
+#'
+#' @examples
+#' clean_duration_single("2 hours")    # Returns 2.0
+#' clean_duration_single("1h 30m")     # Returns 1.5
+#' clean_duration_single("2-3")        # Returns 2.5 (midpoint)
+#' clean_duration_single("90 minutes") # Returns 1.5
+#' clean_duration_single("1:30")       # Returns 1.5
+#' clean_duration_single("no drink")   # Returns 0.0
+clean_duration_single <- function(x) {
+  if (is.na(x) || x == "") return(NA_real_)
+  x <- str_to_lower(str_trim(x))
+  
+  # Handle explicit "no drinking" responses - return 0
+  if (x %in% c("0", "nan", "none", "na", "no") || 
+      str_detect(x, "no drink|didn't|consume|zero")) {
+    return(0.0)
+  }
+  
+  # Reject timestamps mistakenly entered as duration (e.g., "4pm")
+  if (str_detect(x, "[0-9] ?[ap]\\.?m")) return(NA_real_)
+  
+  # Standardize text to numeric
+  x <- x %>%
+    str_replace_all("one", "1") %>% str_replace_all("two", "2") %>%
+    str_replace_all("three", "3") %>% str_replace_all("four", "4") %>%
+    str_replace_all("five", "5") %>% str_replace_all("half", "0.5") %>%
+    str_replace_all("an hour", "1 hour") %>% str_replace_all("a minute", "1 minute") %>%
+    str_replace_all("1/2", "0.5") %>%
+    str_replace_all("hrs|hr|hours|hour", "h") %>%
+    str_replace_all("mins|min|minutes|minute", "m")
+  
+  # Handle Range Pattern (e.g., "3-4" or "2 to 3") - take midpoint
+  range_match <- str_match(x, "^(\\d+(\\.\\d+)?)\\s*[-to]+\\s*(\\d+(\\.\\d+)?)$")
+  if (!is.na(range_match[1,1])) {
+    return((as.numeric(range_match[1,2]) + as.numeric(range_match[1,4])) / 2)
+  }
+  
+  # Handle Explicit Unit Pattern (e.g., "1h 30m")
+  h_val <- 0; m_val <- 0; found_unit <- FALSE
+  h_match <- str_match(x, "(\\d+(\\.\\d+)?)\\s*h")
+  if (!is.na(h_match[1,1])) { h_val <- as.numeric(h_match[1,2]); found_unit <- TRUE }
+  m_match <- str_match(x, "(\\d+(\\.\\d+)?)\\s*m")
+  if (!is.na(m_match[1,1])) { m_val <- as.numeric(m_match[1,2]); found_unit <- TRUE }
+  if (found_unit) return(h_val + (m_val / 60))
+  
+  # Handle Colon Pattern (e.g., "1:30" as 1 hour 30 minutes)
+  colon_match <- str_match(x, "^(\\d{1,2}):(\\d{2})$")
+  if (!is.na(colon_match[1,1])) {
+    h <- as.numeric(colon_match[1,2]); m <- as.numeric(colon_match[1,3])
+    if (h <= 12) return(h + (m / 60))
+  }
+  
+  # Handle Bare Number (assume hours if < 15, minutes if >= 15)
+  num_clean <- str_remove_all(x, "[^0-9\\.]")
+  if (num_clean != "" && !is.na(as.numeric(num_clean))) {
+    val <- as.numeric(num_clean)
+    if (val >= 15) return(val / 60) else return(val)
+  }
+  
+  return(NA_real_)
+}
+
+# ---- 2b. Apply Text Parsing to Alcohol Variables ----
+# Clean time_start_alcohol and dur_alcohol using the parsing functions
+cat("\n=== Cleaning Alcohol Duration and Start Time ===\n")
+
+# Count non-missing values before cleaning
+n_start_before <- sum(!is.na(am_rc$time_start_alcohol))
+n_dur_before <- sum(!is.na(am_rc$dur_alcohol))
+
+# Apply cleaning functions
+am_rc <- am_rc %>%
+  mutate(
+    time_start_alcohol_clean = map_chr(time_start_alcohol, clean_time_single),
+    dur_alcohol_hours = map_dbl(dur_alcohol, clean_duration_single)
+  )
+
+# Count non-missing values after cleaning
+n_start_after <- sum(!is.na(am_rc$time_start_alcohol_clean))
+n_dur_after <- sum(!is.na(am_rc$dur_alcohol_hours))
+
+cat(sprintf("time_start_alcohol: %d non-missing → %d cleaned (%.1f%% success rate)\n",
+            n_start_before, n_start_after, 
+            100 * n_start_after / max(n_start_before, 1)))
+cat(sprintf("dur_alcohol: %d non-missing → %d cleaned (%.1f%% success rate)\n",
+            n_dur_before, n_dur_after,
+            100 * n_dur_after / max(n_dur_before, 1)))
+
+# Show example conversions for validation
+if (n_start_before > 0) {
+  cat("\nExample time conversions:\n")
+  examples_time <- am_rc %>%
+    filter(!is.na(time_start_alcohol)) %>%
+    select(time_start_alcohol, time_start_alcohol_clean) %>%
+    distinct() %>%
+    head(5)
+  print(examples_time)
+}
+
+if (n_dur_before > 0) {
+  cat("\nExample duration conversions:\n")
+  examples_dur <- am_rc %>%
+    filter(!is.na(dur_alcohol)) %>%
+    select(dur_alcohol, dur_alcohol_hours) %>%
+    distinct() %>%
+    head(5)
+  print(examples_dur)
+}
+
+# ---- Quality Check: Validate Parsed Values ----
+# Check for unreasonable duration values that may indicate parsing errors
+extreme_durations <- am_rc %>%
+  filter(!is.na(dur_alcohol_hours)) %>%
+  filter(dur_alcohol_hours > 12 | dur_alcohol_hours < 0) %>%
+  select(id, daterated, dur_alcohol, dur_alcohol_hours)
+
+if (nrow(extreme_durations) > 0) {
+  cat("\n⚠️  WARNING: Found", nrow(extreme_durations), "drinking episodes with unusual duration (>12 hours or <0):\n")
+  print(extreme_durations)
+  cat("Review these values manually to ensure they were parsed correctly.\n")
+}
+
+# Check for extreme number of drinks that may be data entry errors
+extreme_drinks <- am_rc %>%
+  filter(!is.na(num_drinks_today)) %>%
+  filter(num_drinks_today > 20) %>%
+  select(id, daterated, num_drinks_today)
+
+if (nrow(extreme_drinks) > 0) {
+  cat("\n⚠️  WARNING: Found", nrow(extreme_drinks), "drinking episodes with >20 drinks:\n")
+  print(extreme_drinks)
+  cat("These values may be data entry errors. Review and consider capping if implausible.\n")
+}
+
+# ---- 3. Clean Craving Variables ----
+# Craving columns have been standardized to: crave_alc_am, crave_nic_am, crave_mar_am, etc.
+# (renamed from crav_*_AM to crave_*_am in section 1b above)
+# NOTE: The _am suffix is already present from section 1b
+
+# Record NA rates before transformation
+crave_cols_pre <- names(am_rc)[grepl("^crave_.*_am$", names(am_rc), ignore.case = TRUE)]
+if (length(crave_cols_pre) > 0) {
+  crave_pre <- am_rc %>% 
+    summarise(across(matches("^crave_.*_am$"), ~ mean(is.na(.))))
+  cat("AM Craving Variables NA proportions (before cleaning):\n")
+  print(crave_pre)
+}
+
+# Clean craving variables - extract leading digits if text format present
+# Handles formats like: "5 Moderate Urge", "10", 10
+am_rc <- am_rc %>%
+  mutate(across(matches("^crave_.*_am$"), ~ suppressWarnings(as.integer(stringr::str_extract(as.character(.), "^\\d+")))))
+
+# Record NA rates after transformation
+if (length(crave_cols_pre) > 0) {
+  crave_post <- am_rc %>% 
+    summarise(across(matches("^crave_.*_am$"), ~ mean(is.na(.))))
+  cat("\nAM Craving Variables NA proportions (after cleaning):\n")
+  print(crave_post)
+  
+  # Report if cleaning introduced NAs
+  for(col in crave_cols_pre) {
+    na_before <- crave_pre[[col]]
+    na_after <- crave_post[[col]]
+    if(na_after > na_before) {
+      cat(sprintf("WARNING: %s had %.1f%% NAs increase from %.1f%% to %.1f%% due to text extraction\n", 
+                  col, 100*(na_after - na_before), 100*na_before, 100*na_after))
+    }
+  }
+}
+
+# Validate craving values are in expected range (0-10)
+crave_cols <- names(am_rc)[grepl("^crave_.*_am$", names(am_rc), ignore.case = TRUE)]
+if (length(crave_cols) > 0) {
+  for (col in crave_cols) {
+    out_of_range <- am_rc[[col]][!is.na(am_rc[[col]]) & (am_rc[[col]] < 0 | am_rc[[col]] > 10)]
+    if (length(out_of_range) > 0) {
+      warning(sprintf("AM RC: %s has %d values outside expected 0-10 range", col, length(out_of_range)))
+    }
+  }
+}
+
+# ---- 4. Imputation Logic with Documentation ----
+# If crave_alc_am is not missing but num_drinks is missing, impute num_drinks = 0
+# RATIONALE: Craving question comes after drinking question in survey flow.
+# If participant answered craving, they saw drinking question but didn't report drinks.
+# This likely means no drinking occurred (rather than technical skip).
+if("crave_alc_am" %in% names(am_rc) && "num_drinks" %in% names(am_rc)) {
+  n_imputed <- sum(!is.na(am_rc$crave_alc_am) & is.na(am_rc$num_drinks))
+  if(n_imputed > 0) {
+    cat(sprintf("\n=== Imputation: Setting num_drinks = 0 for %d rows where crave_alc_am exists but num_drinks is NA ===\n", n_imputed))
+    am_rc$num_drinks[!is.na(am_rc$crave_alc_am) & is.na(am_rc$num_drinks)] <- 0
+  }
+}
+
+# ---- 5. Select Final Columns and Standardize Names ----
+# Keep all relevant AM variables
+# NOTE: Craving variables already have _am suffix from section 1b (crave_alc_am, crave_nic_am, etc.)
+
+# Standardize TubeNumber using helper function for consistency with hormone data
+am_rc <- standardize_tubenumber(am_rc)
+
+am_rc <- am_rc %>% 
+  select(id, daterated, 
+         # Tube number for hormone data matching
+         any_of("TubeNumber"),
+         # Alcohol variables (raw and cleaned)
+         num_drinks, drank_alcohol, felt_drunk, 
+         time_start_alcohol, time_start_alcohol_clean,
+         dur_alcohol, dur_alcohol_hours,
+         # Craving variables (all substances) - with _am suffix
+         crave_alc_am, crave_nic_am, crave_mar_am, crave_coc_am, crave_benz_am, 
+         crave_hall_am, crave_opiate_am, crave_oth_am,
+         # Stress variables
+         had_stress, stress_work_school, stress_social, stress_health, 
+         stress_financial, stress_logistics, stress_study_related,
+         # Medication/drug use variables
+         took_meds, drug_pain_nsaid, drug_cold_allergy, drug_antibiotic, 
+         drug_psych_sleep, drug_gi, drug_steroid, drug_spironolactone, drug_supplement,
+         # Other substance use
+         used_nicotine, used_marijuana, used_cocaine, used_benzos, 
+         used_hallucinogens, used_opiates)
+
+# ---- 6. Visualization and Diagnostics ----
+# Visualize Missing Data
+cat("\n=== AM Survey Missing Data Pattern (Final) ===\n")
+#vis_miss(am_rc) 
+
+# Print summary
+cat("\n=== AM Survey Cleaning Complete ===\n")
+cat("Variables: All in snake_case format\n")
+cat("Craving variables: crave_alc_am, crave_nic_am, crave_mar_am, etc. (validated 0-10 range, _am suffix already present)\n")
+cat("Alcohol variables: num_drinks (numeric), drank_alcohol (factor), felt_drunk\n")
+cat("Alcohol timing variables: time_start_alcohol_clean (HH:MM), dur_alcohol_hours (numeric hours)\n")
+cat("Stress variables: had_stress, stress_work_school, stress_social, etc.\n")
+cat("Medication variables: took_meds, drug_pain_nsaid, drug_cold_allergy, etc.\n")
+cat("Substance use: used_nicotine, used_marijuana, used_cocaine, etc.\n\n")
+
+count_rows_ids(am_rc)
+```
+
+```{r create-merged-amdf}
+# Fill missing dates in AM data: creates row for each day between first/last survey
+# Ensures craving variables have "_am" suffix for merge
+
+# Standardize dates and remove empty rows
+amdf <- am_rc %>%
+  mutate(
+    daterated = as_date(daterated),
+    id = as.character(id)
+  ) %>%
+  filter(!is.na(id))
+
+# Fill missing dates (creates row for each day between first and last survey)
+amdf_complete <- amdf %>%
+  group_by(id) %>%
+  filter(any(!is.na(daterated))) %>% 
+  complete(daterated = seq(min(daterated, na.rm = TRUE), 
+                           max(daterated, na.rm = TRUE), 
+                           by = "day")) %>%
+  ungroup()
+
+# Verify craving variables have "_am" suffix (safety check)
+amdf_complete <- amdf_complete %>%
+  rename_with(~ ifelse(grepl("_(am|pm)$", .), ., paste0(., "_am")), starts_with("crave_")) %>%
+  distinct()
+
+cat("Final AM DataFrame Rows:", nrow(amdf_complete), "\n")
+count_rows_ids(amdf_complete)
+
+vis_miss(amdf_complete)
+```
+
+## Clean PM Survey Data
+
+```{r clean-pm-rc, warning=FALSE}
+# Clean evening surveys: mood (DRSP), impulse control (bdefs), cravings
+# Parses dates (handles "before noon" → previous day), standardizes names (crav_* → crave_*_pm)
+# Recodes DRSP (1-6 scale) and validates cravings (0-10 scale)
+# Note: Temporary datepart/timepart/b4noon kept for duplicate removal, dropped before merge
+
+# ---- 0. Define Variable Lists ----
+# These variable lists are needed for recoding DRSP and bdefs scales below
+# Following refactoring guidelines: each chunk defines its own variable lists
+
+drsp_vars <- c(
+  "dep", "hopeless", "worthless", "anxious", "mood_swing", "rej_sens", 
+  "angry", "conflicts", "loss_interest", "diff_conc", "tired", 
+  "over_eat", "sp_food_crav", "high_sleep", "diff_sleep", "overwhelm", 
+  "loss_control", "breast_tend", "breast_swell", "headache", 
+  "jm_pain", "loss_prod", "int_relat"
+)
+
+bdefs_vars <- c(
+  "diff_inhib", "diff_stop", "diff_change", "immed_payoff", 
+  "res_urge", "diff_long_rew", "diff_res_rew"
+)
+
+# ---- 1. Process Dates ----
+# NOTE: janitor::clean_names() has already been applied in load_and_clean_survey()
+# so date_time is already lowercase and ready to use
+
+# Parse date_time column to create daterated
+# The raw data has been fixed, so we can now parse dates uniformly
+# Handles multiple date formats flexibly using lubridate::parse_date_time
+pm_rc <- pm_rc %>%
+  mutate(
+    # Only parse non-empty, non-NA date_time values
+    daterated = if_else(
+      ! is.na(date_time) & date_time != "" & ! str_detect(date_time, "^\\s*$"),
+      as.Date(coalesce(
+        # Try mdy_hms first (handles formats with seconds like "8/12/2021 7:22:00PM")
+        suppressWarnings(lubridate::mdy_hms(date_time)),
+        # Fall back to mdy_hm (handles "8/30/21 20:14" format without seconds)
+        suppressWarnings(lubridate::mdy_hm(date_time))
+      )),
+      as.Date(NA_character_)
+    )
+  )
+
+
+# Save "before noon" completions as day prior
+# Handle blank date_time values that would cause str_split to fail
+pm_rc <- pm_rc %>%
+  mutate(
+    date_time_clean = if_else(is.na(date_time) | date_time == "", "___MISSING_DATE___ ___MISSING_TIME___", date_time)
+  )
+
+pm_rc[c('datepart', 'timepart')] <- str_split_fixed(pm_rc$date_time_clean, ' ', 2)
+pm_rc <- pm_rc %>% select(-date_time, -date_time_clean)
+
+# Parse timepart, handling NA values
+pm_rc <- pm_rc %>%
+  mutate(
+    timepart = suppressWarnings(lubridate::hm(timepart)),
+    b4noon = if_else(!is.na(timepart) & timepart < lubridate::hm("12:00"), 1, 0, missing = 0)
+  )
+
+pm_rc <- pm_rc %>%
+  mutate(daterated = case_when(
+    b4noon == 1 & !is.na(daterated) ~ daterated - 1,
+    TRUE ~ daterated
+  ))
+
+# ---- 1a. Standardize Craving Column Names ----
+# NOTE: janitor::clean_names() has converted crav_alc_PM -> crav_alc_pm already
+# Now we just need to change "crav_" prefix to "crave_"
+pm_rc <- pm_rc %>%
+  rename_with(~ gsub("^crav_", "crave_", .), starts_with("crav_"))
+
+# Validate transformation: Check if any old-format craving columns remain
+remaining_crav <- names(pm_rc)[grepl("^crav_", names(pm_rc), ignore.case = TRUE)]
+if (length(remaining_crav) > 0) {
+  warning(sprintf("PM: Found %d craving columns that were not transformed: %s", 
+                  length(remaining_crav), paste(remaining_crav, collapse = ", ")))
+}
+
+# ---- 2. Remove Rows with Blank Data ----
+# Identify rows where all non-key fields are NA or empty/whitespace
+# Key fields: id, daterated, datepart, timepart, b4noon
+# This removes the "blank" rows seen in the PM export
+
+n_total_rows <- nrow(pm_rc)
+n_missing_id <- sum(is.na(pm_rc$id))
+n_missing_daterated <- sum(is.na(pm_rc$daterated))
+
+cat("\n=== PM Survey Missing Data Report (Pre-filtering) ===\n")
+cat(sprintf("Total rows: %d\n", n_total_rows))
+cat(sprintf("Rows with missing id: %d (%.1f%%)\n", n_missing_id, 100 * n_missing_id / n_total_rows))
+cat(sprintf("Rows with missing daterated: %d (%.1f%%)\n", n_missing_daterated, 100 * n_missing_daterated / n_total_rows))
+
+# Define key columns to exclude from "all NA" check
+key_cols <- c("id", "daterated", "datepart", "timepart", "b4noon")
+data_cols <- setdiff(names(pm_rc), key_cols)
+
+# Remove rows where:
+# 1. id is missing (can't be matched), OR
+# 2. All data columns are NA/empty (blank survey row)
+# Note: We keep rows with missing daterated if they have actual data,
+# as these may have date parsing issues but still contain valid survey responses
+pm_rc <- pm_rc %>%
+  filter(
+    !is.na(id) &
+    # At least one data column must have a non-NA value
+    rowSums(!is.na(select(., all_of(data_cols)))) > 0
+  )
+
+n_removed <- n_total_rows - nrow(pm_rc)
+cat(sprintf("Rows after removing missing id and blank data rows: %d (removed %d rows)\n", 
+            nrow(pm_rc), n_removed))
+
+# Check for rows with missing daterated that were kept
+n_kept_missing_daterated <- sum(is.na(pm_rc$daterated))
+if (n_kept_missing_daterated > 0) {
+  affected_ids <- unique(pm_rc$id[is.na(pm_rc$daterated)])
+  cat(sprintf("⚠ WARNING: %d rows have missing daterated but were kept because they contain data\n", 
+              n_kept_missing_daterated))
+  cat("  These rows may not merge correctly. Investigate date_time values for parsing issues.\n")
+  if (length(affected_ids) <= 10) {
+    cat("  Affected IDs:", paste(affected_ids, collapse = ", "), "\n")
+  } else {
+    cat("  Affected IDs (first 10):", paste(head(affected_ids, 10), collapse = ", "), 
+        sprintf("... and %d more\n", length(affected_ids) - 10))
+  }
+  cat("  Next steps:\n")
+  cat("  1. Check original date_time format in raw data for these IDs\n")
+  cat("  2. Verify date_time values are in 'M/D/YY H:MM' format (e.g., '8/30/21 20:14')\n")
+  cat("  3. Look for blank, malformed, or non-standard date strings\n")
+}
+cat("\n")
+
+# ---- 3. Variable Names Already Cleaned ----
+# NOTE: janitor::clean_names() in load_and_clean_survey() has already:
+# - Converted Dep -> dep, MoodSwing -> mood_swing, RejSens -> rej_sens
+# - Converted Diff_Inhib -> diff_inhib, Diff_Stop -> diff_stop, etc.
+# So we don't need manual name mappings anymore!
+
+cat("Variable names already standardized by janitor::clean_names():\n")
+cat("  - DRSP: dep, hopeless, mood_swing, rej_sens, etc.\n")
+cat("  - bdefs: diff_inhib, diff_stop, diff_change, etc.\n")
+cat("  - Craving: crave_alc_pm, crave_nic_pm, etc.\n\n")
+
+# ---- 4. Clean Craving Variables ----
+# Craving columns should now be: crave_alc_pm, crave_nic_pm, etc.
+# (renamed from crav_* in section 1a above)
+
+# Record NA rates before transformation
+crave_cols_pre <- names(pm_rc)[grepl("^crave_.*_pm$", names(pm_rc), ignore.case = TRUE)]
+if (length(crave_cols_pre) > 0) {
+  crave_pre <- pm_rc %>% 
+    summarise(across(matches("^crave_.*_pm$"), ~ mean(is.na(.))))
+  cat("\nPM Craving Variables NA proportions (before cleaning):\n")
+  print(crave_pre)
+}
+
+# Clean craving variables - extract leading digits if text format present
+# This handles both:
+#   - Numeric values: 0, 1, 2, ..., 10 (kept as-is)
+#   - Text labels: "5 Moderate Urge" (extracts the leading "5" → 5)
+# The str_extract gets the first digits, as.integer converts to numeric
+pm_rc <- pm_rc %>%
+  mutate(across(matches("^crave_.*_pm$"), ~ suppressWarnings(as.integer(stringr::str_extract(as.character(.), "^\\d+")))))
+
+# Record NA rates after transformation
+if (length(crave_cols_pre) > 0) {
+  crave_post <- pm_rc %>% 
+    summarise(across(matches("^crave_.*_pm$"), ~ mean(is.na(.))))
+  cat("\nPM Craving Variables NA proportions (after cleaning):\n")
+  print(crave_post)
+}
+
+# Validate craving values are in expected range (0-10)
+crave_cols <- names(pm_rc)[grepl("^crave_.*_pm$", names(pm_rc), ignore.case = TRUE)]
+if (length(crave_cols) > 0) {
+  for (col in crave_cols) {
+    out_of_range <- pm_rc[[col]][!is.na(pm_rc[[col]]) & (pm_rc[[col]] < 0 | pm_rc[[col]] > 10)]
+    if (length(out_of_range) > 0) {
+      warning(sprintf("PM RC: %s has %d values outside expected 0-10 range", col, length(out_of_range)))
+    }
+  }
+}
+
+# ---- 5. Recode DRSP Variables (Only if Character/String) ----
+# DRSP uses 6-point scale: Not at All(1) to Extreme(6)
+# The example data has numeric values (1-6), so we should preserve those
+# Only recode if values are character/string labels
+
+drsp_cols_present <- intersect(drsp_vars, names(pm_rc))
+if(length(drsp_cols_present) > 0) {
+  # Check data type: numeric values (normal case) or character strings (rare case)
+  # Data typically comes in as numeric 1-6, but handle strings just in case
+  drsp_is_char <- sapply(pm_rc[drsp_cols_present], function(x) is.character(x) | is.factor(x))
+  drsp_char_cols <- names(drsp_is_char)[drsp_is_char]
+  
+  if(length(drsp_char_cols) > 0) { # Only if strings detected
+    cat(sprintf("\nRecoding %d DRSP character variables to numeric scale (1-6)\n", length(drsp_char_cols)))
+    
+    # Define the recoding as a named vector
+    recode_levels <- c(
+      "Not at All" = 1, 
+      "Minimal" = 2, 
+      "Mild" = 3, 
+      "Moderate" = 4, 
+      "Severe" = 5, 
+      "Extreme" = 6
+    )
+    
+    # Identify any unexpected DRSP response levels before recoding
+    unexpected_levels <- lapply(pm_rc[drsp_char_cols], function(x) {
+      vals <- unique(as.character(x))
+      vals[!(is.na(vals) | vals %in% names(recode_levels))]
+    })
+    cols_with_unexpected <- names(unexpected_levels)[vapply(unexpected_levels, length, integer(1L)) > 0L]
+    if (length(cols_with_unexpected) > 0) {
+      cat("\nWarning: Unexpected DRSP levels detected in the following variables (will be set to NA):\n")
+      for (nm in cols_with_unexpected) {
+        cat(sprintf("  - %s: %s\n", nm, paste(unexpected_levels[[nm]], collapse = ", ")))
+      }
+    }
+    
+    pm_rc <- pm_rc %>%
+      mutate(across(all_of(drsp_char_cols), ~ as.numeric(recode(as.character(.), !!!recode_levels, .default = NA_real_))))
+  } else { # No character columns - data is numeric (normal case)
+    cat(sprintf("\nDRSP variables (%d found) are already numeric; skipping recoding\n", length(drsp_cols_present)))
+  }
+  
+  # Ensure all DRSP columns are numeric
+  pm_rc <- pm_rc %>%
+    mutate(across(all_of(drsp_cols_present), ~ as.numeric(.)))
+}
+
+# view id, daterated, and diff_inhib columns for checking
+# pm_rc %>% select(id, daterated, diff_inhib) %>% View()
+
+# Set bdefs columns to numeric
+  
+pm_rc <- pm_rc %>%
+  mutate(across(all_of(bdefs_vars), ~ as.numeric(.)))
+
+
+# ---- 6a. Standardize TubeNumber (if present) ----
+# Use helper function to standardize tube_number to TubeNumber
+# This ensures consistency with hormone data and AM survey
+pm_rc <- standardize_tubenumber(pm_rc)
+
+# ---- 7. Select Final Columns ----
+# Keep all relevant columns
+# NOTE: All column names are now in snake_case thanks to janitor::clean_names()
+cols_to_keep <- c("id", "daterated", "datepart", "timepart", "b4noon")
+
+# Add TubeNumber if it exists (for hormone data matching)
+if ("TubeNumber" %in% names(pm_rc)) {
+  cols_to_keep <- c(cols_to_keep, "TubeNumber")
+}
+
+# Add bdefs, DRSP, and craving variables using vectorized approach
+all_scale_vars <- c(bdefs_vars, drsp_vars, 
+                    "crave_alc_pm", "crave_nic_pm", "crave_mar_pm", "crave_coc_pm", 
+                    "crave_benzo_pm", "crave_hall_pm", "crave_opiate_pm", "crave_oth_pm")
+cols_to_keep <- c(cols_to_keep, intersect(all_scale_vars, names(pm_rc)))
+
+# Add any other description columns that exist
+desc_cols <- names(pm_rc)[grepl("_description$", names(pm_rc))]
+if(length(desc_cols) > 0) {
+  cols_to_keep <- c(cols_to_keep, desc_cols)
+}
+
+# Use unique() to ensure no duplicate columns
+pm_rc <- pm_rc %>% select(all_of(unique(cols_to_keep)))
+
+# ---- 8. Diagnostics ----
+# Visualize Missing Data
+cat("\n=== PM Survey Missing Data Pattern (Final) ===\n")
+##vis_miss(pm_rc) 
+
+# Print summary
+cat("\n=== PM Survey Cleaning Complete ===\n")
+cat("Variables: All in snake_case format\n")
+cat(sprintf("DRSP variables (%d): dep, hopeless, anxious, mood_swing, etc. (1-6 scale)\n", length(drsp_cols_present)))
+cat("Craving variables: crave_alc_pm, crave_nic_pm, crave_mar_pm, etc. (0-10 scale)\n\n")
+
+count_rows_ids(pm_rc)
+
+#vis_miss(pm_rc)
+
+#View(pm_rc)
+```
+
+```{r create-merged-pmdf}
+# Prepare PM data for merge: remove duplicates, validate structure
+
+pmdf <- pm_rc
+
+# Check for duplicates and remove
+pmdf <- pmdf %>%
+  distinct()
+
+# Print variable summary
+cat("\n=== PM Survey Data Ready for Merge ===\n")
+cat("All variables in snake_case with _pm suffix on cravings\n")
+cat("bdefs variables (snake_case): diff_inhib, diff_stop, diff_change, etc.\n")
+cat("DRSP variables (snake_case): dep, hopeless, anxious, mood_swing, etc.\n")
+cat("Craving variables: crave_alc_pm, crave_nic_pm, crave_mar_pm, etc.\n\n")
+
+count_rows_ids(pmdf)
+
+print.variable.names(pmdf)
+
+#vis_miss(pmdf)
+```
+
+## Remove Duplicates & Apply Exclusions
+
+```{r manual-exclusions-changes}
+# Remove ~55 confirmed duplicate PM surveys (identified by study staff via datepart/timepart)
+# Exclude all data from IDs 125, 127 (insufficient data quality)
+# Drop temporary date variables (datepart, timepart, b4noon) after removal
+
+#ID 106
+pmdf <- pmdf[!(pmdf$id == 106 & pmdf$datepart == "2021-05-08" & pmdf$timepart == "10H 0M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 106 & pmdf$datepart == "2021-05-13" & pmdf$timepart == "4H 57M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 106 & pmdf$datepart == "2021-05-19" & pmdf$timepart == "4H 52M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 106 & pmdf$datepart == "2021-05-22" & pmdf$timepart == "10H 32M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 106 & pmdf$datepart == "2021-05-23" & pmdf$timepart == "13H 8M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 106 & pmdf$datepart == "2021-05-24" & pmdf$timepart == "7H 18M 0S"), ]
+#ID 107
+pmdf <- pmdf[!(pmdf$id == 107 & pmdf$datepart == "2021-05-29" & pmdf$timepart == "7H 18M 0S"), ]
+
+#ID 109 
+pmdf <- pmdf[!(pmdf$id == 109 & pmdf$datepart == "2021-06-22" & pmdf$timepart == "20H 30M 0S"), ]
+
+#ID 113 
+pmdf <- pmdf[!(pmdf$id == 113 & pmdf$datepart == "2021-06-29" & pmdf$timepart == "21H 25M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 113 & pmdf$datepart == "2021-07-02" & pmdf$timepart == "23H 03M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 113 & pmdf$datepart == "2021-07-05" & pmdf$timepart == "0H 21M 0S"), ]
+#ID 114
+pmdf <- pmdf[!(pmdf$id == 114 & pmdf$datepart == "2021-07-03" & pmdf$timepart == "5H 57M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 114 & pmdf$datepart == "2021-07-05" & pmdf$timepart == "4H 46M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 114 & pmdf$datepart == "2021-07-09" & pmdf$timepart == "21H 43M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 114 & pmdf$datepart == "2021-07-09" & pmdf$timepart == "21H 44M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 114 & pmdf$datepart == "2021-07-11" & pmdf$timepart == "20H 46M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 114 & pmdf$datepart == "2021-07-14" & pmdf$timepart == "7H 48M 0S"), ]
+#ID 115 
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-06-26" & pmdf$timepart == "8H 20M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-06-28" & pmdf$timepart == "22H 1M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-07-01" & pmdf$timepart == "19H 52M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-07-03" & pmdf$timepart == "3H 5M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-07-09" & pmdf$timepart == "21H 52M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-07-09" & pmdf$timepart == "21H 54M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-07-09" & pmdf$timepart == "21H 57M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-07-10" & pmdf$timepart == "8H 37M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-07-10" & pmdf$timepart == "8H 40M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-07-19" & pmdf$timepart == "6H 48M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-07-19" & pmdf$timepart == "6H 56M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-07-19" & pmdf$timepart == "6H 59M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-07-19" & pmdf$timepart == "7H 3M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-07-19" & pmdf$timepart == "7H 6M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-07-19" & pmdf$timepart == "7H 8M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-07-19" & pmdf$timepart == "7H 10M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 115 & pmdf$datepart == "2021-07-19" & pmdf$timepart == "7H 12M 0S"), ]
+
+#ID 118 
+pmdf <- pmdf[!(pmdf$id == 118 & pmdf$datepart == "2021-08-08" & pmdf$timepart == "12H 26M 0S"), ]
+#ID 119 
+pmdf <- pmdf[!(pmdf$id == 119 & pmdf$datepart == "2021-08-03" & pmdf$timepart == "21H 58M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 119 & pmdf$datepart == "2021-08-08" & pmdf$timepart == "20H 50M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 119 & pmdf$datepart == "2021-08-13" & pmdf$timepart == "5H 37M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 119 & pmdf$datepart == "2021-08-20" & pmdf$timepart == "23H 28M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 119 & pmdf$datepart == "2021-08-22" & pmdf$timepart == "5H 40M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 119 & pmdf$datepart == "2021-08-24" & pmdf$timepart == "16H 23M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 119 & pmdf$datepart == "2021-08-27" & pmdf$timepart == "21H 40M 0S"), ]
+#ID 136
+pmdf <- pmdf[!(pmdf$id == 136 & pmdf$datepart == "2021-11-29" & pmdf$timepart == "17H 10M 0S"), ]
+#ID 138
+pmdf <- pmdf[!(pmdf$id == 138 & pmdf$datepart == "2022-02-06" & pmdf$timepart == "12H 21M 0S"), ]
+#ID 143
+pmdf <- pmdf[!(pmdf$id == 143 & pmdf$datepart == "2022-01-31" & pmdf$timepart == "17H 04M 0S"), ]
+#ID 149
+pmdf <- pmdf[!(pmdf$id == 149 & pmdf$datepart == "2022-05-25" & pmdf$timepart == "0H 42M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 149 & pmdf$datepart == "2022-06-10" & pmdf$timepart == "12H 20M 0S"), ]
+#ID 150
+pmdf <- pmdf[!(pmdf$id == 150 & pmdf$datepart == "2022-06-07" & pmdf$timepart == "21H 34M 0S"), ]
+#ID 153
+pmdf <- pmdf[!(pmdf$id == 153 & pmdf$datepart == "2022-06-23" & pmdf$timepart == "8H 24M 0S"), ]
+#ID 159
+pmdf <- pmdf[!(pmdf$id == 159 & pmdf$datepart == "2022-07-17" & pmdf$timepart == "6H 40M 0S"), ]
+#ID 168
+pmdf <- pmdf[!(pmdf$id == 168 & pmdf$datepart == "2022-09-25" & pmdf$timepart == "20H 23M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 168 & pmdf$datepart == "2022-10-09" & pmdf$timepart == "18H 47M 0S"), ]
+#ID 171
+pmdf <- pmdf[!(pmdf$id == 171 & pmdf$datepart == "2022-10-07" & pmdf$timepart == "0H 10M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 171 & pmdf$datepart == "2022-10-13" & pmdf$timepart == "12H 34M 0S"), ]
+pmdf <- pmdf[!(pmdf$id == 171 & pmdf$datepart == "2022-10-31" & pmdf$timepart == "20H 36M 0S"), ]
+#ID 180
+pmdf <- pmdf[!(pmdf$id == 180 & pmdf$datepart == "2023-04-15" & pmdf$timepart == "22H 7M 0S"), ]
+#ID 181
+pmdf <- pmdf[!(pmdf$id == 181 & pmdf$datepart == "2023-03-22" & pmdf$timepart == "19H 13M 0S"), ]
+#ID 185
+pmdf <- pmdf[!(pmdf$id == 185 & pmdf$datepart == "2023-05-29" & pmdf$timepart == "23H 34M 0S"), ]
+
+# ---- Drop id 125 and 127 from both datasets ----
+amdf_complete <- amdf_complete %>%
+  filter(id != 125, id != 127)
+pmdf <- pmdf %>%
+  filter(id != 125, id != 127)
+
+##vis_miss(pmdf)
+
+# Check for duplicates and remove
+pmdf <- pmdf %>%
+  distinct()
+
+# ---- Drop temporary date variables before merge ----
+# datepart, timepart, and b4noon were needed for duplicate removal above
+# Now drop them before the AM/PM merge to keep only daterated
+cat("\n=== Dropping temporary date variables (datepart, timepart, b4noon) before merge ===\n")
+
+# Validation: Check which temporary variables exist before dropping
+temp_vars <- c("datepart", "timepart", "b4noon")
+existing_temp_vars <- intersect(temp_vars, names(pmdf))
+missing_temp_vars <- setdiff(temp_vars, names(pmdf))
+
+if (length(existing_temp_vars) > 0) {
+  cat(sprintf("Dropping %d temporary variable(s): %s\n", 
+              length(existing_temp_vars), 
+              paste(existing_temp_vars, collapse = ", ")))
+  pmdf <- pmdf %>%
+    select(-any_of(existing_temp_vars))
+} else {
+  cat("No temporary variables to drop (already cleaned)\n")
+}
+
+if (length(missing_temp_vars) > 0) {
+  cat(sprintf("Note: %d expected variable(s) not found: %s\n", 
+              length(missing_temp_vars), 
+              paste(missing_temp_vars, collapse = ", ")))
+}
+
+cat("\nVariables remaining in pmdf:\n")
+print(names(pmdf))
+
+count_rows_ids(pmdf)
+
+# Note: Lots of replacements of duplicates etc happen here. 
+
+```
+
+## Visualize Missing Data Pre-Merge
+
+```{r visualize-missingness-pre-am-pm-merge}
+# Visualize missingness by AM/PM after cleaning 
+
+# create separate #vis_miss for am and pm 
+cat("\n=== AM Survey Missing Data Pattern ===\n")
+vis_miss(amdf_complete)
+cat("\n=== PM Survey Missing Data Pattern ===\n")
+vis_miss(pmdf)
+
+#View(amdf_complete)
+
+```
+
+## Merge AM/PM Surveys
+
+```{r merge_am_pm, warning=FALSE}
+# Full join of AM and PM surveys on id + daterated
+# Preserves AM-only days (alcohol data), PM-only days (mood data), and complete days
+# Validates merge keys, documents missing data patterns
+
+# ---- 1. Pre-Merge Validation ----
+cat("\n=== Pre-Merge Validation ===\n")
+
+# Check for duplicate keys in AM data
+am_dups <- amdf_complete %>%
+  group_by(id, daterated) %>%
+  filter(n() > 1) %>%
+  ungroup()
+
+if(nrow(am_dups) > 0) {
+  warning(sprintf("Found %d duplicate id-date combinations in AM data!", nrow(am_dups)))
+  print(am_dups %>% select(id, daterated) %>% distinct())
+} else {
+  cat("✓ No duplicate keys in AM data\n")
+}
+
+# Check for duplicate keys in PM data
+pm_dups <- pmdf %>%
+  group_by(id, daterated) %>%
+  filter(n() > 1) %>%
+  ungroup()
+
+if(nrow(pm_dups) > 0) {
+  warning(sprintf("Found %d duplicate id-date combinations in PM data!", nrow(pm_dups)))
+  print(pm_dups %>% select(id, daterated) %>% distinct())
+} else {
+  cat("✓ No duplicate keys in PM data\n")
+}
+
+# merge duplicates on id and daterated preferring non-NA values
+amdf_complete <- amdf_complete %>%
+  group_by(id, daterated) %>%
+  summarise(across(everything(), ~ ifelse(all(is.na(.)), NA, first(na.omit(.)))), .groups = "drop")
+
+#View(amdf_complete)
+
+# ---- 2. Perform Full Join ----
+cat("\n=== Performing Full Join ===\n")
+cat(sprintf("AM data: %d rows, %d unique IDs\n", nrow(amdf_complete), n_distinct(amdf_complete$id)))
+cat(sprintf("PM data: %d rows, %d unique IDs\n", nrow(pmdf), n_distinct(pmdf$id)))
+
+df <- amdf_complete %>%
+  full_join(pmdf, by = c("id", "daterated"), suffix = c("_am_dup", "_pm_dup"))
+
+cat(sprintf("\nMerged data: %d rows, %d unique IDs\n", nrow(df), n_distinct(df$id)))
+
+# ---- 3. Analyze Missing Data Patterns ----
+cat("\n=== Missing Data Pattern Analysis ===\n")
+
+# Identify data completeness patterns
+df <- df %>%
+  mutate(
+    has_am_data = !is.na(num_drinks) | !is.na(crave_alc_am),
+    has_pm_data = !is.na(dep) | !is.na(crave_alc_pm),
+    data_pattern = case_when(
+      has_am_data & has_pm_data ~ "Both_AM_PM",
+      has_am_data & !has_pm_data ~ "AM_only",
+      !has_am_data & has_pm_data ~ "PM_only",
+      TRUE ~ "Neither"
+    )
+  )
+
+# Summarize patterns
+pattern_summary <- df %>%
+  group_by(data_pattern) %>%
+  summarise(
+    n_rows = n(),
+    n_ids = n_distinct(id),
+    pct_rows = 100 * n() / nrow(df)
+  ) %>%
+  arrange(desc(n_rows))
+
+cat("\nData Completeness Patterns:\n")
+print(pattern_summary)
+
+# ---- 4. Visualize Missing Data ----
+cat("\n=== Missing Data Visualization ===\n")
+#vis_miss(df)
+
+# ---- 5. Identify IDs with Sufficient Data ----
+# Create list of IDs with at least 10 days of survey data (any type)
+ids_with_survey_data <- df %>%
+  filter(data_pattern != "Neither") %>%
+  group_by(id) %>%
+  summarise(n_survey_days = n()) %>%
+  filter(n_survey_days >= 10) %>%
+  pull(id)
+
+cat(sprintf("\n%d participants have ≥10 days of survey data\n", length(ids_with_survey_data)))
+
+# ---- 6. Final Diagnostics ----
+cat("\n=== Merge Complete ===\n")
+count_rows_ids(df)
+
+
+only_in_amdf <- setdiff(names(amdf), names(pmdf))
+only_in_pmdf <- setdiff(names(pmdf), names(amdf))
+
+print(list(only_in_amdf = only_in_amdf, only_in_pmdf = only_in_pmdf))
+
+# Final diagnostics: crave_alc_am and crave_alc_pm (AM/PM) min/max and NA counts
+crave_cols <- grep("^crave_.*_(am|pm)$", names(df), value = TRUE)
+if (length(crave_cols) > 0) {
+  crave_summary <- df %>% 
+    summarise(across(all_of(crave_cols), 
+                     list(N = ~ sum(!is.na(.)), 
+                          NA_count = ~ sum(is.na(.)), 
+                          min = ~ suppressWarnings(min(., na.rm=TRUE)), 
+                          max = ~ suppressWarnings(max(., na.rm=TRUE)))))
+  cat("\nFinal crave_* (AM/PM) Summary after merge:\n")
+  print(crave_summary)
+}
+
+
+# Create a list of ids with 10 or more days of survey data in this dataset
+ids_with_survey_data <- df %>%
+  group_by(id) %>%
+  summarize(n = n()) %>%
+  filter(n >= 10) %>%
+  pull(id) %>% unique()
+
+ids_with_survey_data # This is a list that can be used to cross-reference missing data later on
+
+print.variable.names(df)
+
+# sort by id and daterated
+df <- df %>%
+  arrange(id, daterated)
+
+count_rows_ids(df)
+
+#vis_miss(df)
+
+#remove id 123 observations without any AM survey data
+df <- df %>%
+  filter(!(id == 123 & is.na(num_drinks)))
+
+#vis_miss(df)
+
+#View(df)
+
+# list number of observations by id
+obs_by_id <- df %>%
+  group_by(id) %>%
+  summarise(n_obs = n()) %>%
+  arrange(id)
+
+print(obs_by_id)
+
+# Visualize observations by id
+p_obs_by_id <- ggplot(obs_by_id, aes(x = factor(id), y = n_obs)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Number of Observations by Participant ID",
+       x = "Participant ID",
+       y = "Number of Observations") +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+print(p_obs_by_id)
+
+# save to data prep subfolder
+save_png(plot = p_obs_by_id, 
+         filename = "obs_by_id_barplot.png",
+         folder = data_prep_folder)
+```
+
+
+```{r merge-am-pm-deduplicate}
+df <- amdf_complete %>%
+  full_join(pmdf, by = c("id", "daterated"), suffix = c("_am_dup", "_pm_dup"))
+
+cat(sprintf("\nMerged data: %d rows, %d unique IDs\n", nrow(df), n_distinct(df$id)))
+
+# ===== ADD THIS CHECKPOINT AND DEDUPLICATION =====
+cat("\n=== Checking for duplicates after AM/PM merge ===\n")
+df_dupes <- df %>%
+  group_by(id, daterated) %>%
+  filter(n() > 1) %>%
+  ungroup()
+
+if (nrow(df_dupes) > 0) {
+  cat(sprintf("WARNING: Found %d duplicate (id, daterated) rows after AM/PM merge!\n", nrow(df_dupes)))
+  cat("Deduplicating by keeping first row per (id, daterated)...\n")
+  
+  df <- df %>%
+    distinct(id, daterated, .keep_all = TRUE)
+  
+  cat(sprintf("Rows after deduplication: %d\n", nrow(df)))
+} else {
+  cat("✓ No duplicates found\n")
+}
+# ===== END OF FIX =====
+
+# ---- 3. Analyze Missing Data Patterns ----
+cat("\n=== Missing Data Pattern Analysis ===\n")
+```
+
+
+```{r import-merge-visits}
+# Merge in study visit dates by id: '/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/UKALC/02_datasets/UKALC_ALLDATES/03_cleaned_data/Alcohol Session Dates.xlsx'
+
+visit_dates <- read_excel("/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/UKALC/02_datasets/UKALC_ALLDATES/03_cleaned_data/Alcohol Session Dates.xlsx")
+
+names(visit_dates)
+
+#View(visit_dates)
+
+# ensure id is in the same format
+visit_dates <- visit_dates %>%
+  mutate(id = as.integer(id))
+df <- df %>%
+  mutate(id = as.integer(id))
+# merge visit dates into df
+df <- df %>%
+  left_join(visit_dates, by = "id")
+
+# when s1_date or s2_date is equal to daterated, set new variable session_today to 1, else 0
+df <- df %>%
+  mutate(session_today = case_when(
+    daterated == s1_date | daterated == s2_date ~ 1,
+    TRUE ~ 0
+  ))
+
+# check merge
+table(df$session_today, useNA = "ifany")
+
+```
+
+
+
+
+
+
+
+##### TRAIT DATA IMPORT AND MERGE - have to import this here because it's used in next chunk
+
+```{r import-trait-data}
+
+trait_data <- read.csv('/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/UKALC/02_datasets/UKALC_TRAIT/03_cleaned_data/ukalc_trait.csv')
+
+#View(trait_data)
+
+#str(trait_data)
+
+# set (id) as character, set (age, audit_score, all vars starting with tlfb or pdhq) as number, set (all variables that are 0 or 1) as factors, and set (bev_pref, race, sexorient) as factor, set trait_firststudyperiod as date
+trait_data <- trait_data %>%
+  mutate(id = as.integer(id),
+         age = as.integer(age),
+         audit_score = as.integer(audit_score),
+         tlfb30d_daysdrank = as.integer(tlfb30d_daysdrank),
+         tlfb30d_cumuldrinks = as.numeric(tlfb30d_cumuldrinks),
+         tlfb30d_daysbinge = as.integer(tlfb30d_daysbinge),
+         tlfb30d_daysdrunk = as.integer(tlfb30d_daysdrunk),
+         pdhq_daysdrinkperwk = as.numeric(pdhq_daysdrinkperwk),
+         pdhq_numtypicaldrinks = as.numeric(pdhq_numtypicaldrinks),
+         pdhq_hrstypdrinking = as.numeric(pdhq_hrstypdrinking),
+         med_user = as.factor(med_user),
+         sedative_user = as.factor(sedative_user),
+         cannabis_user = as.factor(cannabis_user),
+         stimulant_user = as.factor(stimulant_user),
+         opioid_user = as.factor(opioid_user),
+         hallucinogen_user = as.factor(hallucinogen_user),
+         pcp_user = as.factor(pcp_user),
+         inhalant_user = as.factor(inhalant_user),
+         otherdrug_user = as.factor(otherdrug_user),
+         bev_pref = as.factor(bev_pref)
+         )
+
+# Add AUDIT categories based on audit_score
+trait_data <- trait_data %>%
+  mutate(audit_category = case_when(
+    audit_score >= 0 & audit_score <= 7 ~ "Low Risk",
+    audit_score >= 8 & audit_score <= 15 ~ "Hazardous",
+    audit_score >= 16 & audit_score <= 19 ~ "Harmful",
+    audit_score >= 20 ~ "Possible Dependence",
+    TRUE ~ NA_character_
+  ))
+
+# Output appropriate descriptives to the output_folder for all and also print below
+trait_summary <- trait_data %>%
+  summarise(
+    n_participants = n(),
+    mean_age = mean(age, na.rm = TRUE),
+    sd_age = sd(age, na.rm = TRUE),
+    mean_audit_score = mean(audit_score, na.rm = TRUE),
+    sd_audit_score = sd(audit_score, na.rm = TRUE),
+    mean_weight_kg = mean(weight_kg, na.rm = TRUE),
+    sd_weight_kg = sd(weight_kg, na.rm = TRUE),
+    mean_height_cm = mean(height_cm, na.rm = TRUE),
+    sd_height_cm = sd(height_cm, na.rm = TRUE)
+  )
+
+cat("\n=== Trait Data Summary ===\n")
+print(trait_summary)
+
+# Merge trait data into df by id
+df <- df %>%
+  left_join(trait_data, by = "id")
+
+# Print histograms below and save each to output folder
+
+hist_age <- ggplot(trait_data, aes(x = age)) +
+  geom_histogram(binwidth = 1, fill = "steelblue", color = "black") +
+  labs(title = "Age Distribution", x = "Age", y = "Count") +
+  theme_minimal()
+
+
+
+print(hist_age)
+
+hist_audit <- ggplot(trait_data, aes(x = audit_score)) +
+  geom_histogram(binwidth = 1, fill = "steelblue", color = "black") +
+  labs(title = "AUDIT Score Distribution", x = "AUDIT Score", y = "Count") +
+  theme_minimal()
+
+print(hist_audit)
+
+hist_weight <- ggplot(trait_data, aes(x = weight_kg)) +
+  geom_histogram(binwidth = 2, fill = "steelblue", color = "black") +
+  labs(title = "Weight (kg) Distribution", x = "Weight (kg)", y = "Count") +
+  theme_minimal()
+
+print(hist_weight)
+
+hist_height <- ggplot(trait_data, aes(x = height_cm)) +
+  geom_histogram(binwidth = 2, fill = "steelblue", color = "black") +
+  labs(title = "Height (cm) Distribution", x = "Height (cm)", y = "Count") +
+  theme_minimal()
+
+print(hist_height)
+
+# Save histograms to output folder
+save_png(plot = hist_age, filename = "trait_age_histogram.png", folder = data_prep_folder)
+save_png(plot = hist_audit, filename = "trait_audit_histogram.png", folder = data_prep_folder)
+save_png(plot = hist_weight, filename = "trait_weight_histogram.png", folder = data_prep_folder)
+save_png(plot = hist_height, filename = "trait_height_histogram.png", folder = data_prep_folder)
+
+
+
+```
+
+```{r import-merge-weights}
+# =============================================================================
+# VALIDATE AND IMPUTE PARTICIPANT WEIGHTS
+# =============================================================================
+# Validate weight data already present in the dataset and impute missing values
+# for BAC calculation.
+#
+# WHAT IT DOES:
+# 1. Checks existing weight_kg column
+# 2. Reports statistics in kg
+# 3. Imputes missing data with population averages (in kg)
+#
+# EXPECTED COLUMNS IN DF:
+# - id: Participant identifier (numeric)
+# - weight_kg: Weight in kilograms (numeric)
+#
+# OUTPUT: Fills NAs in weight_kg column
+# =============================================================================
+
+# Report Initial Stats based on existing data
+valid_weights <- df %>% filter(!is.na(weight_kg))
+
+if (nrow(valid_weights) > 0) {
+  cat(sprintf("Weight range (observed): %.1f - %.1f kg\n",
+              min(valid_weights$weight_kg, na.rm = TRUE), 
+              max(valid_weights$weight_kg, na.rm = TRUE)))
+} else {
+  warning("No valid weight data found in dataframe before imputation.")
+}
+
+# Check for participants without weights
+ids_no_weight <- df %>%
+  filter(is.na(weight_kg)) %>%
+  pull(id) %>%
+  unique()
+
+n_missing_before <- length(ids_no_weight)
+
+if (n_missing_before > 0) {
+  warning(sprintf("%d participants missing weight data: %s", 
+                  n_missing_before, 
+                  paste(ids_no_weight, collapse=", ")))
+  
+  # Use population average weight for females 18-35 when weight is missing
+  # Source: CDC/NHANES data for adult women aged 18-39
+  POP_AVG_WEIGHT_KG <- 77.1 
+  
+  # Impute missing values
+  df <- df %>%
+    mutate(
+      weight_kg = ifelse(is.na(weight_kg), POP_AVG_WEIGHT_KG, weight_kg)
+    )
+  
+  cat(sprintf("\nUsing population average weight (%.1f kg) for %d participants with missing data\n",
+              POP_AVG_WEIGHT_KG, n_missing_before))
+  cat("Source: CDC/NHANES data for adult women aged 18-39\n")
+  
+} else {
+  cat("\nAll participants have weight data. No imputation needed.\n")
+}
+
+```
+
+```{r rename-alcohol-vars}
+# =============================================================================
+# ALCOHOL VARIABLE CREATION
+# =============================================================================
+# Creates derived alcohol use variables from the morning survey's report of
+# prior evening drinking. These are the PRIMARY OUTCOMES for the study.
+#
+# NEW VARIABLE NAMES:
+# - num_drinks (was Alc_Amt): Number of standard drinks consumed
+# - drank_alcohol (was Alc_Drunk): Binary indicator of whether they drank
+# - time_start_alcohol (was Alc_Time): Time drinking started
+# - dur_alcohol (was Alc_Dur): Duration of drinking episode
+#
+# WHAT IT DOES:
+# 1. Fills missing num_drinks with 0 when participant answered craving question
+# 2. Creates lagged versions (prior evening → current day alignment)
+# 3. Creates binary indicators for any drinking and binge drinking
+#
+# KEY CONCEPT - TEMPORAL ALIGNMENT:
+# AM surveys ask about PREVIOUS evening (e.g., morning of Jan 2 asks about Jan 1 evening)
+# PM surveys ask about CURRENT day (e.g., evening of Jan 1 asks about Jan 1)
+# NEED: Align drinking with the day it occurred, not the day it was reported
+# SOLUTION: Use lead() to shift num_drinks forward one day
+#
+# EXAMPLE:
+# Row 1: id=101, date=Jan 1, num_drinks=NA (no AM survey yet)
+# Row 2: id=101, date=Jan 2, num_drinks=3 (reported drinking 3 drinks on Jan 1)
+# After lead(): 
+# Row 1: id=101, date=Jan 1, num_drinks_today=3 (drinking happened on Jan 1)
+# Row 2: id=101, date=Jan 2, num_drinks_today=NA (will be filled with next day's AM report)
+#
+# VARIABLES CREATED:
+# 1. num_drinks_today: Number of drinks consumed on THIS day (numeric, continuous)
+# 2. drink_today: Binary indicator for any drinking (Yes/No factor)
+# 3. drink_today_bin: Numeric version of drink_today (0/1)
+# 4. fourplustoday: Binary indicator for 4+ drinks (Yes/No factor) 
+# 5. fourplustoday_bin: Numeric version of fourplustoday (0/1)
+#
+# WHY 4+ DRINKS:
+# - Standard definition of "binge drinking" for women (NIAAA guidelines)
+# - Important threshold for increased risk of negative consequences
+# - Primary outcome for examining hormonal effects on heavy drinking
+#
+# MISSING DATA LOGIC:
+# "If crave_alc_am is not missing but num_drinks is missing, set num_drinks to 0"
+# RATIONALE: Craving question comes AFTER drinking question in survey
+# If participant answered craving, they saw the drinking question
+# If num_drinks is missing, they likely skipped it (meaning no drinking)
+#
+# INPUTS: df (merged AM/PM data)
+# OUTPUTS: df with num_drinks_today, drink_today, fourplustoday variables
+# =============================================================================
+
+```
+
+
+```{r align-next-day-alcohol}
+library(dplyr)
+
+df <- df %>%
+  # Impute 0 for 'num_drinks' if 'crave_alc_am' exists but 'num_drinks' is NA
+  mutate(
+    num_drinks = if_else(!is.na(crave_alc_am) & is.na(num_drinks), 0, num_drinks)
+  ) %>%
+  group_by(id) %>%
+  arrange(daterated) %>%
+  mutate(
+    # Lead variables to align "next day" or "today" values
+    # NOTE: lead() shifts values forward by 1 row, so:
+    # - "num_drinks" from tomorrow's AM survey → becomes "num_drinks_today"
+    # - This aligns drinking reports with the EVENING they occurred
+    # - IMPORTANT: The last observation in each ID's time series will be NA
+    #   because there's no "next day" to pull from. This is expected behavior.
+    num_drinks_today = lead(num_drinks, n = 1),
+    dur_alcohol_hours_today = lead(dur_alcohol_hours, n = 1),
+    time_start_alcohol_clean_today = lead(time_start_alcohol_clean, n = 1),
+    felt_drunk_today = lead(felt_drunk, n = 1),
+    
+    # --- Create Numeric Binary (0/1) Variables ---
+    
+    # 1. Any drinking (Threshold > 0)
+    drink_today_bin = case_when(
+      is.na(num_drinks_today) ~ NA_real_,
+      num_drinks_today > 0 ~ 1,
+      TRUE ~ 0
+    ),
+    
+    # 2. Binge drinking (Threshold >= 4)
+    fourplustoday_bin = case_when(
+      is.na(num_drinks_today) ~ NA_real_,
+      num_drinks_today >= 4 ~ 1, 
+      TRUE ~ 0
+    ),
+    
+    # 3. Felt Drunk (already 0/1, but cleaned to match drinking data)
+    felt_drunk_today_bin = case_when(
+      is.na(num_drinks_today) ~ NA_real_,
+      num_drinks_today == 0 ~ NA_real_,     # No drinking means felt drunk is NA
+      felt_drunk_today == 1 ~ 1,
+      felt_drunk_today == 0 ~ 0,
+      TRUE ~ NA_real_                  # Keep NA if drinking occurred but feeling is unknown
+    )
+  ) %>%
+  ungroup() %>% 
+  # --- Create Factor Versions (Yes/No) ---
+  mutate(
+    drink_today = factor(
+      drink_today_bin, 
+      levels = c(0, 1), 
+      labels = c("No", "Yes")
+    ),
+    fourplustoday = factor(
+      fourplustoday_bin, 
+      levels = c(0, 1), 
+      labels = c("No", "Yes")
+    ),
+    felt_drunk_today = factor( # Suffix _fac used to distinguish from raw lagged variable
+      felt_drunk_today_bin,
+      levels = c(0, 1),
+      labels = c("No", "Yes")
+    )
+  )
+
+
+# Print narrative of script actions
+cat("\n=== Alcohol Variable Creation Summary ===\n")
+cat("1. Imputed 0 for 'num_drinks' when 'crave_alc_am' exists but 'num_drinks' is missing.\n")
+cat("2. Created lagged variables to align drinking data with the day it occurred.\n")
+cat("3. Created binary indicators for any drinking and binge drinking (4+ drinks).\n")
+cat("4. Created both numeric (0/1) and factor (Yes/No) versions of drinking indicators.\n")
+```
+
+
+```{r calculate-bac}
+# =============================================================================
+# BAC (BLOOD ALCOHOL CONCENTRATION) ESTIMATION
+# =============================================================================
+# Calculate estimated peak BAC using Widmark formula for each drinking episode
+#
+# ASSUMPTIONS AND LIMITATIONS:
+# - All participants are female (r = 0.55 for Widmark constant)
+# - Standard drink = 14g ethanol (US definition)
+# - Elimination rate = 0.015% per hour (population average)
+# - Absorption lag = 0.5 hours after end of drinking
+# - Drink size/type unknown (assumes standard drinks)
+# - This is an ESTIMATE, not a full pharmacokinetic model
+#
+# WIDMARK FORMULA:
+# BAC = (Alcohol_g / (r × Weight_g)) × 100
+# Where: r = 0.55 for females, Weight_g = weight in grams
+#
+# PEAK BAC TIMING:
+# Peak occurs at: start_time + duration + 0.5 hours (absorption lag)
+# By peak time, some alcohol has been eliminated: 0.015% × hours_elapsed
+#
+# INPUTS:
+# - num_drinks: Number of standard drinks consumed
+# - dur_hours: Duration of drinking episode in hours
+# - weight_kg: Participant weight in kilograms (uses pop avg 77.1kg if missing)
+# - start_time: Time drinking started (HH:MM format, optional)
+#
+# OUTPUTS:
+# - alcohol_g: Total alcohol consumed in grams
+# - bac_peak_percent: Estimated peak BAC in percent (e.g., 0.08 for 0.08%)
+# - bac_peak_mgdl: Estimated peak BAC in mg/dL
+# - bac_peak_time: Estimated time of peak BAC (if start_time provided)
+#
+# NOTE: Population average weight (170 lbs / 77.1 kg) is automatically used
+# when individual weight data is missing. Source: CDC/NHANES for women 18-39.
+# =============================================================================
+
+#' Calculate Peak Blood Alcohol Concentration (BAC)
+#'
+#' Estimates peak BAC using the Widmark formula with elimination adjustment.
+#' Designed for female participants consuming alcohol over a specified duration.
+#'
+#' @param num_drinks Numeric. Number of standard drinks consumed (14g ethanol each)
+#' @param dur_hours Numeric. Duration of drinking episode in hours
+#' @param weight_kg Numeric. Body weight in kilograms
+#' @param start_time Character. Time drinking started in HH:MM format (24-hour)
+#' @param date Date. Date of drinking episode (for calculating peak time)
+#'
+#' @return List with elements:
+#'   - alcohol_g: Total alcohol in grams
+#'   - bac_peak_percent: Peak BAC in percent
+#'   - bac_peak_mgdl: Peak BAC in mg/dL
+#'   - bac_peak_time: POSIXct datetime of peak (if start_time and date provided)
+#'
+#' @details
+#' Uses Widmark constant r=0.55 for females, elimination rate of 0.015%/hr,
+#' and assumes peak occurs 0.5 hours after drinking ends (absorption lag).
+#' Note: The pipeline uses population average weight (77.1 kg) when individual
+#' weight data is missing, based on CDC/NHANES data for women aged 18-39.
+#'
+#' @examples
+#' calc_peak_bac(3, 2, 64)   # 3 drinks over 2 hours, 64 kg
+#' calc_peak_bac(0, 0, 64)   # No drinking
+#' calc_peak_bac(3, 2, 77.1) # Using population average weight
+calc_peak_bac <- function(num_drinks, dur_hours, weight_kg, start_time = NA, date = NA) {
+  
+  # Initialize output list
+  result <- list(
+    alcohol_g = NA_real_,
+    bac_peak_percent = NA_real_,
+    bac_peak_mgdl = NA_real_,
+    bac_peak_time = as.POSIXct(NA)
+  )
+  
+  # Handle edge case: no drinks or zero drinks
+  if (is.na(num_drinks) || num_drinks == 0) {
+    result$alcohol_g <- 0
+    result$bac_peak_percent <- 0
+    result$bac_peak_mgdl <- 0
+    return(result)
+  }
+  
+  # Handle edge case: missing weight
+  if (is.na(weight_kg)) {
+    result$alcohol_g <- num_drinks * 14
+    # BAC values remain NA (cannot calculate without weight)
+    return(result)
+  }
+  
+  # Constants
+  GRAMS_PER_DRINK <- 14        # US standard drink = 14g ethanol
+  WIDMARK_R_FEMALE <- 0.55     # Body water constant for females
+  ELIMINATION_RATE <- 0.015    # BAC elimination: 0.015% per hour
+  ABSORPTION_LAG <- 0.5        # Hours after drinking ends until peak
+  
+  # Calculate total alcohol consumed (grams)
+  alcohol_g <- num_drinks * GRAMS_PER_DRINK
+  
+  # Handle edge case: missing or zero duration
+  if (is.na(dur_hours)) {
+    dur_hours <- 0  # Assume instantaneous consumption if duration unknown
+  }
+  
+  # Convert weight to grams
+  weight_g <- weight_kg * 1000
+  
+  # Calculate raw BAC at end of drinking (before elimination)
+  # Widmark formula: BAC = (alcohol_g / (r × weight_g)) × 100
+  bac_raw <- (alcohol_g / (WIDMARK_R_FEMALE * weight_g)) * 100
+  
+  # Time from start of drinking to peak (duration + absorption lag)
+  t_peak <- dur_hours + ABSORPTION_LAG
+  
+  # Apply elimination: subtract BAC eliminated by peak time
+  bac_peak_percent <- bac_raw - (ELIMINATION_RATE * t_peak)
+  
+  # Clamp to non-negative (can't have negative BAC)
+  bac_peak_percent <- max(bac_peak_percent, 0)
+  
+  # Convert to mg/dL
+  bac_peak_mgdl <- bac_peak_percent * 1000
+  
+  # Calculate peak time if start time and date are provided
+  bac_peak_time <- as.POSIXct(NA)
+  if (!is.na(start_time) && !is.na(date)) {
+    tryCatch({
+      # Parse start time (HH:MM format)
+      time_parts <- as.numeric(strsplit(start_time, ":")[[1]])
+      if (length(time_parts) == 2) {
+        # Combine date and time
+        start_datetime <- as.POSIXct(paste(date, start_time), 
+                                      format = "%Y-%m-%d %H:%M",
+                                      tz = "America/New_York")
+        # Add duration and absorption lag
+        bac_peak_time <- start_datetime + (t_peak * 3600)  # Convert hours to seconds
+      }
+    }, error = function(e) {
+      # If time parsing fails, leave as NA
+    })
+  }
+  
+  # Return results
+  result$alcohol_g <- alcohol_g
+  result$bac_peak_percent <- bac_peak_percent
+  result$bac_peak_mgdl <- bac_peak_mgdl
+  result$bac_peak_time <- bac_peak_time
+  
+  return(result)
+}
+
+# Apply BAC calculation to dataset
+cat("\n=== Calculating Peak BAC Estimates ===\n")
+
+# Check if weight data is available
+has_weights <- "weight_kg" %in% names(df) && sum(!is.na(df$weight_kg)) > 0
+
+if (has_weights) {
+  
+  # Calculate BAC for each row
+  # Use pmap to pass multiple columns to calc_peak_bac function
+  bac_results <- df %>%
+    select(num_drinks_today, dur_alcohol_hours_today, weight_kg, 
+           time_start_alcohol_clean_today, daterated) %>%
+    pmap(function(num_drinks_today, dur_alcohol_hours_today, weight_kg, 
+                  time_start_alcohol_clean_today, daterated) {
+      calc_peak_bac(
+        num_drinks = num_drinks_today,
+        dur_hours = dur_alcohol_hours_today,
+        weight_kg = weight_kg,
+        start_time = time_start_alcohol_clean_today,
+        date = daterated
+      )
+    })
+  
+  # Extract results into separate columns
+  df <- df %>%
+    mutate(
+      alcohol_g = map_dbl(bac_results, ~ .x$alcohol_g),
+      bac_peak_percent = map_dbl(bac_results, ~ .x$bac_peak_percent),
+      bac_peak_mgdl = map_dbl(bac_results, ~ .x$bac_peak_mgdl),
+      bac_peak_time = map(bac_results, ~ .x$bac_peak_time) %>% 
+        map(as.POSIXct, origin = "1970-01-01") %>%
+        do.call(c, .)
+    )
+  
+  # Report summary statistics
+  n_drinking_days <- sum(df$num_drinks_today > 0, na.rm = TRUE)
+  n_bac_calculated <- sum(!is.na(df$bac_peak_percent) & df$bac_peak_percent > 0, na.rm = TRUE)
+  
+  cat(sprintf("Drinking days: %d\n", n_drinking_days))
+  cat(sprintf("BAC calculated: %d (%.1f%% of drinking days)\n", 
+              n_bac_calculated, 100 * n_bac_calculated / max(n_drinking_days, 1)))
+  
+  if (n_bac_calculated > 0) {
+    bac_summary <- df %>%
+      filter(!is.na(bac_peak_percent) & bac_peak_percent > 0) %>%
+      summarise(
+        mean_bac = mean(bac_peak_percent, na.rm = TRUE),
+        median_bac = median(bac_peak_percent, na.rm = TRUE),
+        min_bac = min(bac_peak_percent, na.rm = TRUE),
+        max_bac = max(bac_peak_percent, na.rm = TRUE)
+      )
+    
+    cat(sprintf("\nBAC Summary (drinking days only):\n"))
+    cat(sprintf("  Mean: %.3f%% (%.0f mg/dL)\n", 
+                bac_summary$mean_bac, bac_summary$mean_bac * 1000))
+    cat(sprintf("  Median: %.3f%% (%.0f mg/dL)\n", 
+                bac_summary$median_bac, bac_summary$median_bac * 1000))
+    cat(sprintf("  Range: %.3f%% - %.3f%%\n", 
+                bac_summary$min_bac, bac_summary$max_bac))
+    
+    # Report binge drinking threshold (0.08% BAC)
+    n_binge_bac <- sum(df$bac_peak_percent >= 0.08, na.rm = TRUE)
+    cat(sprintf("  Days with BAC ≥ 0.08%%: %d (%.1f%% of drinking days)\n",
+                n_binge_bac, 100 * n_binge_bac / max(n_drinking_days, 1)))
+  }
+  
+  cat("\nNOTE: BAC estimates assume:\n")
+  cat("  - Female participants (r=0.55)\n")
+  cat("  - Standard drinks (14g ethanol each)\n")
+  cat("  - Elimination rate: 0.015%/hour\n")
+  cat("  - Peak at drinking_end + 0.5 hours\n")
+  cat("  - Population average weight (77.1 kg) used when individual weight missing\n")
+  
+} else {
+  warning("Weight data not available. BAC calculations skipped.")
+  cat("\nTo calculate BAC, ensure weights.csv is in the data directory with columns: id, weight\n")
+  
+  # Add placeholder BAC columns
+  df <- df %>%
+    mutate(
+      alcohol_g = ifelse(!is.na(num_drinks_today), num_drinks_today * 14, NA_real_),
+      bac_peak_percent = NA_real_,
+      bac_peak_mgdl = NA_real_,
+      bac_peak_time = as.POSIXct(NA)
+    )
+}
+
+
+# -------------------------------------------------------------------------
+# VALIDATE BINARY VARIABLES
+# -------------------------------------------------------------------------
+# Binary variables (drink_today_bin, fourplustoday_bin, felt_drunk_today_bin)
+# were correctly created in the create-alc-vars chunk above.
+# This section validates that they contain only 0, 1, or NA values.
+
+# Validate binary variables are correctly coded (0/1 only)
+cat("\n=== Binary Variable Validation ===\n")
+for (var in c("drink_today_bin", "fourplustoday_bin", "felt_drunk_today_bin")) {
+  unique_vals <- unique(df[[var]])
+  unique_vals <- unique_vals[!is.na(unique_vals)]
+  if (!all(unique_vals %in% c(0, 1))) {
+    stop(sprintf("ERROR: %s contains non-binary values: %s", 
+                 var, paste(unique_vals, collapse=", ")))
+  }
+  cat(sprintf("✓ %s: Valid binary (0/1) with %d values\n", 
+              var, sum(!is.na(df[[var]]))))
+}
+
+# Display structure and distribution
+str(df$drink_today_bin)
+hist(df$drink_today_bin, main = "Distribution of drink_today_bin", xlab = "Value")
+str(df$fourplustoday_bin)
+hist(df$fourplustoday_bin, main = "Distribution of fourplustoday_bin", xlab = "Value")
+
+#vis_miss(df)
+```
+
+```{r score-bdefs}
+# =============================================================================
+# BDEFS COMPOSITE SCORE CALCULATION (FOR UKALC DIAGNOSTIC PLOTS)
+# =============================================================================
+# NOTE: These subscales are calculated here for UKALC diagnostic histograms,
+# but they are ALSO calculated in UKALC_03_processing_shared.Rmd for the 
+# merged ADHD+UKALC dataset to ensure both studies receive identical processing.
+#
+# Creates a single composite score from Barkley's Deficits in Executive 
+# Functioning Scale (BDEFS). This measures executive function and impulse control.
+#
+# WHAT IT DOES:
+# - Calculates row-wise mean of 7 bdefs items
+# - Handles missing data by using na.rm=TRUE (calculates mean of available items)
+# - Creates histogram of distribution
+#
+# bdefs ITEMS (defined in bdefs_vars list):
+# 1. diff_inhib: Difficulty inhibiting responses
+# 2. diff_stop: Difficulty stopping ongoing behavior
+# 3. diff_change: Difficulty changing course
+# 4. immed_payoff: Preference for immediate payoff
+# 5. res_urge: Difficulty resisting urges
+# 6. diff_long_rew: Difficulty waiting for long-term rewards
+# 7. diff_res_rew: Difficulty resisting rewarding stimuli
+#
+# SCALE PROPERTIES:
+# - Range: 1-4 (Never/Rarely=1, Sometimes=2, Often=3, Very Often=4)
+# - Higher scores = Greater deficits in executive functioning (worse impulse control)
+# - Composite range: 1-4 (mean of item scores)
+#
+# WHY THIS MATTERS:
+# - Executive dysfunction predicts alcohol use and problems
+# - May vary across menstrual cycle phases
+# - Key mediator in hormonal effects on drinking
+#
+# MISSING DATA HANDLING:
+# - na.rm=TRUE means: Calculate mean of available items
+# - If participant has 5/7 items, mean is based on those 5
+# - If ALL items missing, result is NaN (not a number)
+# - Decision: Include participants with partial data (not dropping if <7 items)
+# - Assumption: Missing items are missing at random (MAR)
+#
+# INPUTS: df with bdefs items (from PM surveys)
+# OUTPUTS: df with bdefs composite score + histogram PNG
+# =============================================================================
+
+# Variables needed for THIS chunk only
+bdefs_vars <- c(
+  "diff_inhib", "diff_stop", "diff_change", "immed_payoff", 
+  "res_urge", "diff_long_rew", "diff_res_rew"
+)
+
+# Create a mean score for these daily items across each row and make sure to account for missing values (diff_inhib, diff_stop, diff_change, immed_payoff, res_urge, diff_long_rew, diff_res_rew)
+
+df <- df %>%
+  mutate(bdefs_total = rowMeans(select(., all_of(bdefs_vars)), na.rm = TRUE))
+
+# Create and save histogram for bdefs_total using ggplot2
+p_bdefs_total <- ggplot(df, aes(x = bdefs_total)) +
+  geom_histogram(fill = "lightblue", color = "black", bins = 30) +
+  labs(title = "BDEFS Total Distribution", x = "BDEFS Total", y = "Count") +
+  theme_minimal(base_size = 14)
+save_png(plot = p_bdefs_total, 
+         filename = "bdefs_total_histogram.png",
+         folder = data_prep_folder)
+
+# score the mean of bdefs_impulsiveaction
+df <- df %>%
+  mutate(bdefs_impulsiveaction = rowMeans(select(., diff_inhib, diff_stop, diff_change), na.rm = TRUE))
+
+# Create and save histogram for bdefs_impulsiveaction
+p_bdefs_impulsiveaction <- ggplot(df, aes(x = bdefs_impulsiveaction)) +
+  geom_histogram(fill = "lightblue", color = "black", bins = 30) +
+  labs(title = "BDEFS Impulsive Action Distribution", x = "BDEFS Impulsive Action", y = "Count") +
+  theme_minimal(base_size = 14)
+save_png(plot = p_bdefs_impulsiveaction, 
+         filename = "bdefs_impulsiveaction_histogram.png",
+         folder = data_prep_folder)
+
+# score the mean of bdefs_delayaversion
+df <- df %>%
+  mutate(bdefs_delayaversion = rowMeans(select(., immed_payoff, res_urge, diff_long_rew, diff_res_rew), na.rm = TRUE))
+
+# Create and save histogram for bdefs_delayaversion
+p_bdefs_delayaversion <- ggplot(df, aes(x = bdefs_delayaversion)) +
+  geom_histogram(fill = "lightblue", color = "black", bins = 30) +
+  labs(title = "BDEFS Delay Aversion Distribution", x = "BDEFS Delay Aversion", y = "Count") +
+  theme_minimal(base_size = 14)
+save_png(plot = p_bdefs_delayaversion, 
+         filename = "bdefs_delayaversion_histogram.png",
+         folder = data_prep_folder)
+
+```
+
+
+
+
+
+```{r cycle-dates-import-clean}
+# =============================================================================
+# MENSTRUAL CYCLE DATA IMPORT & CLEANING
+# =============================================================================
+# Imports comprehensive participant tracking data including RTB-recoded menses 
+# dates, multiple ovulation dates, and exclusion flags. This is essential for 
+# menstrual cycle phase analysis.
+#
+# WHAT IT DOES:
+# 1. Loads UKALC_Participant_Data_Tracker with all cycle dates and metadata
+# 2. Creates TWO versions of menses dates:
+#    - period1/2/3 (non-RTB): Original MP dates only
+#    - period1/2/3_rtb (RTB): RTB-recoded dates, falls back to MP if no RTB
+# 3. Creates event flags for both versions (menses/ovtoday and menses_rtb/ovtoday_rtb)
+# 4. Applies exclusion flags (Excl_all_id, Excl_CycData, Excl_Horm)
+# 5. Calculates cycle length for both versions
+# 6. Later: Runs menstrualcycleR for both versions (see run-menstrualcycler chunk)
+#
+# DATA SOURCE:
+# File: UKALC_Participant_Data_Tracker_20251225.csv
+# Format: One row per participant with comprehensive cycle and metadata
+# Variables:
+#   - id: Participant ID
+#   - MP1, MP2, MP3: Original menses onset dates (1st, 2nd, 3rd)
+#   - RTBMP1, RTBMP2, RTBMP3: RTB-recoded menses dates (RTB = Return To Baseline of progesterone)
+#   - EDO1, EDO2, EDO3: Estimated day of ovulation dates (1st, 2nd, 3rd)
+#   - Ov_Status: Ovulatory status (categorical)
+#   - Assay_Batch: Which assay batch participant was in
+#   - Excl_all_id: Exclude from ALL datasets (logical)
+#   - Excl_Horm: Exclude from hormone analyses (logical)
+#   - Excl_CycData: Exclude cycle data but keep survey data (logical)
+#   - Assay_Plate: List of assay plates for participant
+#
+# ASSAY PLATE RECODING:
+# - Raw Assay_Plate is comma-separated list (e.g., "1,2,3" or "3")
+# - Created variables for analysis:
+#   * n_assay_plates: Count of plates participant was on (0 if NA)
+#   * in_plate_X: Binary indicators for each plate (dynamically created based on actual plate numbers)
+#   * Assay_Plate_orig: Original string preserved
+# - These allow testing for plate effects and batch corrections
+#
+# WHY MENSTRUAL CYCLE MATTERS:
+# - Hormones (e2, p4) fluctuate dramatically across cycle
+# - Different phases have different hormone profiles:
+#   * Follicular: Low p4, rising e2
+#   * Ovulatory: e2 peak, lh surge
+#   * Luteal: High p4, moderate e2
+#   * Menstrual: Low e2 and p4
+# - Alcohol responses may vary by phase
+#
+# RTB RECODING - DUAL VERSION APPROACH:
+# RTB = "Return To Baseline" - period dates recoded based on progesterone return to baseline
+# Creates TWO parallel versions of all cycle-related variables:
+# 1. NON-RTB VERSION (original variable names): Uses only original MP dates
+#    - period1, period2, period3 = MP1, MP2, MP3
+#    - menses, ovtoday = event flags from MP dates
+#    - cycle_length = period2 - period1
+#    - menstrualcycleR outputs: cyclic_time_impute, cyclic_time_fwd/bwd, etc.
+# 2. RTB VERSION (_rtb suffix): Uses RTB-recoded dates when available, falls back to MP
+#    - period1_rtb, period2_rtb, period3_rtb = coalesce(RTBMP*, MP*)
+#    - menses_rtb, ovtoday_rtb = event flags from RTB dates (or MP if no RTB)
+#    - cycle_length_rtb = period2_rtb - period1_rtb
+#    - menstrualcycleR outputs: cyclic_time_impute_rtb, cyclic_time_fwd/bwd_rtb, etc.
+# This allows analyses comparing RTB-recoded vs original dates
+# Track which dates were recoded with period*_recoded boolean flags
+#
+# EXCLUSION FLAGS:
+# - Excl_all_id = TRUE: Remove ALL data for this participant
+# - Excl_CycData = TRUE: Keep survey data, but set cycle variables to NA
+# - Excl_Horm = TRUE: Flag for later exclusion from hormone analyses
+#
+# CYCLE LENGTH CALCULATION:
+# - cycle_length = period2 - period1 (in days)
+# - Valid range: Typically 21-38 days (biological normal)
+# - Participants outside this range are filtered from cycle data
+# - BUT: They are NOT removed from survey data
+#
+# IMPORTANT DESIGN DECISION:
+# OLD approach: Filtered survey data to only include participants with valid cycles
+# NEW approach: Keep ALL survey data, even if cycle data is invalid
+# Rationale: Survey data is still valuable for non-cycle analyses
+# Impact: Some participants will have NA for cycle-related variables
+#
+# EVENT FLAGS:
+# - menses: Binary indicator (1=period onset day, 0=other) - includes ALL menses dates
+# - ovtoday: Binary indicator (1=ovulation day, 0=other) - includes ALL ovulation dates
+# - Used for: Plotting cycle events, defining cycle phases
+# - Merged to survey data by id and daterated
+#
+# CYCLE PHASE VISUALIZATION:
+# - Creates plots showing period and ovulation events across study
+# - Red vertical lines = period onset
+# - Green vertical lines = ovulation
+# - Helps identify data quality issues (irregular cycles, missing events)
+#
+# INPUTS: 
+#   - UKALC_Participant_Data_Tracker_20251225.csv
+#   - Survey data (df, amdf, pmdf) for date imputation
+# OUTPUTS:
+#   - df with menses and ovtoday columns (replacing TAEMPeriodStart and TAEMOvPos)
+#   - cycle_length variable
+#   - Participant metadata (Ov_Status, Assay_Batch, exclusion flags)
+#   - Diagnostic output and plots
+# =============================================================================
+
+# ---- 1. Import the comprehensive participant tracking data ----
+raw_cycle_df <- read_csv("~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/UKALC/02_datasets/UKALC_ALLDATES/03_cleaned_data/UKALC_Participant_Data_Tracker_20251231.csv")
+
+cat("\n=== Imported UKALC Participant Data Tracker ===\n")
+
+
+# select only relevant columns
+raw_cycle_df <- raw_cycle_df %>%
+  select(id, MP1, MP2, MP3, RTBMP1, RTBMP2, RTBMP3, EDO1, EDO2,
+         Ov_Status, Assay_Batch, Assay_Plate,
+         Excl_all_id, Excl_Horm, Excl_CycData,
+         e_spike_date_remove, e_spike_date_remove_2, p_spike_date_remove, p_spike_date_remove_2)
+
+#View(raw_cycle_df)
+
+# Parse dates and create "best" menses dates prioritizing RTB-recoded dates
+wide_cycles <- raw_cycle_df %>%
+  mutate(
+    # Ensure id is character
+    id = as.character(id),
+    
+    # Parse all date columns (in M/D/YY format)
+    MP1 = mdy(MP1),
+    MP2 = mdy(MP2),
+    MP3 = mdy(MP3),
+    RTBMP1 = mdy(RTBMP1),
+    RTBMP2 = mdy(RTBMP2),
+    RTBMP3 = mdy(RTBMP3),
+    EDO1 = mdy(EDO1),
+    EDO2 = mdy(EDO2),
+    espike1 = mdy(e_spike_date_remove),
+    espike2 = mdy(e_spike_date_remove_2),
+    pspike1 = mdy(p_spike_date_remove),
+    pspike2 = mdy(p_spike_date_remove_2),
+    
+    # Convert exclusion flags to logical
+    Excl_all_id = as.logical(Excl_all_id),
+    Excl_Horm = as.logical(Excl_Horm),
+    Excl_CycData = as.logical(Excl_CycData),
+    
+    # Create RTB-prioritized menses dates (with _rtb suffix)
+    period1_rtb = coalesce(RTBMP1, MP1),
+    period2_rtb = coalesce(RTBMP2, MP2),
+    period3_rtb = coalesce(RTBMP3, MP3),
+    
+    # Create non-RTB menses dates (original MP dates only)
+    period1 = MP1,
+    period2 = MP2,
+    period3 = MP3,
+    
+    # Track which dates were recoded
+    period1_recoded = !is.na(RTBMP1),
+    period2_recoded = !is.na(RTBMP2),
+    period3_recoded = !is.na(RTBMP3)
+  ) %>%
+  # Select relevant columns
+  select(id, period1, period2, period3, 
+         period1_rtb, period2_rtb, period3_rtb,
+         period1_recoded, period2_recoded, period3_recoded,
+         EDO1, EDO2, Ov_Status, Assay_Batch, Assay_Plate,
+         Excl_all_id, Excl_Horm, Excl_CycData, espike1, espike2, pspike1, pspike2)
+
+#View(wide_cycles)
+
+
+# for ids where Excl_CycData is TRUE, set all period* and EDO* dates to NA
+wide_cycles <- wide_cycles %>%
+  mutate(
+    period1 = if_else(Excl_CycData %in% TRUE, as.Date(NA), period1),
+    period2 = if_else(Excl_CycData %in% TRUE, as.Date(NA), period2),
+    period3 = if_else(Excl_CycData %in% TRUE, as.Date(NA), period3),
+    period1_rtb = if_else(Excl_CycData %in% TRUE, as.Date(NA), period1_rtb),
+    period2_rtb = if_else(Excl_CycData %in% TRUE, as.Date(NA), period2_rtb),
+    period3_rtb = if_else(Excl_CycData %in% TRUE, as.Date(NA), period3_rtb),
+    EDO1 = if_else(Excl_CycData %in% TRUE, as.Date(NA), EDO1),
+    EDO2 = if_else(Excl_CycData %in% TRUE, as.Date(NA), EDO2)
+  )
+
+
+
+
+
+# ---- Parse Assay_Plate for analysis ----
+# Assay_Plate can be comma-separated list (e.g., "1,2,3" or "3")
+# Create indicator variables and count variable
+wide_cycles <- wide_cycles %>%
+  mutate(
+    # Convert Assay_Plate to character and handle NA
+    Assay_Plate_orig = as.character(Assay_Plate),
+    
+    # Count number of plates (count commas + 1, or 0 if NA)
+    n_assay_plates = if_else(
+      is.na(Assay_Plate_orig), 
+      0L, 
+      as.integer(str_count(Assay_Plate_orig, ",") + 1)
+    )
+  )
+
+# ---- Parse Assay Plate Indicators Dynamically ----
+# Extract all unique plate numbers from the Assay_Plate column
+all_plates <- wide_cycles %>%
+  filter(!is.na(Assay_Plate_orig)) %>%
+  pull(Assay_Plate_orig) %>%
+  str_split(",") %>%
+  unlist() %>%
+  str_trim() %>%
+  unique() %>%
+  as.numeric() %>%
+  sort()
+
+# Create binary indicator for each plate dynamically
+for (plate_num in all_plates) {
+  col_name <- paste0("in_plate_", plate_num)
+  wide_cycles <- wide_cycles %>%
+    mutate(!!col_name := str_detect(Assay_Plate_orig, paste0("\\b", plate_num, "\\b")) & !is.na(Assay_Plate_orig))
+}
+
+# ---- Diagnostic Output: RTB Recoding Statistics ----
+cat("\n=== RTB RECODING STATISTICS ===\n")
+cat("Period 1 - Recoded:", sum(wide_cycles$period1_recoded, na.rm = TRUE), 
+    "/ Original:", sum(!wide_cycles$period1_recoded & !is.na(wide_cycles$period1), na.rm = TRUE), "\n")
+cat("Period 2 - Recoded:", sum(wide_cycles$period2_recoded, na.rm = TRUE), 
+    "/ Original:", sum(!wide_cycles$period2_recoded & !is.na(wide_cycles$period2), na.rm = TRUE), "\n")
+cat("Period 3 - Recoded:", sum(wide_cycles$period3_recoded, na.rm = TRUE), 
+    "/ Original:", sum(!wide_cycles$period3_recoded & !is.na(wide_cycles$period3), na.rm = TRUE), "\n")
+
+cat("\n=== OVULATION DATE STATISTICS ===\n")
+cat("Participants with EDO1:", sum(!is.na(wide_cycles$EDO1)), "\n")
+cat("Participants with EDO2:", sum(!is.na(wide_cycles$EDO2)), "\n")
+
+cat("\n=== EXCLUSION FLAG STATISTICS ===\n")
+cat("Excl_all_id (exclude from all datasets):", sum(wide_cycles$Excl_all_id, na.rm = TRUE), "\n")
+cat("Excl_CycData (exclude cycle data only):", sum(wide_cycles$Excl_CycData, na.rm = TRUE), "\n")
+cat("Excl_Horm (exclude from hormone analyses):", sum(wide_cycles$Excl_Horm, na.rm = TRUE), "\n")
+
+cat("\n=== ASSAY PLATE STATISTICS ===\n")
+cat("Participants by number of plates:\n")
+print(table(wide_cycles$n_assay_plates, useNA = "ifany"))
+cat("\nPlate numbers found:", paste(all_plates, collapse = ", "), "\n")
+cat("Participants in each plate:\n")
+for (plate_num in all_plates) {
+  col_name <- paste0("in_plate_", plate_num)
+  cat(sprintf("Plate %s: %d\n", plate_num, sum(wide_cycles[[col_name]], na.rm = TRUE)))
+}
+
+# ---- 2. Calculate Cycle Length (No Imputation) ----
+# Only use dates from the tracker - do NOT impute missing dates
+# Calculate for both RTB and non-RTB versions
+wide_cycles_with_length <- wide_cycles %>%
+  filter(!Excl_CycData | is.na(Excl_CycData)) %>%  # Keep only non-excluded participants
+  mutate(
+    cycle_length = as.numeric(period2 - period1),
+    cycle_length_rtb = as.numeric(period2_rtb - period1_rtb)
+  ) %>%
+  # Filter to ensure at least ONE version has valid cycle data
+  # Design choice: Allow participants with EITHER version (RTB or non-RTB) to be included
+  # This means some participants may have NA for one version but valid data for the other
+  # If both versions are required, change to: filter(!is.na(cycle_length) & !is.na(cycle_length_rtb))
+  filter(!is.na(cycle_length) | !is.na(cycle_length_rtb))
+
+# ---- 3. Apply Exclusion Flags ----
+if (!exists("df")) stop("df (survey data) must be loaded first.")
+
+# First, remove participants with Excl_all_id = TRUE from main dataset
+ids_excl_all <- wide_cycles %>% 
+  filter(Excl_all_id == TRUE) %>% 
+  pull(id)
+
+cat("\n=== APPLYING EXCLUSIONS TO MAIN DATASET ===\n")
+cat("Removing", length(ids_excl_all), "participants with Excl_all_id = TRUE:", 
+    paste(ids_excl_all, collapse = ", "), "\n")
+
+clean_df <- df %>%
+  mutate(id = as.character(id), daterated = as_date(daterated)) %>%
+  filter(!id %in% ids_excl_all) %>%  # Remove Excl_all_id participants
+  filter(!is.na(daterated))
+
+
+# print what's been done
+cat("Main dataset now has", nrow(clean_df), "observations after applying Excl_all_id exclusions.\n")
+cat("Participants with valid cycle data (non-RTB or RTB) retained for cycle analyses:", 
+    n_distinct(wide_cycles_with_length$id), "\n")
+
+# ---- 4. Create Event Flags for Menses and Ovulation ----
+# Create TWO versions: RTB-prioritized (_rtb suffix) and non-RTB (original names)
+
+# RTB VERSION: Uses period*_rtb dates (RTB dates with MP fallback)
+events_long_rtb <- bind_rows(
+  # Menses: Include ALL three period dates (RTB version)
+  wide_cycles_with_length %>% 
+    select(id, period1_rtb, period2_rtb, period3_rtb) %>% 
+    pivot_longer(cols = c(period1_rtb, period2_rtb, period3_rtb), 
+                 values_to = "daterated", 
+                 names_to = "period_num") %>% 
+    filter(!is.na(daterated)) %>%
+    mutate(menses_rtb = 1) %>% 
+    select(id, daterated, menses_rtb),
+  
+  # Ovulation: Include BOTH ovulation dates (same for both versions)
+  wide_cycles_with_length %>% 
+    select(id, EDO1, EDO2) %>%
+    pivot_longer(cols = c(EDO1, EDO2), 
+                 values_to = "daterated", 
+                 names_to = "ov_num") %>% 
+    filter(!is.na(daterated)) %>%
+    mutate(ovtoday_rtb = 1) %>%
+    select(id, daterated, ovtoday_rtb)
+) %>%
+  filter(!is.na(daterated)) %>%
+  group_by(id, daterated) %>%
+  summarize(
+    menses_rtb = max(menses_rtb, na.rm = TRUE),
+    ovtoday_rtb = max(ovtoday_rtb, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    menses_rtb = if_else(is.finite(menses_rtb), menses_rtb, NA_real_),
+    ovtoday_rtb = if_else(is.finite(ovtoday_rtb), ovtoday_rtb, NA_real_)
+  )
+
+# NON-RTB VERSION: Uses original period* dates (MP only, no RTB)
+events_long <- bind_rows(
+  # Menses: Include ALL three period dates (non-RTB version)
+  wide_cycles_with_length %>% 
+    select(id, period1, period2, period3) %>% 
+    pivot_longer(cols = c(period1, period2, period3), 
+                 values_to = "daterated", 
+                 names_to = "period_num") %>% 
+    filter(!is.na(daterated)) %>%
+    mutate(menses = 1) %>% 
+    select(id, daterated, menses),
+  
+  # Ovulation: Include BOTH ovulation dates (same for both versions)
+  wide_cycles_with_length %>% 
+    select(id, EDO1, EDO2) %>%
+    pivot_longer(cols = c(EDO1, EDO2), 
+                 values_to = "daterated", 
+                 names_to = "ov_num") %>% 
+    filter(!is.na(daterated)) %>%
+    mutate(ovtoday = 1) %>%
+    select(id, daterated, ovtoday)
+) %>%
+  filter(!is.na(daterated)) %>%
+  group_by(id, daterated) %>%
+  summarize(
+    menses = max(menses, na.rm = TRUE),
+    ovtoday = max(ovtoday, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    menses = if_else(is.finite(menses), menses, NA_real_),
+    ovtoday = if_else(is.finite(ovtoday), ovtoday, NA_real_)
+  )
+
+clean_df <- clean_df %>%
+  mutate(id = as.character(id))
+
+# Also ensure wide_cycles has character id (already done on line 1361, but double-check)
+wide_cycles <- wide_cycles %>%
+  mutate(id = as.character(id))
+
+
+# CHECKPOINT A: Right BEFORE the cycle data merge (before line 1605)
+cat("\n=== CHECKPOINT A: Before Cycle Merge ===\n")
+clean_df_dupes <- clean_df %>%
+  group_by(id, daterated) %>%
+  filter(n() > 1) %>%
+  summarise(n_rows = n(), .groups = "drop")
+cat("Duplicate (id, daterated) in clean_df:", nrow(clean_df_dupes), "\n")
+
+#View(clean_df)
+
+# ---- 5. Merge Event Flags and Metadata into Main Dataframe ----
+final_df <- clean_df %>%
+  # Merge NON-RTB cycle events
+  full_join(events_long, by = c("id", "daterated")) %>%
+  # Merge RTB cycle events
+  full_join(events_long_rtb, by = c("id", "daterated")) %>%
+  # Merge cycle lengths from both versions
+  left_join(wide_cycles_with_length %>%
+              select(id, cycle_length, cycle_length_rtb),
+            by = "id") %>%
+  # Merge participant metadata from ALL participants (not just those with valid cycles)
+  left_join(
+    wide_cycles %>%
+      select(
+        id,
+        Ov_Status,
+        Assay_Batch,
+        Assay_Plate,
+        Assay_Plate_orig,
+        espike1,
+        espike2,
+        pspike1,
+        pspike2,
+        n_assay_plates,
+        starts_with("in_plate_"),
+        Excl_Horm,
+        Excl_CycData
+      ),
+    by = "id"
+    ) %>%
+  mutate(
+    # Fill NAs for event flags with 0 (missing = no event on that day)
+    menses = replace_na(menses, 0),
+    ovtoday = replace_na(ovtoday, 0),
+    menses_rtb = replace_na(menses_rtb, 0),
+    ovtoday_rtb = replace_na(ovtoday_rtb, 0),
+    id = as.character(id),
+  ) %>%
+  arrange(id, daterated)
+
+
+# ADD CHECKPOINT RIGHT HERE (after line ~1650):
+cat("\n=== CHECKPOINT:  After All Cycle Merges ===\n")
+final_df_dupes <- final_df %>%
+  group_by(id, daterated) %>%
+  filter(n() > 1) %>%
+  summarise(n_rows = n(), .groups = "drop")
+cat("Duplicate (id, daterated) in final_df:", nrow(final_df_dupes), "\n")
+
+if (nrow(final_df_dupes) > 0) {
+  cat("WARNING: Found duplicate (id, daterated) combinations!\n")
+  cat("Showing first 20 duplicates:\n")
+  print(head(final_df_dupes, 20))
+  
+  # Show example of what's duplicated for ID 118
+  cat("\n=== Example:  ID 118 duplicates ===\n")
+  final_df %>%
+    filter(id == "118") %>%
+    group_by(daterated) %>%
+    filter(n() > 1) %>%
+    select(id, daterated, Excl_Horm, e2, p4, lh, menses, ovtoday) %>%
+    arrange(daterated) %>%
+    print(n = 20)
+}
+
+
+
+# ---- 7. Final Output and Diagnostics ----
+cat("\n=== FINAL DATASET SUMMARY ===\n")
+cat("Final Rows:", nrow(final_df), "\n")
+cat("Unique IDs:", n_distinct(final_df$id), "\n")
+
+cat("\n=== NON-RTB VERSION (Original MP dates) ===\n")
+cat("IDs with menses events:", n_distinct(final_df$id[final_df$menses == 1]), "\n")
+cat("IDs with ovulation events:", n_distinct(final_df$id[final_df$ovtoday == 1]), "\n")
+cat("Total menses events:", sum(final_df$menses, na.rm = TRUE), "\n")
+cat("Total ovulation events:", sum(final_df$ovtoday, na.rm = TRUE), "\n")
+
+cat("\n=== RTB VERSION (RTB-prioritized dates) ===\n")
+cat("IDs with menses_rtb events:", n_distinct(final_df$id[final_df$menses_rtb == 1]), "\n")
+cat("IDs with ovulation_rtb events:", n_distinct(final_df$id[final_df$ovtoday_rtb == 1]), "\n")
+cat("Total menses_rtb events:", sum(final_df$menses_rtb, na.rm = TRUE), "\n")
+cat("Total ovulation_rtb events:", sum(final_df$ovtoday_rtb, na.rm = TRUE), "\n")
+
+count_rows_ids(final_df)
+
+# ---- 8. Track Excluded IDs for Documentation ----
+# Track IDs that were excluded due to various reasons for later reference
+# Note: ids_excl_all was already defined earlier when applying exclusions
+
+ids_excl_cycdata <- wide_cycles %>% 
+  filter(Excl_CycData == TRUE) %>% 
+  pull(id)
+
+# Manual exclusions (hardcoded removals)
+ids_manual_excl <- c() # Add any manual exclusions here if needed
+
+# Combined list of IDs with no menses data (excluded or missing cycle data)
+ids_w_no_menses_onset <- unique(c(ids_excl_all, ids_excl_cycdata, ids_manual_excl))
+
+cat("\n=== IDs EXCLUDED FROM CYCLE DATA ===\n")
+cat("IDs with Excl_all_id:", paste(ids_excl_all, collapse = ", "), "\n")
+cat("IDs with Excl_CycData:", paste(ids_excl_cycdata, collapse = ", "), "\n")
+cat("IDs with manual exclusions:", paste(ids_manual_excl, collapse = ", "), "\n")
+cat("All IDs without menses data:", paste(ids_w_no_menses_onset, collapse = ", "), "\n")
+
+# Assign final_df back to df for consistency with later code
+df <- final_df
+
+```
+
+
+```{r verify-column-names}
+#print column names to verify
+cat("\n=== FINAL DATAFRAME COLUMNS ===\n")
+print(colnames(df))
+```
+
+
+```{r calc-day-of-week}
+#Create day of week variables including categorical, sin, and cos variables
+df <- df %>%
+  mutate(day_of_week = weekdays(as.Date(daterated)),
+         day_of_week = factor(day_of_week, levels = c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")),
+         day_of_week_sin = sin(2 * pi * as.numeric(day_of_week) / 7),
+         day_of_week_cos = cos(2 * pi * as.numeric(day_of_week) / 7))
+
+```
+
+```{r visualize-cycle-events}
+# Step 5: Visualize Period Start Dates Over Time with Color-Coded Tiles
+periodstartplot <- df %>%
+  ggplot(aes(x = daterated, y = id, fill = factor(menses))) +
+  geom_tile() +
+  labs(
+    title = "Period Start Dates Over Time",
+    x = "Date",
+    y = "ID",
+    fill = "Period Start"
+  ) +
+  scale_fill_manual(values = c("grey", "red")) +
+  theme_minimal(base_size = 14)
+
+periodstartplot
+
+# Save to data prep subfolder, specify periodstartplot
+save_png(plot = periodstartplot, 
+         filename = "period_start_dates_heatmap.png",
+         folder = data_prep_folder,
+         height = 8)  # Keep taller height for heatmap
+
+# print location of saved file
+cat("Period start dates heatmap saved\n")
+
+# Step 6: Visualize Ovulation Dates Over Time
+ovulationplot <- df %>%
+  ggplot(aes(x = daterated, y = id, fill = factor(ovtoday))) +
+  geom_tile() +
+  labs(
+    title = "Ovulation Dates Over Time",
+    x = "Date",
+    y = "ID",
+    fill = "Ovulation Date"
+  ) +
+  scale_fill_manual(values = c("grey", "blue")) +
+  theme_minimal(base_size = 14)
+
+# Save to data prep subfolder, specify ovulationplot
+save_png(plot = ovulationplot, 
+         filename = "ovulation_dates_heatmap.png",
+         folder = data_prep_folder,
+         height = 8)  # Keep taller height for heatmap
+
+ovulationplot
+
+#df %>% select(id, daterated, menses, ovtoday) %>% View()
+
+##vis_miss(df)
+
+```
+
+```{r horm-import-merge}
+# =============================================================================
+# HORMONE DATA IMPORT & MERGE
+# =============================================================================
+# Imports hormone assay results (e2, p4, lh) from Excel file and merges with
+# daily survey data. This is a complex merge due to date format inconsistencies.
+#
+# WHAT IT DOES:
+# 1. Loads hormone Excel file with mixed date formats
+# 2. Consolidates duplicate columns (date, TubeNumber, hormones)
+# 3. Assigns calendar dates to samples using written dates OR calculated dates
+# 4. Deduplicates hormone data (one row per person per day)
+# 5. Merges with survey data using FULL JOIN
+#
+# HORMONE VARIABLES:
+# - e2: Estradiol (pg/mL) - primary female sex hormone
+# - p4: Progesterone (ng/mL) - maintains uterine lining, rises after ovulation
+# - lh: Luteinizing Hormone (mIU/mL) - triggers ovulation
+#
+# DATA COLLECTION METHOD:
+# - Participants self-collected saliva samples daily
+# - Samples numbered sequentially (TubeNumber: 1, 2, 3...)
+# - Some tubes had handwritten dates, others did not
+# - All samples batch-analyzed for hormone concentrations
+#
+# COMPLEX DATE ASSIGNMENT LOGIC (Lines 1274-1301):
+# Challenge: Not all tubes have written dates, need to infer collection date
+# Strategy: Use TWO methods and prioritize written dates
+#
+# Method A (parsed_date):
+#   - Parse any written date from tube label
+#   - Try multiple formats: ymd, mdy, dmy
+#   - Example: "05/15/2021" → 2021-05-15
+#
+# Method B (calculated_date):
+#   - Calculate from TubeNumber and study start date
+#   - Logic: TubeNumber 1 = Day 1, TubeNumber 5 = Day 5 (start + 4 days)
+#   - Requires: study_start date from first survey for each participant
+#   - Example: If start = Jan 1, TubeNumber 5 → Jan 5
+#
+# FINAL DECISION RULE (Line 1298):
+#   - Use parsed_date if available (handwritten date)
+#   - Fall back to calculated_date if no written date
+#   - Rationale: Written dates are more reliable but not always present
+#
+# DEDUPLICATION (Lines 1307-1314):
+# Problem: Multiple hormone measurements for same person-day
+# Causes: Re-runs, duplicate entries in lab file
+# Solution: Keep first row after sorting by:
+#   1. Valid e2 values first (is.na(e2))
+#   2. Rows with explicit dates first (is.na(raw_date))
+# Rationale: Prioritize complete, explicitly dated measurements
+#
+# MERGE STRATEGY (Lines 1316-1333):
+# - Uses FULL JOIN (not inner or left join)
+# - Preserves survey-only rows (have survey but no hormone data)
+# - Preserves hormone-only rows (have hormone but no survey data)
+# - Creates flag: in_original_survey (TRUE/FALSE)
+#
+# WHY FULL JOIN:
+# - Some days have survey but no saliva sample collected
+# - Some days have saliva sample but no survey completed
+# - Need to keep both types for maximum data retention
+# - Can analyze survey-only or hormone-only subsets later
+#
+# "GHOST ROWS" (Lines 1345-1346):
+# - Rows added solely for hormone data (no survey data that day)
+# - Created when participant collected saliva but didn't complete survey
+# - Have e2/p4/lh values but NA for all survey variables
+# - Useful for hormone trajectory plots even without survey data
+#
+# DATA RECOVERY (Lines 1341-1342):
+# - Counts rows saved by calculated_date method
+# - Shows how many samples would have been lost without calculation approach
+# - Validates that calculation strategy is adding value
+#
+# INTERMEDIATE SAVE (Lines 1357-1358):
+# - Saves checkpoint: df_with_hormones.rds
+# - Allows restarting analysis from this point
+# - Useful if subsequent steps fail
+#
+# KNOWN ISSUES:
+# - TODO Line 1377: Need to update pipeline with better cycle date integration
+# - Missing hormone data for some ID ranges (noted in comments)
+# - Some date calculations may be off by 1 day (check TubeNumber=1 should be start date)
+#
+# INPUTS:
+#   - Excel: ukalc_all_horm_data_20251218.xlsx
+#   - df: Survey data with study_start dates
+# OUTPUTS:
+#   - df: Now includes e2, p4, lh, TubeNumber
+#   - Intermediate file: df_with_hormones.rds
+# NEW ROWS: May add "ghost rows" for hormone-only days
+# =============================================================================
+
+# ==============================================================================
+# 1. Load and Clean Hormone Data
+# ==============================================================================
+# Use read_excel with col_types="text" to safely read mixed data without crashing
+rawhormdf <- read_excel(
+  "~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/UKALC/02_datasets/UKALC_HORM/02_data_prep_workspace/ukalc_all_horm_data_20251218.xlsx",
+  col_types = "text",           
+  .name_repair = "unique_quiet" 
+) %>%
+  select(-matches("^\\.\\.\\."))
+
+# --- Helper: Safely Merge Duplicate Columns ---
+coalesce_pattern <- function(df, pattern, new_name) {
+  # Find columns matching the regex pattern
+  cols_to_fix <- grep(pattern, names(df), value = TRUE, ignore.case = TRUE)
+  
+  if (length(cols_to_fix) == 0) return(df)
+  
+  # Create new column by taking the first non-NA value from the found columns
+  df <- df %>% mutate(!!new_name := coalesce(!!!syms(cols_to_fix)))
+  
+  # Remove the old columns (unless it's the same name as the new one)
+  cols_to_drop <- setdiff(cols_to_fix, new_name)
+  if (length(cols_to_drop) > 0) df <- df %>% select(-all_of(cols_to_drop))
+  
+  return(df)
+}
+
+hormdf <- rawhormdf %>%
+  # 1. Consolidate Tube Numbers (e.g., "Tube Number", "Tube_Number")
+  coalesce_pattern("Tube[_ ]?Number", "TubeNumber") %>%
+  
+  # 2. Consolidate Dates (Crucial Fix for your issue)
+  # This regex "^date$|^daterated$" looks specifically for "date" OR "daterated"
+  coalesce_pattern("^date$|^daterated$|Collection[_ ]?Date", "raw_date") %>%
+  
+  # 3. Consolidate Hormone Columns
+  coalesce_pattern("^e2", "e2") %>%
+  coalesce_pattern("^p4", "p4") %>%
+  coalesce_pattern("^lh", "lh") %>%
+  
+  # 4. Clean & Format Values
+  mutate(
+    id = as.character(gsub("[^0-9]", "", id)),
+    TubeNumber = suppressWarnings(as.numeric(TubeNumber)),
+    across(any_of(c("e2", "p4", "lh")), ~ suppressWarnings(as.numeric(.)))
+  ) %>%
+  
+  # 5. Filter: Must have ID and TubeNumber to be useful
+  filter(!is.na(id), !is.na(TubeNumber))
+
+# ==============================================================================
+# 2. Assign Calendar Dates to Tubes
+# ==============================================================================
+if (!exists("df")) stop("Main dataframe 'df' must be loaded to calculate dates.")
+
+# A. Calculate Study Start Date (Day 1) for each person from main survey data
+study_start_dates <- df %>%
+  mutate(daterated = as_date(daterated)) %>%
+  group_by(id) %>%
+  summarize(
+    study_start = min(daterated, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# B. Apply Logic: "Written Date" > "Calculated Date"
+hormdf <- hormdf %>%
+  left_join(study_start_dates, by = "id") %>%
+  mutate(
+    # Strategy A: Use the written date from the tube (if it exists)
+    parsed_date = as_date(parse_date_time(raw_date, orders = c("ymd", "mdy", "dmy"), quiet = TRUE)),
+    
+    # Strategy B: Calculate it based on the Tube Index
+    # Logic: If Start Date is Jan 1st, Tube 5 is Jan 5th (Start + 4 days)
+    calculated_date = study_start + days(TubeNumber - 1),
+    
+    # Final Decision: Use parsed if available, otherwise default to calculated
+    daterated = coalesce(parsed_date, calculated_date)
+  ) %>%
+  # Drop rows where we failed to find ANY date (likely ID missing from df)
+  filter(!is.na(daterated))
+
+# ==============================================================================
+# 3. Deduplicate & Merge
+# ==============================================================================
+
+# A. Deduplicate: One hormone row per ID/Day
+hormdf_clean <- hormdf %>%
+  # Sort preference: Valid e2 values first, then rows that had explicit raw_dates
+  arrange(id, daterated, is.na(e2), is.na(raw_date)) %>% 
+  group_by(id, daterated) %>%
+  slice(1) %>%
+  ungroup() %>%
+  select(id, daterated, TubeNumber, any_of(c("e2", "p4", "lh")))
+
+# B. Prepare Main Data (Flagging original rows)
+df_ready <- df %>%
+  mutate(
+    id = as.character(id), 
+    daterated = as_date(daterated),
+    in_original_survey = TRUE
+  ) %>%
+  # Clean out old hormone columns to prevent duplicates
+  select(-any_of(c("e2", "p4", "lh", "TubeNumber_Hormone")))
+
+# C. FULL JOIN (Preserves Surveys AND Hormone-Only rows)
+final_df <- df_ready %>%
+  full_join(hormdf_clean, by = c("id", "daterated")) %>%
+  mutate(
+    # If 'in_original_survey' is NA, it means this row came from the hormone file
+    in_original_survey = replace_na(in_original_survey, FALSE)
+  ) %>%
+  arrange(id, daterated)
+
+
+# ===== ADD THIS FIX =====
+# Fill Excl_Horm for hormone-only rows from the participant's other rows
+cat("\n=== Filling Excl_Horm for hormone-only rows ===\n")
+
+excl_before <- final_df %>%
+  group_by(id) %>%
+  summarise(n_na = sum(is.na(Excl_Horm))) %>%
+  summarise(total_na = sum(n_na)) %>%
+  pull(total_na)
+
+cat("Rows with Excl_Horm = NA before fill:", excl_before, "\n")
+
+final_df <- final_df %>%
+  group_by(id) %>%
+  mutate(
+    Excl_Horm = first(na.omit(Excl_Horm)) # Use the participant's Excl_Horm value for all their rows
+  ) %>%
+  ungroup()
+
+excl_after <- final_df %>%
+  group_by(id) %>%
+  summarise(n_na = sum(is.na(Excl_Horm))) %>%
+  summarise(total_na = sum(n_na)) %>%
+  pull(total_na)
+
+cat("Rows with Excl_Horm = NA after fill:", excl_after, "\n")
+# ===== END OF FIX =====
+
+
+# CHECKPOINT 2: After merging hormones into final_df (around line 1950)
+cat("\n=== CHECKPOINT 2: After Hormone Merge (Before Excl_Horm) ===\n")
+hormone_check_2 <- final_df %>%
+  group_by(id) %>%
+  summarise(
+    n_e2 = sum(!is.na(e2)),
+    has_Excl_Horm = any(! is.na(Excl_Horm)),
+    Excl_Horm_value = first(Excl_Horm)
+  ) %>%
+  filter(n_e2 > 0)
+cat("IDs with any hormone data:", n_distinct(hormone_check_2$id), "\n")
+cat("IDs with >10 hormone obs:", sum(hormone_check_2$n_e2 > 10), "\n")
+cat("IDs with Excl_Horm = TRUE:", sum(hormone_check_2$Excl_Horm_value == TRUE, na.rm = TRUE), "\n")
+
+
+
+
+
+# Set e2, p4, lh to NA for participants with Excl_Horm = TRUE
+final_df <- final_df %>%
+  mutate(
+    e2 = if_else(Excl_Horm %in% TRUE, NA_real_, e2),
+    p4 = if_else(Excl_Horm %in% TRUE, NA_real_, p4),
+    lh = if_else(Excl_Horm %in% TRUE, NA_real_, lh)
+  )
+
+
+
+
+
+
+
+# CHECKPOINT 3: After applying Excl_Horm (around line 1962)
+cat("\n=== CHECKPOINT 3: After Excl_Horm Applied ===\n")
+hormone_check_3 <- final_df %>%
+  group_by(id) %>%
+  summarise(n_e2 = sum(!is.na(e2))) %>%
+  filter(n_e2 > 0)
+cat("IDs with any hormone data:", n_distinct(hormone_check_3$id), "\n")
+cat("IDs with >10 hormone obs:", sum(hormone_check_3$n_e2 > 10), "\n")
+
+
+
+
+
+
+# Set e2 to NA for id-date combinations indicated by espike1 date or espike2 date
+# Note: espike1, espike2, pspike1, pspike2 are already in final_df from earlier join at line 1617-1618
+final_df <- final_df %>%
+  mutate(
+    e2 = if_else(
+      (! is.na(espike1) & daterated == espike1) | 
+      (!is.na(espike2) & daterated == espike2), 
+      NA_real_, 
+      e2
+    ),
+    p4 = if_else(
+      (! is.na(pspike1) & daterated == pspike1) | 
+      (!is.na(pspike2) & daterated == pspike2), 
+      NA_real_, 
+      p4
+    )
+  ) %>%
+  select(-espike1, -espike2, -pspike1, -pspike2)
+
+
+
+
+# CHECKPOINT 4: After applying spike date filtering (around line 1970)
+cat("\n=== CHECKPOINT 4: After Spike Date Filtering ===\n")
+hormone_check_4 <- final_df %>%
+  group_by(id) %>%
+  summarise(n_e2 = sum(!is.na(e2))) %>%
+  filter(n_e2 > 0)
+cat("IDs with any hormone data:", n_distinct(hormone_check_4$id), "\n")
+cat("IDs with >10 hormone obs:", sum(hormone_check_4$n_e2 > 10), "\n")
+
+# CHECKPOINT: Verify Excl_Horm is still working (no leakage from spike filtering)
+cat("\n=== CHECKPOINT: Verify Excl_Horm After Spike Filtering ===\n")
+excl_horm_diagnostic <- final_df %>%
+  filter(Excl_Horm == TRUE) %>%
+  summarise(
+    n_rows = n(),
+    n_with_e2 = sum(!is.na(e2)),
+    n_with_p4 = sum(!is.na(p4)),
+    n_with_lh = sum(!is.na(lh))
+  )
+print(excl_horm_diagnostic)
+if (any(excl_horm_diagnostic[c("n_with_e2", "n_with_p4", "n_with_lh")] > 0)) {
+  warning("WARNING: Excl_Horm=TRUE participants still have hormone values after spike filtering!")
+}
+
+
+
+
+
+# ==============================================================================
+# 4. Diagnostics
+# ==============================================================================
+cat("Final Rows:", nrow(final_df), "\n")
+
+# Count rows recovered by calculation
+recovered_rows <- hormdf %>% filter(is.na(parsed_date) & !is.na(calculated_date))
+cat("Rows with NO written date that were saved by calculation:", nrow(recovered_rows), "\n")
+
+# Count Ghost Rows (Hormone data with no survey)
+ghost_rows <- final_df %>% filter(in_original_survey == FALSE)
+cat("New rows added solely for hormone data (no survey):", nrow(ghost_rows), "\n")
+
+# Cleanup flag
+final_df <- final_df %>% select(-in_original_survey)
+
+# Assign final_df back to df for consistency with later code
+df <- final_df
+
+# ==============================================================================
+# 5. View Results
+# ==============================================================================
+#View(df)
+count_rows_ids(df)
+
+
+
+names(df)
+
+```
+
+# Calculate aggregate DRSP scores
+```{r calc-drsp-aggregates}
+# =============================================================================
+# DRSP COMPOSITE SCORE CALCULATION (FOR UKALC DIAGNOSTIC DATA)
+# =============================================================================
+# NOTE: These subscales are calculated here for the UKALC dataset specifically,
+# but they are ALSO calculated in UKALC_03_processing_shared.Rmd for the 
+# merged ADHD+UKALC dataset to ensure both studies receive identical processing.
+# =============================================================================
+
+# set drsp variables to numeric
+df <- df %>%
+  mutate(across(c("dep", "hopeless", "worthless", "anxious", "mood_swing", "rej_sens", 
+                  "angry", "conflicts", "loss_interest", "diff_conc", "tired", 
+                  "over_eat", "sp_food_crav", "high_sleep", "diff_sleep", "overwhelm", 
+                  "loss_control", "breast_tend", "breast_swell", "headache", 
+                  "jm_pain", "loss_prod", "int_relat"), as.numeric))
+
+# Create total DRSP symptom score (means of all items)
+df <- df %>%
+  mutate(drsp_total = rowMeans(select(., 
+      dep, hopeless, worthless, anxious, mood_swing, rej_sens, 
+      angry, conflicts, loss_interest, diff_conc, tired, 
+      over_eat, sp_food_crav, high_sleep, diff_sleep, overwhelm, 
+      loss_control, breast_tend, breast_swell, headache, 
+      jm_pain, loss_prod, int_relat
+  ), na.rm = TRUE))
+
+# Create "drsp_distress" - dep hope worth anx ang loss_interest overwhelm loss_control
+df <- df %>%
+  mutate(drsp_distress = rowMeans(select(., 
+      dep, hopeless, worthless, anxious, overwhelm, loss_control), na.rm = TRUE))
+
+# create drsp_labilsocsx - mood_swing, rej_sens, conflicts,int_relat, angry
+df <- df %>%
+  mutate(drsp_labilsocsx = rowMeans(select(., mood_swing, rej_sens, conflicts, int_relat, angry), na.rm = TRUE))
+
+# create drsp_breastpain - breast_tend, breast_swell
+df <- df %>%
+  mutate(drsp_breastpain = rowMeans(select(., breast_tend, breast_swell), na.rm = TRUE))
+
+# create drsp_eatsx - over_eat, sp_food_crav
+df <- df %>%
+  mutate(drsp_eatsx = rowMeans(select(., over_eat, sp_food_crav), na.rm = TRUE))
+
+# create drsp_lowarousal - tired, diff_conc, diff_sleep, high_sleep
+df <- df %>%
+  mutate(drsp_lowarousal = rowMeans(select(., tired, diff_conc, diff_sleep, high_sleep, loss_interest, loss_prod, headache), na.rm = TRUE))
+
+```
+
+```{r winsorize-hormones}
+library(dplyr)
+
+# 1. Define a simple helper function to cap the top 5%
+winsor_upper <- function(x, prob = 0.95) {
+  # If all data is missing, return as is to avoid errors
+  if (all(is.na(x))) return(x)
+  
+  # Calculate the cutoff
+  limit <- quantile(x, probs = prob, na.rm = TRUE)
+  
+  # Replace values above the limit with the limit
+  x[x > limit & !is.na(x)] <- limit
+  return(x)
+}
+
+# 2. Apply it within-person
+df <- df %>%
+  group_by(id) %>%
+  mutate(
+    e2_w = winsor_upper(e2, 0.95),
+    p4_w = winsor_upper(p4, 0.95),
+    lh_w = winsor_upper(lh, 0.95)
+  ) %>%
+  ungroup()
+
+# Enforce Excl_Horm exclusion on winsorized hormone variables (e2_w, p4_w, lh_w)
+df <- df %>%
+  mutate(
+    e2_w = if_else(Excl_Horm %in% TRUE, NA_real_, e2_w),
+    p4_w = if_else(Excl_Horm %in% TRUE, NA_real_, p4_w),
+    lh_w = if_else(Excl_Horm %in% TRUE, NA_real_, lh_w)
+  )
+
+# Verify exclusion enforcement
+cat("\n=== CHECKPOINT: After Winsorization ===\n")
+excl_horm_check <- df %>%
+  filter(Excl_Horm == TRUE) %>%
+  summarise(
+    n_with_e2 = sum(!is.na(e2)),
+    n_with_e2_w = sum(!is.na(e2_w)),
+    n_with_p4 = sum(!is.na(p4)),
+    n_with_p4_w = sum(!is.na(p4_w)),
+    n_with_lh = sum(!is.na(lh)),
+    n_with_lh_w = sum(!is.na(lh_w))
+  )
+print(excl_horm_check)
+if (any(excl_horm_check > 0)) {
+  warning("WARNING: Excl_Horm=TRUE participants still have hormone values after winsorization!")
+}
+```
+
+```{r note-derived-metrics-moved}
+# =============================================================================
+# NOTE: DERIVED METRICS CALCULATION MOVED TO UKALC_03_processing_shared.Rmd
+# =============================================================================
+# 
+# Previous versions of this file calculated derived variables here (.d, .zd, 
+# .szd, .roll, .log, .m, .sd). This caused problems when merging with ADHD data
+# because ADHD observations never received these transformations.
+#
+# NOW: This file outputs CLEAN data only (no derived variables)
+# - Output: data/ukalc_YYYYMMDD_clean.rds
+# - Next step: UKALC_02 merges clean datasets
+# - Final step: UKALC_03 applies ALL processing to merged data
+#
+# This ensures both UKALC and ADHD observations receive identical processing.
+# =============================================================================
+```
+
+```{r remove-dupes}
+df <- df %>%
+  distinct(id, daterated, .keep_all = TRUE)
+```
+
+```{r how-many-drinking-ids}
+#How many unique ids are in the dataset? 
+ids_in_am_dataset <- n_distinct(df$id) # 83
+
+# How many unique participants (factor var id) reported drinking at least once? 
+unique_drinkers <- n_distinct(df$id[df$drink_today == "Yes"]) # 79
+
+# Print out each id with the number of times that each id reported drinking
+df %>%
+  filter(drink_today == "Yes") %>%
+  count(id) %>%
+  arrange(desc(n))
+
+table(df$drink_today)
+
+# use cat to print out the number of unique ids and unique drinkers
+cat("Number of unique ids in the dataset: ", ids_in_am_dataset, "\n")
+
+
+```
+
+```{r visualize-drinks-fourplus}
+
+p_drink_today <- df %>% 
+  filter(!is.na(drink_today)) %>% 
+  # CHANGE 1: Wrap drink_today in as.factor() to make it discrete
+  ggplot(aes(x = daterated, y = id, fill = as.factor(drink_today))) +
+  geom_tile() +
+  labs(title = "Drinking Across the Study by ID",
+       x = "Date",
+       y = "ID",
+       fill = "Drinking Today") +
+  # CHANGE 2: Quote the numbers ("1" and "0") so R recognizes them as names
+  scale_fill_manual(values = c("Yes" = "blue", "No" = "lightgray")) + 
+  theme_minimal(base_size = 14) +
+  theme(axis.text.y = element_text(size = 8))
+
+print(p_drink_today)
+
+# Save the plot
+save_png(plot = p_drink_today, 
+         filename = "drink_today_heatmap.png",
+         folder = data_prep_folder,
+         height = 8)  # Keep taller height for heatmap
+
+
+
+p_fourplustoday <- df %>% 
+  filter(!is.na(fourplustoday)) %>% 
+  # CHANGE 1: Wrap fourplustoday in as.factor() to make it discrete
+  ggplot(aes(x = daterated, y = id, fill = as.factor(fourplustoday))) +
+  geom_tile() +
+  labs(title = "Drinking 4+ Drinks/Day Across the Study by ID",
+       x = "Date",
+       y = "ID",
+       fill = "Drinking 4+ Today") +
+  # CHANGE 2: Quote the numbers ("1" and "0") so R recognizes them as names
+  scale_fill_manual(values = c("Yes" = "blue", "No" = "lightgray")) + 
+  theme_minimal(base_size = 14) +
+  theme(axis.text.y = element_text(size = 8))
+
+print(p_fourplustoday)
+
+# Save the plot
+save_png(plot = p_fourplustoday, 
+         filename = "fourplustoday_heatmap.png",
+         folder = data_prep_folder,
+         height = 8)  # Keep taller height for heatmap
+
+```
+
+# Save cycledata and save as traits
+```{r merge-cycledata-traits}
+
+availablecycledata <- cycledata_check(df, c("dep"))
+
+# format id as same format for merging 
+availablecycledata <- availablecycledata$by_id %>%
+  mutate(id = as.character(id))
+
+# merge drink_cycledata into df
+df <- df %>%
+  left_join(availablecycledata, by = "id")
+
+# check merge
+cat("Cycledata merged into df. Here are the new columns from availablecycledata:\n")
+new_cycledata_cols <- setdiff(names(availablecycledata), names(df))
+print(new_cycledata_cols)
+
+```
+
+
+
+
+```{r count rows and ids}
+count_rows_ids(df)
+```
+
+```{r data N details}
+
+# Filter the data for non-missing e2 values and count unique ids
+non_missing_E2 <- df %>%
+  filter(!is.na(e2))
+
+non_missing_E2_count <- n_distinct(non_missing_E2$id)
+non_missing_E2_ids <- unique(non_missing_E2$id)
+
+# Get IDs with missing e2 values
+missing_E2_ids <- setdiff(unique(df$id), non_missing_E2_ids)
+
+# Print results for non-missing and missing e2 values
+cat("Number of people WITH usable hormones:", non_missing_E2_count, "\n",
+    "The id values are:", paste(non_missing_E2_ids, collapse = ", "), "\n\n",
+    "Number of people WITHOUT usable hormone data:", length(missing_E2_ids), "\n",
+    "Their id values are:", paste(missing_E2_ids, collapse = ", "), "\n\n",
+    "In addition, these ids were removed due to a lack of complete data:", 
+    paste(ids_w_no_menses_onset, collapse = ", "), "\n\n")
+
+# Filter the data for non-missing survey values and count unique ids
+non_missing_survey <- df %>%
+  filter(!is.na(drank_alcohol))
+
+non_missing_survey_count <- n_distinct(non_missing_survey$id)
+non_missing_survey_ids <- unique(non_missing_survey$id)
+
+# Get IDs with missing survey values
+missing_survey_ids <- setdiff(unique(df$id), non_missing_survey_ids)
+
+# Print results for non-missing and missing survey values
+cat("Number of people WITH any surveys:", non_missing_survey_count, "\n",
+    "Their id values are:", paste(non_missing_survey_ids, collapse = ", "), "\n\n",
+    "Number of people WITHOUT any surveys:", length(missing_survey_ids), "\n",
+    "Their id values are:", paste(missing_survey_ids, collapse = ", "), "\n\n")
+
+# Find the intersection of available hormone data and available survey data
+intersection_ids <- intersect(non_missing_E2_ids, non_missing_survey_ids)
+intersection_count <- length(intersection_ids)
+
+# Print result for the intersection of hormone and survey data
+cat("Number of people WITH both usable hormone and any survey data:", intersection_count, "\n",
+    "Their id values are:", paste(intersection_ids, collapse = ", "), "\n\n")
+
+# Count the non-missing observations of drink_today and e2 for people with both hormone and survey data
+non_missing_intersection <- df %>%
+  filter(id %in% intersection_ids, !is.na(drink_today), !is.na(e2))
+
+non_missing_intersection_count <- nrow(non_missing_intersection)
+
+# Print the result for non-missing observations of drink_today and e2
+cat("Number of non-missing observations of drink_today and e2 for people with both hormone and survey data:", non_missing_intersection_count, "\n")
+
+# Create a list of IDs with the number of days with both e2 and DRSP
+usable_days_list <- non_missing_intersection %>%
+  group_by(id) %>%
+  summarise(usable_days = n()) %>%
+  arrange(usable_days)
+
+# Print the list of IDs with the number of days in words
+cat("List of IDs with the number of days having both e2 and DRSP (sorted by number of observations ascending):", "\n")
+apply(usable_days_list, 1, function(row) {
+  cat("id", row["id"], "has", row["usable_days"], "hormone-survey pairs.", "\n")
+})
+
+```
+
+```{r create-days-since-enrollment}
+# Create a variable called days_since_enrollment that counts the number of days since the first day of data collection (daterated) for each participant (id) in df
+df <- df %>%
+  group_by(id) %>%
+  mutate(days_since_enrollment = daterated - min(daterated))
+
+# Create a variable that counts the number of rows per id and saves it as a trait variable (repeating within each id)
+df <- df %>%
+  group_by(id) %>%
+  mutate(id_daycount = n())
+
+hist(df$id_daycount)
+```
+
+```{r data-overlap-horm-surv-cyc, message=FALSE, warning=FALSE}
+
+
+# ---- Plot Overlap of Available Data  ----        
+# Plot days in study, nonmissing survey observations, and e2 observations per id 
+#TODO need to add hormone data into this and redo
+library(gridExtra)
+# Count the total number of "Days in Study" (total observations per ID)
+df_count <- df %>%
+  group_by(id) %>%
+  summarize(id_daycount = n())
+
+# Count the number of non-missing observations per ID for the variable drink_today_am
+df_nonmissing_count <- df %>%
+  group_by(id) %>%
+  summarize(number_of_observations = sum(!is.na(drink_today)))
+
+# Count the number of non-missing observations for the variable e2
+df_e2_nonmissing_count <- df %>%
+  group_by(id) %>%
+  summarize(e2_nonmissing = sum(!is.na(e2)))
+
+# Count the number of non-missing observations for the variable dep
+df_dep_nonmissing_count <- df %>%
+  group_by(id) %>%
+  summarize(dep_nonmissing = sum(!is.na(dep)))
+
+#### Handle Outliers ONLY for "Days in Study" ####
+
+# Outlier removal for "Days in Study"
+Q1 <- quantile(df_count$id_daycount, 0.25)
+Q3 <- quantile(df_count$id_daycount, 0.75)
+IQR <- Q3 - Q1
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+
+df_no_outliers <- df_count %>%
+  filter(id_daycount >= lower_bound & id_daycount <= upper_bound)
+
+# remove id 123 from df_dep_nonmissing_count 
+df_dep_nonmissing_count <- df_dep_nonmissing_count %>%
+  filter(id != 123)
+
+#### Determine Y-Axis Limits ####
+y_min <- min(df_no_outliers$id_daycount, df_nonmissing_count$number_of_observations, df_e2_nonmissing_count$e2_nonmissing, df_dep_nonmissing_count$dep_nonmissing, na.rm = TRUE)
+y_max <- max(df_no_outliers$id_daycount, df_nonmissing_count$number_of_observations, df_e2_nonmissing_count$e2_nonmissing, df_dep_nonmissing_count$dep_nonmissing, na.rm = TRUE)
+
+#### Plots ####
+
+# Plot "Days in Study" per ID (with outliers removed)
+plot1_no_outliers <- ggplot(df_no_outliers, aes(x = factor(1), y = id_daycount, label = id)) +
+  geom_violin(fill = "lightblue", alpha = 0.5) +  # Violin plot to show distribution
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 0.7) +  # Boxplot inside the violin
+  geom_jitter(width = 0.15, size = 2, color = "blue", alpha = 0.7) +  # Dots for raw data
+  geom_text(aes(label = id), hjust = -0.1, size = 3, check_overlap = TRUE) +  # Add ID labels
+  labs(x = NULL, y = "Days in Study", title = "Days in Study per ID") +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+  ylim(y_min, y_max)
+
+# Plot "Number of Observations" for drink_today_am (without removing outliers)
+plot2_no_outliers <- ggplot(df_nonmissing_count, aes(x = factor(1), y = number_of_observations, label = id)) +
+  geom_violin(fill = "lightgreen", alpha = 0.5) +  # Violin plot to show distribution
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 0.7) +  # Boxplot inside the violin
+  geom_jitter(width = 0.15, size = 2, color = "darkgreen", alpha = 0.7) +  # Dots for raw data
+  geom_text(aes(label = id), hjust = -0.1, size = 3, check_overlap = TRUE) +  # Add ID labels
+  labs(x = NULL, y = "Alcohol Survey Days", title = "AM Surveys per ID") +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+  ylim(y_min, y_max)
+
+# Plot "Number of non-missing e2 observations" (without removing outliers)
+plot3_no_outliers <- ggplot(df_e2_nonmissing_count, aes(x = factor(1), y = e2_nonmissing, label = id)) +
+  geom_violin(fill = "lightcoral", alpha = 0.5) +  # Violin plot to show distribution
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 0.7) +  # Boxplot inside the violin
+  geom_jitter(width = 0.15, size = 2, color = "red", alpha = 0.7) +  # Dots for raw data
+  geom_text(aes(label = id), hjust = -0.1, size = 3, check_overlap = TRUE) +  # Add ID labels
+  labs(x = NULL, y = "Number of Hormone Days", title = "Hormone Days per ID") +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+  ylim(y_min, y_max)
+
+# Plot "Number of non-missing dep observations" (without removing outliers)
+plot4_no_outliers <- ggplot(df_dep_nonmissing_count, aes(x = factor(1), y = dep_nonmissing, label = id)) +
+  geom_violin(fill = "orange", alpha = 0.5) +  # Violin plot to show distribution
+  geom_boxplot(width = 0.1, outlier.shape = NA, alpha = 0.7) +  # Boxplot inside the violin
+  geom_jitter(width = 0.15, size = 2, color = "red", alpha = 0.7) +  # Dots for raw data
+  geom_text(aes(label = id), hjust = -0.1, size = 3, check_overlap = TRUE) +  # Add ID labels
+  labs(x = NULL, y = "Number of DRSP Days", title = "PM Surveys per ID") +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+  ylim(y_min, y_max)
+
+# Combine the three plots on one page using grid.arrange from gridExtra
+observations_plot <- grid.arrange(plot1_no_outliers, plot2_no_outliers, plot3_no_outliers, plot4_no_outliers, ncol = 4)
+
+# Save the combined plot to a file with the current date
+save_png(plot = observations_plot, 
+         filename = paste0("N_observations_plot_", current_date, ".png"),
+         folder = data_prep_folder,
+         width = 20,  # Keep wider for 3-column layout
+         height = 8)
+
+
+
+```
+
+
+
+
+```{r print variable names}
+
+names(df)
+
+```
+
+
+
+
+
+##### END OF DATA PREP 
+
+```{r save-prepped-dataset-box}
+
+write.csv(df, paste0("~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/UKALC/03_analytic_projects/UKALC-Primary ms/02_datasets_output/ukalc_", current_date, "_clean.csv"), row.names = FALSE)
+
+# Save as .rds
+saveRDS(df, paste0("~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/UKALC/03_analytic_projects/UKALC-Primary ms/02_datasets_output/ukalc_", current_date, "_clean.rds"))
+```
+
+
+```{r save-prepped-dataset-data-folder}
+# output a copy to the data folder
+write.csv(df, paste0("data/ukalc_", current_date, "_clean.csv"), row.names = FALSE)
+# Save as .rds
+saveRDS(df, paste0("data/ukalc_", current_date, "_clean.rds"))
+
+cat("\n✓ Clean dataset saved (no derived variables).\n")
+cat("  Output: data/ukalc_", current_date, "_clean.rds\n", sep="")
+cat("  Next step: Run UKALC_02_merge_adhd.Rmd to merge with ADHD data.\n")
+cat("  Then: Run UKALC_03_processing_shared.Rmd to create derived variables.\n")
+```
+
+```{r placeholder-empty}
+
+```
+
