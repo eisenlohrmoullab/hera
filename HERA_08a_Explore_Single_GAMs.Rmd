@@ -7,22 +7,53 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(broom)
+library(scales)
+```
+
+```{r load-data}
+# Set the date for the GAM reports (use Sys.Date() if you want this to be dynamic)
+current_date <- as.Date("2026-03-19")
+date_tag <- gsub("-", "", as.character(current_date))
+
+gam_reports_folder <- paste0("GAM_Reports_", date_tag)
+gam_filename <- paste0("participant_significance_summary_", date_tag, ".csv")
+
+csv_path <- file.path(
+  "~",
+  "Library",
+  "CloudStorage",
+  "Box-Box",
+  "00 - CLEAR Lab (Locked Folders)",
+  "02 - Data Management, Analysis, and Papers",
+  "Studies_Projects",
+  "HERA",
+  "03_analytic_projects",
+  "HERA-Primary ms",
+  "03_dataedits_output",
+  "06_Single_GAMs",
+  gam_reports_folder,
+  gam_filename
+)
+
+gam_df <- read.csv(csv_path)
 ```
 
 ```{r}
-names(df)
-unique(df$significant)
-```
+names(gam_df)
 
-
-```{r}
-
-# Calculate Significance
-df <- df %>%
+# Calculate Significance (must happen before any reference to gam_df$significant)
+gam_df <- gam_df %>%
   mutate(significant = ifelse(p.value < 0.05, "Significant", "Not Significant"))
 
+unique(gam_df$significant)
+```
+
+
+```{r}
 # make it again but sort the bars by the number of significant participants
-df_summary <- df %>%
+df_summary <- gam_df %>%
   group_by(variable) %>%
   summarise(significant_count = sum(significant == "Significant")) %>%
   arrange(desc(significant_count))
@@ -41,14 +72,14 @@ ggplot(df_summary, aes(x = reorder(variable, -significant_count), y = significan
 ```{r}
 # plot the distribution of range among ids with and without significance 
 
-ggplot(df, aes(x = significant, y = range)) +
+ggplot(gam_df, aes(x = significant, y = range)) +
   geom_boxplot() +
   labs(title = "Boxplot of DRSP_NA Range by Significance", x = "Significance", y = "Range") +
   theme_minimal()
 
 # now with histograms
 
-ggplot(df, aes(x = range, fill = significant)) +
+ggplot(gam_df, aes(x = range, fill = significant)) +
   geom_histogram(position = "dodge", bins = 30) +
   labs(title = "Histogram of DRSP_NA Range by Significance", x = "Range", y = "Count") +
   theme_minimal() +
@@ -74,20 +105,8 @@ ggplot(df, aes(x = range, fill = significant)) +
 # 6. Computes summary stats at candidate thresholds
 # 7. Lets you run the same workflow across many DRSP variables
 #
-# Packages
-# =========================================================
-library(tidyverse)
-library(broom)
-library(scales)
-
-# =========================================================
-# 1. READ DATA
-# =========================================================
-# Replace this with your actual object if already loaded
- gam_df <- read.csv("~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/03_dataedits_output/06_Single_GAMs/GAM_Reports_20260319/participant_significance_summary_20260319.csv")
-
-# Example:
-# gam_df <- your_dataframe_name
+# Packages: loaded in setup chunk above (tidyverse, broom, scales)
+# Data: loaded in load-data chunk above as gam_df
 
 # =========================================================
 # 2. BASIC CLEANING
