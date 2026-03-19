@@ -1,0 +1,528 @@
+---
+title: "HERA_08a_Explore_Single_GAMs"
+author: "Tory Eisenlohr-Moul"
+date: "2026-03-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+names(df)
+unique(df$significant)
+```
+
+
+```{r}
+
+# Calculate Significance
+df <- df %>%
+  mutate(significant = ifelse(p.value < 0.05, "Significant", "Not Significant"))
+
+# make it again but sort the bars by the number of significant participants
+df_summary <- df %>%
+  group_by(variable) %>%
+  summarise(significant_count = sum(significant == "Significant")) %>%
+  arrange(desc(significant_count))
+
+ggplot(df_summary, aes(x = reorder(variable, -significant_count), y = significant_count)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Number of Participants with Significant Effects by Outcome", x = "Outcome",
+       y = "Count of Significant Participants") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+
+```{r}
+# plot the distribution of range among ids with and without significance 
+
+ggplot(df, aes(x = significant, y = range)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of DRSP_NA Range by Significance", x = "Significance", y = "Range") +
+  theme_minimal()
+
+# now with histograms
+
+ggplot(df, aes(x = range, fill = significant)) +
+  geom_histogram(position = "dodge", bins = 30) +
+  labs(title = "Histogram of DRSP_NA Range by Significance", x = "Range", y = "Count") +
+  theme_minimal() +
+  scale_fill_manual(values = c("steelblue", "salmon")) +
+  theme(legend.title = element_blank())
+```
+```{r}
+
+# =========================================================
+# PERSON-SPECIFIC GAM CYCLICITY SUMMARY AND THRESHOLD PLOTS
+# =========================================================
+# Expected variables in data:
+# "id" "variable" "outcome_label" "p.value" "edf" "n"
+# "range" "N" "significant"
+#
+# What this code does:
+# 1. Cleans significance variable
+# 2. Filters to one DRSP outcome (e.g., "drsp_NA")
+# 3. Summarizes range by significance
+# 4. Fits logistic models predicting GAM significance from range
+#    (optionally controlling for n)
+# 5. Plots probability of significance across range
+# 6. Computes summary stats at candidate thresholds
+# 7. Lets you run the same workflow across many DRSP variables
+#
+# Packages
+# =========================================================
+library(tidyverse)
+library(broom)
+library(scales)
+
+# =========================================================
+# 1. READ DATA
+# =========================================================
+# Replace this with your actual object if already loaded
+ gam_df <- read.csv("~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/03_dataedits_output/06_Single_GAMs/GAM_Reports_20260319/participant_significance_summary_20260319.csv")
+
+# Example:
+# gam_df <- your_dataframe_name
+
+# =========================================================
+# 2. BASIC CLEANING
+# =========================================================
+clean_gam_summary <- function(df) {
+  df %>%
+    mutate(
+      significant_num = ifelse(significant == "Significant", 1, 0),
+      significant_f = factor(significant_num, 
+                             levels = c(0, 1), 
+                             labels = c("Not Significant", "Significant")),
+      range = as.numeric(range),
+      n = as.numeric(n),
+      variable = as.character(variable),
+      id = as.character(id)
+    ) %>%
+    filter(!is.na(range), !is.na(significant_num), !is.na(variable), !is.na(id))
+}
+
+# =========================================================
+# 3. FILTER TO ONE OUTCOME
+# =========================================================
+# Change target_var to whatever DRSP variable you want
+target_var <- "drsp_NA"
+
+get_outcome_df <- function(df, target_var) {
+  df %>%
+    filter(variable == target_var) %>%
+    distinct(id, variable, .keep_all = TRUE)
+}
+
+# =========================================================
+# 4. DESCRIPTIVE SUMMARY FUNCTION
+# =========================================================
+summarize_cyclicity <- function(df_outcome) {
+  overall <- df_outcome %>%
+    summarise(
+      n_participants = n(),
+      n_significant = sum(significant_num == 1, na.rm = TRUE),
+      prop_significant = mean(significant_num == 1, na.rm = TRUE)
+    )
+  
+  by_sig <- df_outcome %>%
+    group_by(significant_f) %>%
+    summarise(
+      n = n(),
+      mean_range = mean(range, na.rm = TRUE),
+      sd_range = sd(range, na.rm = TRUE),
+      median_range = median(range, na.rm = TRUE),
+      q25_range = quantile(range, .25, na.rm = TRUE),
+      q75_range = quantile(range, .75, na.rm = TRUE),
+      min_range = min(range, na.rm = TRUE),
+      max_range = max(range, na.rm = TRUE),
+      mean_n = mean(n, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  list(overall = overall, by_significance = by_sig)
+}
+
+# =========================================================
+# 5. THRESHOLD TABLE
+# =========================================================
+threshold_table <- function(df_outcome,
+                            thresholds = c(0.10, 0.25, 0.36, 0.50, 0.75, 1.00)) {
+  map_dfr(thresholds, function(th) {
+    tmp <- df_outcome %>% filter(range >= th)
+    
+    tibble(
+      threshold = th,
+      n_at_or_above = nrow(tmp),
+      prop_of_sample = ifelse(nrow(df_outcome) > 0, nrow(tmp) / nrow(df_outcome), NA_real_),
+      n_significant = sum(tmp$significant_num == 1, na.rm = TRUE),
+      prop_significant = ifelse(nrow(tmp) > 0, mean(tmp$significant_num == 1, na.rm = TRUE), NA_real_)
+    )
+  })
+}
+
+# =========================================================
+# 6. LOGISTIC MODELS
+# =========================================================
+fit_logistic_models <- function(df_outcome) {
+  model_range <- glm(significant_num ~ range, family = binomial, data = df_outcome)
+  model_range_n <- glm(significant_num ~ range + n, family = binomial, data = df_outcome)
+  
+  list(
+    model_range = model_range,
+    model_range_n = model_range_n,
+    tidy_range = broom::tidy(model_range, conf.int = TRUE, exponentiate = TRUE),
+    tidy_range_n = broom::tidy(model_range_n, conf.int = TRUE, exponentiate = TRUE)
+  )
+}
+
+# =========================================================
+# 7. PREDICTION DATA FOR PLOTTING
+# =========================================================
+make_prediction_df <- function(df_outcome, model_range, model_range_n = NULL, n_value = NULL) {
+  xseq <- seq(min(df_outcome$range, na.rm = TRUE),
+              max(df_outcome$range, na.rm = TRUE),
+              length.out = 300)
+  
+  pred1 <- tibble(range = xseq) %>%
+    mutate(
+      pred_prob = predict(model_range, newdata = ., type = "response"),
+      model = "Range only"
+    )
+  
+  if (!is.null(model_range_n)) {
+    if (is.null(n_value)) n_value <- median(df_outcome$n, na.rm = TRUE)
+    
+    pred2 <- tibble(range = xseq, n = n_value) %>%
+      mutate(
+        pred_prob = predict(model_range_n, newdata = ., type = "response"),
+        model = paste0("Range + n (n fixed at ", round(n_value, 1), ")")
+      ) %>%
+      select(range, pred_prob, model)
+    
+    bind_rows(pred1, pred2)
+  } else {
+    pred1
+  }
+}
+
+# =========================================================
+# 8. PLOT: HISTOGRAM + LOGISTIC CURVE
+# =========================================================
+plot_range_histogram <- function(df_outcome) {
+  ggplot(df_outcome, aes(x = range, fill = significant_f)) +
+    geom_histogram(position = "identity", alpha = 0.65, bins = 30) +
+    labs(
+      title = paste0("Histogram of ", unique(df_outcome$variable), " Range by Significance"),
+      x = "Cyclical range",
+      y = "Count",
+      fill = NULL
+    ) +
+    theme_minimal(base_size = 16)
+}
+
+plot_significance_probability <- function(df_outcome,
+                                          pred_df,
+                                          thresholds = c(0.25, 0.36, 0.50),
+                                          jitter_height = 0.04) {
+  ggplot(df_outcome, aes(x = range, y = significant_num)) +
+    geom_jitter(
+      aes(color = significant_f),
+      width = 0,
+      height = jitter_height,
+      alpha = 0.45,
+      size = 2
+    ) +
+    geom_line(
+      data = pred_df,
+      aes(x = range, y = pred_prob, linetype = model),
+      linewidth = 1.2,
+      inherit.aes = FALSE
+    ) +
+    geom_vline(
+      xintercept = thresholds,
+      linetype = "dashed",
+      alpha = 0.6
+    ) +
+    scale_y_continuous(
+      limits = c(-0.02, 1.02),
+      breaks = seq(0, 1, by = 0.1),
+      labels = scales::percent_format(accuracy = 1)
+    ) +
+    labs(
+      title = paste0("Probability of Significant Cyclicity: ", unique(df_outcome$variable)),
+      x = "Cyclical range",
+      y = "Predicted probability of significant GAM",
+      color = NULL,
+      linetype = NULL
+    ) +
+    theme_minimal(base_size = 16)
+}
+
+# =========================================================
+# 9. OPTIONAL: EMPIRICAL BINNED PROBABILITY PLOT
+# =========================================================
+# This shows the observed proportion significant within bins of range.
+make_empirical_bins <- function(df_outcome, n_bins = 10) {
+  df_outcome %>%
+    mutate(range_bin = ntile(range, n_bins)) %>%
+    group_by(range_bin) %>%
+    summarise(
+      mean_range = mean(range, na.rm = TRUE),
+      prop_significant = mean(significant_num, na.rm = TRUE),
+      n = n(),
+      .groups = "drop"
+    )
+}
+
+plot_empirical_and_model <- function(df_outcome, pred_df, empirical_df,
+                                     thresholds = c(0.25, 0.36, 0.50)) {
+  ggplot() +
+    geom_point(
+      data = empirical_df,
+      aes(x = mean_range, y = prop_significant, size = n),
+      alpha = 0.8
+    ) +
+    geom_line(
+      data = pred_df,
+      aes(x = range, y = pred_prob, linetype = model),
+      linewidth = 1.2
+    ) +
+    geom_vline(
+      xintercept = thresholds,
+      linetype = "dashed",
+      alpha = 0.6
+    ) +
+    scale_y_continuous(
+      limits = c(0, 1),
+      labels = percent_format(accuracy = 1)
+    ) +
+    labs(
+      title = paste0("Empirical and Modeled Probability: ", unique(df_outcome$variable)),
+      x = "Cyclical range",
+      y = "Probability of significant GAM",
+      size = "Bin n",
+      linetype = NULL
+    ) +
+    theme_minimal(base_size = 16)
+}
+
+# =========================================================
+# 10. ALL-IN-ONE ANALYSIS FOR ONE VARIABLE
+# =========================================================
+analyze_one_outcome <- function(df, target_var,
+                                thresholds = c(0.25, 0.36, 0.50),
+                                n_bins = 10) {
+  df_clean <- clean_gam_summary(df)
+  df_outcome <- get_outcome_df(df_clean, target_var)
+  
+  if (nrow(df_outcome) == 0) {
+    stop(paste("No rows found for variable:", target_var))
+  }
+  
+  desc <- summarize_cyclicity(df_outcome)
+  thresh_tab <- threshold_table(df_outcome, thresholds = thresholds)
+  mods <- fit_logistic_models(df_outcome)
+  pred_df <- make_prediction_df(
+    df_outcome = df_outcome,
+    model_range = mods$model_range,
+    model_range_n = mods$model_range_n
+  )
+  emp_df <- make_empirical_bins(df_outcome, n_bins = n_bins)
+  
+  p_hist <- plot_range_histogram(df_outcome)
+  p_prob <- plot_significance_probability(df_outcome, pred_df, thresholds = thresholds)
+  p_emp <- plot_empirical_and_model(df_outcome, pred_df, emp_df, thresholds = thresholds)
+  
+  list(
+    data = df_outcome,
+    descriptives_overall = desc$overall,
+    descriptives_by_significance = desc$by_significance,
+    threshold_table = thresh_tab,
+    model_range = mods$model_range,
+    model_range_n = mods$model_range_n,
+    model_range_tidy_OR = mods$tidy_range,
+    model_range_n_tidy_OR = mods$tidy_range_n,
+    predictions = pred_df,
+    empirical_bins = emp_df,
+    plot_histogram = p_hist,
+    plot_probability = p_prob,
+    plot_empirical = p_emp
+  )
+}
+
+# =========================================================
+# 11. RUN IT FOR DRSP_NA
+# =========================================================
+# Replace gam_df with your actual dataset object name
+# result_drsp_na <- analyze_one_outcome(gam_df, target_var = "drsp_NA")
+
+# Then inspect:
+# result_drsp_na$descriptives_overall
+# result_drsp_na$descriptives_by_significance
+# result_drsp_na$threshold_table
+# result_drsp_na$model_range_tidy_OR
+# result_drsp_na$model_range_n_tidy_OR
+# result_drsp_na$plot_histogram
+# result_drsp_na$plot_probability
+# result_drsp_na$plot_empirical
+
+# =========================================================
+# 12. SAVE PLOTS IF YOU WANT
+# =========================================================
+# ggsave("drsp_NA_histogram_by_significance.png", result_drsp_na$plot_histogram, width = 10, height = 6, dpi = 300)
+# ggsave("drsp_NA_probability_of_significance.png", result_drsp_na$plot_probability, width = 10, height = 6, dpi = 300)
+# ggsave("drsp_NA_empirical_probability.png", result_drsp_na$plot_empirical, width = 10, height = 6, dpi = 300)
+
+# =========================================================
+# 13. RUN ACROSS ALL DRSP VARIABLES
+# =========================================================
+get_drsp_variables <- function(df) {
+  df %>%
+    clean_gam_summary() %>%
+    distinct(variable) %>%
+    pull(variable) %>%
+    .[str_detect(., regex("^drsp", ignore_case = TRUE))]
+}
+
+summarize_all_drsp_vars <- function(df,
+                                    thresholds = c(0.25, 0.36, 0.50)) {
+  df_clean <- clean_gam_summary(df)
+  drsp_vars <- get_drsp_variables(df_clean)
+  
+  map_dfr(drsp_vars, function(v) {
+    df_v <- get_outcome_df(df_clean, v)
+    
+    if (nrow(df_v) < 5) return(NULL)
+    
+    mod1 <- try(glm(significant_num ~ range, family = binomial, data = df_v), silent = TRUE)
+    mod2 <- try(glm(significant_num ~ range + n, family = binomial, data = df_v), silent = TRUE)
+    
+    th_tab <- threshold_table(df_v, thresholds = thresholds) %>%
+      pivot_wider(
+        names_from = threshold,
+        values_from = c(n_at_or_above, prop_of_sample, n_significant, prop_significant),
+        names_sep = "_th_"
+      )
+    
+    out <- tibble(
+      variable = v,
+      n_participants = nrow(df_v),
+      n_significant = sum(df_v$significant_num == 1, na.rm = TRUE),
+      prop_significant = mean(df_v$significant_num == 1, na.rm = TRUE),
+      median_range = median(df_v$range, na.rm = TRUE),
+      q25_range = quantile(df_v$range, .25, na.rm = TRUE),
+      q75_range = quantile(df_v$range, .75, na.rm = TRUE),
+      mean_n = mean(df_v$n, na.rm = TRUE)
+    )
+    
+    if (!inherits(mod1, "try-error")) {
+      tidy1 <- broom::tidy(mod1, conf.int = TRUE, exponentiate = TRUE) %>%
+        filter(term == "range") %>%
+        transmute(
+          OR_range = estimate,
+          OR_range_low = conf.low,
+          OR_range_high = conf.high,
+          p_range = p.value
+        )
+      out <- bind_cols(out, tidy1)
+    }
+    
+    if (!inherits(mod2, "try-error")) {
+      tidy2 <- broom::tidy(mod2, conf.int = TRUE, exponentiate = TRUE)
+      
+      range_row <- tidy2 %>%
+        filter(term == "range") %>%
+        transmute(
+          OR_range_adj_n = estimate,
+          OR_range_adj_n_low = conf.low,
+          OR_range_adj_n_high = conf.high,
+          p_range_adj_n = p.value
+        )
+      
+      n_row <- tidy2 %>%
+        filter(term == "n") %>%
+        transmute(
+          OR_n = estimate,
+          OR_n_low = conf.low,
+          OR_n_high = conf.high,
+          p_n = p.value
+        )
+      
+      out <- bind_cols(out, range_row, n_row)
+    }
+    
+    bind_cols(out, th_tab)
+  }) %>%
+    arrange(desc(prop_significant), desc(median_range))
+}
+
+# Example:
+# all_drsp_summary <- summarize_all_drsp_vars(gam_df)
+# View(all_drsp_summary)
+
+# =========================================================
+# 14. OPTIONAL: FIND THE 50% CROSSING FROM THE SIMPLE MODEL
+# =========================================================
+# This is not a "natural breakpoint"; it is just the range value
+# where predicted probability of significance = 0.50.
+get_p50_threshold <- function(model_range) {
+  coefs <- coef(model_range)
+  if (length(coefs) < 2 || is.na(coefs[1]) || is.na(coefs[2]) || coefs[2] == 0) {
+    return(NA_real_)
+  }
+  -coefs[1] / coefs[2]
+}
+
+# Example:
+# p50_drsp_na <- get_p50_threshold(result_drsp_na$model_range)
+# p50_drsp_na
+
+# =========================================================
+# 15. VERY SHORT MINIMAL VERSION FOR JUST drsp_NA
+# =========================================================
+# Uncomment and run this if you want the leanest version only.
+#
+# df_clean <- clean_gam_summary(gam_df)
+# df_na <- df_clean %>% filter(variable == "drsp_NA")
+#
+# m1 <- glm(significant_num ~ range, family = binomial, data = df_na)
+# m2 <- glm(significant_num ~ range + n, family = binomial, data = df_na)
+#
+# pred_df <- make_prediction_df(df_na, m1, m2)
+#
+# ggplot(df_na, aes(range, significant_num)) +
+#   geom_jitter(aes(color = significant_f), height = 0.04, width = 0, alpha = 0.45) +
+#   geom_line(data = pred_df, aes(y = pred_prob, linetype = model), linewidth = 1.2) +
+#   geom_vline(xintercept = c(0.25, 0.36, 0.50), linetype = "dashed", alpha = 0.6) +
+#   scale_y_continuous(labels = percent_format(accuracy = 1), limits = c(0, 1)) +
+#   theme_minimal(base_size = 16) +
+#   labs(
+#     title = "Probability of Significant Cyclicity: drsp_NA",
+#     x = "Cyclical range",
+#     y = "Probability of significant GAM",
+#     color = NULL,
+#     linetype = NULL
+#   )
+
+
+```
+
+```{r}
+
+
+result_drsp_na <- analyze_one_outcome(gam_df, target_var = "drsp_NA")
+
+result_drsp_na$descriptives_overall
+result_drsp_na$descriptives_by_significance
+result_drsp_na$threshold_table
+result_drsp_na$model_range_tidy_OR
+result_drsp_na$model_range_n_tidy_OR
+result_drsp_na$plot_probability
+```
+

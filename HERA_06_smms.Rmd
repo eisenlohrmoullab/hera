@@ -90,6 +90,8 @@ set.seed(
 ```{r}
 # LOAD LATEST CLEAN DATA FILE 
 
+df <- readRDS('/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/02_datasets_output/HERA_20260319_clean.rds')
+
 
 # Load the dataset
 
@@ -116,8 +118,11 @@ ovulation_time_variable <- "cyclic_time_imp_ov"
 # Values = pretty labels for plots
 ```{r}
 outcomes <- c(
+  
+  "drsp_NA" = "DRSP Mean Negative Affect",
+  "drsp_NAmax" = "DRSP Max Negative Affect",
    # --- Substance Use & Craving ---
-  "numdrinkstoday" = "Number of Drinks",
+ # "numdrinkstoday" = "Number of Drinks",
 
   # --- Mood & Affect (DRSP/PMDD) ---
   "drsp_1"              = "Depression",
@@ -357,7 +362,7 @@ if (!file.exists("scripts/create_outcome_pdf_report.R")) {
 ```
 
 
-# HERA END HERE 2026-03-12
+# HERA END HERE 2026-03-19
 
 
 

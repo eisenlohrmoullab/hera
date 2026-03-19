@@ -6,6 +6,13 @@
 .RData
 .RDataTmp
 
+# Data files
+data/
+.csv
+.Rdata
+.Rds
+.rds
+
 # User-specific files
 .Ruserdata
 

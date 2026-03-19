@@ -32,12 +32,23 @@ options(scipen = 999)
 set.seed(12345)
 ```
 
+
+```{r}
+# Import Data
+
+df <- readRDS('/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/02_datasets_output/HERA_20260319_clean.rds')
+
+```
+
+
 ```{r}
 # --- Path to the main output directory ---
-gam_output_base <- "~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/03_code_dataedits_output/06_Single_GAMs/"
+gam_output_base <- "~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/03_dataedits_output/06_Single_GAMs/"
 
 # --- Define all Time Variables to iterate over (must be scaled to [-1, 1]) ---
-time_vars_to_run <- c("cyclic_time", "cyclic_time_ov", "cyclic_time_impute", "cyclic_time_imp_ov")
+time_vars_to_run <- c("cyclic_time_impute")
+  
+  #"cyclic_time", "cyclic_time_ov", "cyclic_time_impute", "cyclic_time_imp_ov")
 
 # --- Table Formatting ---
 table_cols_per_page <- 6
@@ -69,7 +80,9 @@ if (length(time_vars) < length(time_vars_to_run)) {
 ```{r}
 # --- Define Outcomes to Model ---
 outcomes <- c(
-  "numdrinkstoday" = "Number of Drinks",
+  #"numdrinkstoday" = "Number of Drinks",
+  "drsp_NA"          = "DRSP Negative Affect Mean",
+  "drsp_NAmax"       = "DRSP Negative Affect Max",
   "drsp_total"       = "DRSP Total",
   "drsp_distress"    = "Distress (DRSP)",
   "drsp_labilsocsx"  = "Social/Affect Lability (DRSP)",
@@ -451,7 +464,7 @@ if (nrow(sig_ranked) == 0) {
           plot_list <- c(plot_list,
                          rep(list(patchwork::plot_spacer()), max_plots_per_page - length(plot_list)))
         }
-        page_title <- paste("Symptom & Hormone Trajectories — ID:", current_id, "| Time Variable:", tv)
+        page_title <- paste("Symptom Trajectories — ID:", current_id, "| Time Variable:", tv)
         final_page <- patchwork::wrap_plots(plotlist = plot_list, ncol = plots_per_col) +
           patchwork::plot_annotation(
             title = page_title,

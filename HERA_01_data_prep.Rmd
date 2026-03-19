@@ -30,99 +30,62 @@ if (!dir.exists(data_prep_folder)) {
 }
 ```
 
-```{r source-custom-fxs, quiet=TRUE, message=FALSE, warning=FALSE}
-# Load helper functions from scripts/
-source("scripts/plot_day_of_week.R")
-source("scripts/print_variable_names.R")
-source("scripts/count_rows_ids.R")
-
-cat("Custom functions sourced.\n")
-```
-
 ## Data Import
 
 ```{r import-survey-data}
-# Import surveys 
-# Handles UTF-8 BOM, standardizes column names, removes blank rows
 
-data_path <- "~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/02_datasets/HERA_DAILY/02_data_prep_workspace"
+library(readr)
+library(dplyr)
 
-# Helper function: Load CSV, clean column names, standardize ID
-load_and_clean_survey <- function(filename) {
-  
-  # Read CSV with UTF-8 encoding (handles BOM)
-  df <- read_csv(
-    file.path(data_path, filename), 
-    show_col_types = FALSE,
-    locale = locale(encoding = "UTF-8"),
-    name_repair = "unique_quiet"
+file_path <- "~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/02_datasets/HERA_DAILY/02_data_prep_workspace/V.1-V.5-FINAL.csv"
+
+hera_raw <- read_csv(file_path, col_types = cols(.default = col_character()))
+
+pm_surveys <- hera_raw %>%
+  select(
+    id,
+    daterated,
+    #wake_alcuse,
+    #ran_alcuse,
+    drsp_1:drsp_21,
+    #night_alcuse,
+       # night_alcplan,
+        #stress,
+       # wake_alcmotive_pain,
+       # wake_alcmotive_anx,
+       # wake_alcmotive_dep,
+       # wake_alcmotive_enhance,
+       # wake_alcmotive_celeb,
+       # wake_alcmotive_fomo,
+       # wake_alcmotive_other,
+       # wake_alcmotive_na,
+    # night_alcmotive_pain,
+    # night_alcmotive_anx,
+    # night_alcmotive_dep,
+    # night_alcmotive_enhance,
+    # night_alcmotive_celeb,
+    # night_alcmotive_fomo,
+    # night_alcmotive_other,
+    # night_alcmotive_na,
+    # alcuse,
+    # sub_alc,
+    # alc_duration,
+    # wake_alcduration,
+    # age,
+    # height,
+    # weight,
+    # audit_consumption_sum,
+    # audit_dependence_sum,
+    # audit_problems_sum,
+    # audit_sum,
+    Mens_onset,
+    Ov_day,
+    TemperatureDeviationC,
+    TemperatureScore,
+    TemperatureTrendDeviation
   )
-  
-  # Strip UTF-8 BOM from column names (\ufeffid → id)
-  names(df) <- sub("^\\ufeff", "", names(df))
-  
-  # Standardize all column names to snake_case (MoodSwing → mood_swing)
-  df <- df %>% janitor::clean_names()
-  
-  # Remove empty columns
-  df <- df %>%
-    select(-matches("^x\\d+$")) %>%  # Remove auto-named columns like "x1", "x2"
-    select(where(~ !all(is.na(.))))   # Remove columns with only NA values
-  
-  # Ensure 'id' column exists after cleaning
-  # janitor::clean_names() may have renamed it, so check common variants
-  if (!"id" %in% names(df)) {
-    # Check for common id column names after cleaning
-    id_candidates <- c("ID", "subject_id", "participant_id", "record_id", "user_id", "patient_id")
-    id_col <- intersect(id_candidates, names(df))
-    if (length(id_col) > 0) {
-      df <- df %>% rename(id = !!sym(id_col[1]))
-      cat(sprintf("  Renamed '%s' to 'id'\n", id_col[1]))
-    } else {
-      stop(sprintf("Cannot find 'id' column in %s after cleaning. Available columns: %s", 
-                   filename, paste(names(df), collapse=", ")))
-    }
-  }
-  
-  # Keep only digits in 'id' column (handles various ID formats like "HERA_101" -> "101")
-  df <- df %>%
-    mutate(id = str_extract(as.character(id), "\\d+"))
-  
-  # Remove completely empty rows (where id is NA/empty AND all other non-id columns are NA or whitespace)
-  # Count rows before filtering
-  n_rows_before <- nrow(df)
-  
-  df <- df %>%
-    filter(!is.na(id) & id != "")
-  
-  # Report removed rows
-  n_removed <- n_rows_before - nrow(df)
-  if (n_removed > 0) {
-    cat(sprintf("  Removed %d rows with missing/empty id from %s\n", n_removed, filename))
-  }
-  
-  # Convert id to factor
-  df <- df %>% mutate(id = as.factor(id))
-  
-  return(df)
-}
 
-# ---- 2. Load & Process Datasets ----
-
-pm_surveys   <- load_and_clean_survey("HERA_DAILY.csv")
-
-# ---- 3. Diagnostics ----
-
-# Print quick summary of unique IDs per dataset
-datasets <- list(PM_Surveys = pm_surveys)
-
-cat("\n--- Processing Complete ---\n")
-for (name in names(datasets)) {
-  n_ids <- n_distinct(datasets[[name]]$id)
-  n_rows <- nrow(datasets[[name]])
-  cat(sprintf("%s: %d rows, %d unique IDs\n", name, n_rows, n_ids))
-}
-
+View(pm_surveys)
 ```
 
 
@@ -138,7 +101,14 @@ for (name in names(datasets)) {
 
 #View(pm_surveys)
 
+# remove observations where id or daterated are NA or where drsp_1 is NA
 
+pm_surveys <- pm_surveys %>%
+  filter(!is.na(id), !is.na(daterated), !is.na(drsp_1))
+```
+
+
+```{r clean-pm, warning=FALSE}
 # Format date_rated as MM/DD/YYYY
 pm_surveys <- pm_surveys %>%
   mutate(daterated = mdy(daterated))
@@ -167,8 +137,8 @@ cat(sprintf("Rows after removing missing id/daterated: %d (removed %d rows)\n\n"
 # ---- 2. Clean Alcohol Variables ----
 
 # Ensure numdrinkstoday is numeric
-pm_surveys <- pm_surveys %>% 
-  mutate(numdrinkstoday = as.numeric(numdrinkstoday))
+#pm_surveys <- pm_surveys %>% 
+ # mutate(numdrinkstoday = as.numeric(numdrinkstoday))
 
 # ---- 6. Visualization and Diagnostics ----
 # Visualize Missing Data
@@ -203,13 +173,13 @@ drsp_vars <- c("drsp_1", "drsp_2", "drsp_3", "drsp_4", "drsp_5", "drsp_6", "drsp
 ```
 
 
-# Create a new variable "ovtoday", subset by id, and code ovtoday=1 if the prior day (daterated) has a positive LH test (LHpos == 1), otherwise ovtoday=0. This indicates whether the participant is likely ovulating on the day they completed the PM survey.
+# Create a new variable "ovtoday", subset by id, and code ovtoday=1 if the prior day (daterated) has a positive LH test (OvDay == 1), otherwise ovtoday=0. This indicates whether the participant is likely ovulating on the day they completed the PM survey.
 
 ```{r more-cleaning, warning=FALSE}
 df <- pm_surveys %>%
   arrange(id, daterated) %>%
   group_by(id) %>%
-  mutate(ovtoday = if_else(lag(l_hpos) == 1, 1, 0, missing = 0)) %>%
+  mutate(ovtoday = if_else(lag(Ov_day) == 1, 1, 0, missing = 0)) %>%
   ungroup()
 
 ```
@@ -222,8 +192,9 @@ df <- pm_surveys %>%
 df <- df %>%
   distinct()
 
-count_rows_ids(df)
+View(df)
 
+count_rows_ids(df)
 ```
 
 
@@ -247,9 +218,11 @@ names(df)
 
 
 ```{r}
-# if menses = NA, then set menses to 0
+# if menses = NA, then set menses to 0, otherwise keep the original value of menses (which is 1 for period start dates) - make no assumptions about the variable type of mens_onset
+
 df <- df %>%
-  mutate(menses = if_else(is.na(menses), 0, menses))
+  mutate(menses = if_else(is.na(Mens_onset), 0, as.numeric(Mens_onset)))
+
 ```
 
 
@@ -335,6 +308,19 @@ df <- df %>%
                "drsp_20", "drsp_21"
   ), na.rm = TRUE))
 
+# Create total DRSP negative affect score
+df <- df %>%
+  mutate(drsp_NA = rowMeans(select(., 
+      "drsp_1", "drsp_2", "drsp_3", "drsp_4", "drsp_5", "drsp_6", "drsp_7", "drsp_8", 
+               "drsp_9", "drsp_16", "drsp_17"
+  ), na.rm = TRUE))
+
+df <- df %>%
+  mutate(drsp_NAmax = pmax(
+    drsp_1, drsp_2, drsp_3, drsp_4, drsp_5, drsp_6, drsp_7, drsp_8,
+    drsp_9, drsp_16, drsp_17,
+    na.rm = TRUE
+  ))
 # Create "drsp_distress" - dep hope worth anx ang loss_interest overwhelm loss_control
 df <- df %>%
   mutate(drsp_distress = rowMeans(select(., 
@@ -362,6 +348,8 @@ df <- df %>%
 ```{r remove-dupes}
 df <- df %>%
   distinct(id, daterated, .keep_all = TRUE)
+
+count_rows_ids(df)
 ```
 
 ## menstrualcycleR Processing
@@ -401,17 +389,17 @@ if(is.null(date_col)) {
 }
 
 
-data_available_info <- cycledata_check(df, c("drsp_1", "numdrinkstoday"))
+data_available_info <- cycledata_check(df, c("drsp_1"))
 
 # View results
 print(data_available_info$by_id)
 print(data_available_info$overall)
-print(data_available_info$data_symptom_plots$numdrinkstoday)
+print(data_available_info$data_symptom_plots$drsp_1)
 
-#Save to output_folder: data_available_info$data_symptom_plots$numdrinkstoday 
+#Save to output_folder: data_available_info$data_symptom_plots$drsp_1 
 
-save_png(plot = data_available_info$data_symptom_plots$numdrinkstoday, 
-         filename = "numdrinkstoday_data_availability.png",
+save_png(plot = data_available_info$data_symptom_plots$drsp_1, 
+         filename = "drsp_1_data_availability.png",
          folder = data_prep_folder,
          height = 6)
 

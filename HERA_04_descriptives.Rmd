@@ -25,7 +25,7 @@ if (!dir.exists(descriptives_folder)) {
 # LOAD LATEST CLEAN DATA FILE 
 
 # Load the dataset
-df <- readRDS('/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/02_datasets_output/HERA_20260312_clean.rds')
+df <- readRDS('/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/02_datasets_output/HERA_20260319_clean.rds')
 
 
 ```
@@ -35,17 +35,19 @@ df <- readRDS('/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR
 ```{r}
 # --- 1. Setup ---
 
+#"numdrinkstoday",
+
 # Add all your continuous outcome variable names here
 continuous_vars <- c("drsp_1", "drsp_2", "drsp_3", "drsp_4", "drsp_5", "drsp_6", "drsp_7", "drsp_8", 
                "drsp_9", "drsp_10", "drsp_11", "drsp_12", "drsp_13", "drsp_14",
                "drsp_15", "drsp_16", "drsp_17", "drsp_18", "drsp_19",
                "drsp_20", "drsp_21",
-  "numdrinkstoday", "drsp_total", "drsp_distress", "drsp_labilsocsx", "drsp_breastpain", "drsp_eatsx", "drsp_lowarousal"
+   "drsp_total", "drsp_distress", "drsp_labilsocsx", "drsp_breastpain", "drsp_eatsx", "drsp_lowarousal"
 )
 
 outcome_labels <- c(
   # --- Substance Use & Craving ---
-  "numdrinkstoday" = "Number of Drinks",
+  #"numdrinkstoday" = "Number of Drinks",
 
   # --- Mood & Affect (DRSP/PMDD) ---
   "drsp_1"              = "Depression",
@@ -753,7 +755,7 @@ generate_correlation_heatmap <- function(
 # Technical names mapped to the desired "pretty" labels
 corrplotlist <- c(
  # --- Substance Use & Craving ---
-  "numdrinkstoday" = "Number of Drinks",
+#  "numdrinkstoday" = "Number of Drinks",
 
   # --- DRSP Aggregate Scores ---
   "drsp_total"       = "DRSP Total",

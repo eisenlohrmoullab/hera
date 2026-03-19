@@ -80,7 +80,7 @@ if (!dir.exists(gamms_folder)) {
 # LOAD LATEST CLEAN DATA FILE 
 
 # Load the dataset
-df <- readRDS('/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/02_datasets_output/HERA_20260312_clean.rds')
+df <- readRDS('/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/02_datasets_output/HERA_20260319_clean.rds')
 
 message(paste0("Data loaded successfully: ", nrow(df), " rows, ", ncol(df), " columns"))
 ```
@@ -521,11 +521,12 @@ names(df)
 # -------------------------------------------------------------------------
 
 continuous_vars <- c(
-  "numdrinkstoday",
+ # "numdrinkstoday",
   "drsp_total", "drsp_distress", "drsp_labilsocsx", "drsp_breastpain",
-  "drsp_eatsx", "drsp_lowarousal",
+  "drsp_eatsx", "drsp_lowarousal", "drsp_NA", "drsp_NAmax",
   paste0("drsp_", 1:21)
 )
+
 
 get_stars <- function(p) {
   stats::symnum(
