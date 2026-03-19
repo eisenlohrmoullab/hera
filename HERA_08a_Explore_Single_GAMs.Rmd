@@ -13,21 +13,45 @@ library(scales)
 ```
 
 ```{r load-data}
-gam_df <- read.csv("~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/03_dataedits_output/06_Single_GAMs/GAM_Reports_20260319/participant_significance_summary_20260319.csv")
+# Set the date for the GAM reports (use Sys.Date() if you want this to be dynamic)
+current_date <- as.Date("2026-03-19")
+date_tag <- gsub("-", "", as.character(current_date))
+
+gam_reports_folder <- paste0("GAM_Reports_", date_tag)
+gam_filename <- paste0("participant_significance_summary_", date_tag, ".csv")
+
+csv_path <- file.path(
+  "~",
+  "Library",
+  "CloudStorage",
+  "Box-Box",
+  "00 - CLEAR Lab (Locked Folders)",
+  "02 - Data Management, Analysis, and Papers",
+  "Studies_Projects",
+  "HERA",
+  "03_analytic_projects",
+  "HERA-Primary ms",
+  "03_dataedits_output",
+  "06_Single_GAMs",
+  gam_reports_folder,
+  gam_filename
+)
+
+gam_df <- read.csv(csv_path)
 ```
 
 ```{r}
 names(gam_df)
+
+# Calculate Significance (must happen before any reference to gam_df$significant)
+gam_df <- gam_df %>%
+  mutate(significant = ifelse(p.value < 0.05, "Significant", "Not Significant"))
+
 unique(gam_df$significant)
 ```
 
 
 ```{r}
-
-# Calculate Significance
-gam_df <- gam_df %>%
-  mutate(significant = ifelse(p.value < 0.05, "Significant", "Not Significant"))
-
 # make it again but sort the bars by the number of significant participants
 df_summary <- gam_df %>%
   group_by(variable) %>%
