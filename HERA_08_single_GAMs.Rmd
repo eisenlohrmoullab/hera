@@ -739,7 +739,7 @@ get_drsp_variables <- function(df) {
 # =========================================================
 
 # --- Build the exploration summary from in-memory results ---
-if (length(all_ids_signif)) {
+if (length(all_ids_signif) > 0) {
   gam_summary_df <- dplyr::bind_rows(all_ids_signif)
 
   # Create output sub-folder for exploration PDFs
