@@ -1105,18 +1105,23 @@ if (length(all_ids_signif) > 0) {
                     is.finite(result$data$range) &
                     result$data$range >= 1.5, na.rm = TRUE)
 
+    n_total <- result$descriptives_overall$n_participants
+    pct_cpass <- if (n_total > 0) n_cpass / n_total * 100 else NA_real_
+
     desc_df <- data.frame(
       Metric = c("Total Participants",
                  "N Significant (p < .05)",
                  "Proportion Significant",
                  "N Range \u22651.5 (p < .05 & range \u2265 1.5)",
+                 "% Range \u22651.5 (of total sample)",
                  "Median Range",
                  "Mean Observations per ID"),
       Value = c(
-        as.character(result$descriptives_overall$n_participants),
+        as.character(n_total),
         as.character(result$descriptives_overall$n_significant),
         sprintf("%.1f%%", result$descriptives_overall$prop_significant * 100),
         as.character(n_cpass),
+        ifelse(is.na(pct_cpass), "N/A", sprintf("%.1f%%", pct_cpass)),
         sprintf("%.2f", median(result$data$range, na.rm = TRUE)),
         sprintf("%.1f", mean(result$data$n, na.rm = TRUE))
       ),
