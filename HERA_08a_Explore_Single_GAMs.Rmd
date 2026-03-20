@@ -103,6 +103,9 @@ pred_grid_list <- setNames(lapply(time_vars, function(tv) {
 }), time_vars)
 
 # --- Axis labels + reference lines per time var ---
+# Time variables containing "ov" are ovulation-centered (ovulation = 0);
+# otherwise menses-centered (menses = 0). This affects label order and
+# which phase reference lines are drawn.
 axis_meta <- lapply(time_vars, function(tv) {
   if (grepl("ov", tv, ignore.case = TRUE)) {
     list(labels = c("Menses", "50%F", "Ovulation", "50%L", "Menses"),
@@ -614,6 +617,8 @@ get_p50_threshold <- function(model_range) {
 # for qualifying IDs in the per-outcome exploration PDFs.
 # =========================================================
 
+# Fit a cyclic GAM for one outcome and one time variable on a single ID's data.
+# Returns list(pred = predictions_df, sig = significance_tibble) or NULL on failure.
 fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
   log_out <- paste0(outcome_var, "_Log")
   keep <- c(log_out, tv)
@@ -663,6 +668,10 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
   )
 }
 
+# Create an annotated ggplot of predicted GAM trajectory with CI ribbon,
+# peak/trough points, range annotation, and phase reference lines.
+# plot_df must contain: estimate, conf.low, conf.high, outcome_label, p.value, raw_range.
+# axis_meta_list must have per-tv entries with: labels, menses, ov.
 create_annotated_plot <- function(plot_df, tv, axis_meta_list) {
   if (is.null(plot_df) || nrow(plot_df) == 0) return(NULL)
   max_pt <- dplyr::slice_max(plot_df, order_by = estimate, n = 1, with_ties = FALSE)
@@ -802,7 +811,7 @@ for (target_var in drsp_vars) {
       n_at_or_above = as.character(n_at_or_above),
       prop_of_sample = sprintf("%.1f%%", prop_of_sample * 100),
       n_significant = as.character(n_significant),
-      prop_significant = ifelse(is.na(prop_significant), "\u2014",
+      prop_significant = ifelse(is.na(prop_significant), "N/A",
                                 sprintf("%.1f%%", prop_significant * 100))
     )
   names(thresh_display) <- c("Range Threshold", "N >= Threshold",
