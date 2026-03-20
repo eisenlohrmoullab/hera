@@ -352,7 +352,7 @@ for (current_id in ids_to_run) {
       .groups = "drop"
     ) %>%
     tidyr::unite("count", n_sig, tested, sep = " / ") %>%
-    dplyr::rename(`Sig / Tested` = count, `Range \u22651.5 sig` = n_cpass)
+    dplyr::rename(`Sig / Tested` = count, `Range ≥1.5 sig` = n_cpass)
 
   cover_theme <- gridExtra::ttheme_default(
     base_size = 9,
