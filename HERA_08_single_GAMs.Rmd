@@ -215,16 +215,18 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list) {
   rng   <- dplyr::first(plot_df$raw_range)
   p_val <- dplyr::first(plot_df$p.value)
   n_obs <- dplyr::first(plot_df$n)
+  cpass_flag <- !is.null(rng) && is.finite(rng) && rng >= 1.5
   stars <- dplyr::case_when(
     is.finite(p_val) & p_val < 0.001 ~ "***",
     is.finite(p_val) & p_val < 0.01  ~ "**",
     is.finite(p_val) & p_val < 0.05  ~ "*",
     TRUE ~ ""
   )
+  cpass_label <- if (cpass_flag) "\u25B2 CPASS | " else ""
   ann <- if (!is.null(n_obs) && !is.na(n_obs)) {
-    sprintf("%s Range = %.2f, N = %d", stars, rng, as.integer(n_obs))
+    sprintf("%s%s Range = %.2f, N = %d", cpass_label, stars, rng, as.integer(n_obs))
   } else {
-    sprintf("%s Range = %.2f", stars, rng)
+    sprintf("%s%s Range = %.2f", cpass_label, stars, rng)
   }
   meta  <- axis_meta_list[[tv]]
 
@@ -245,6 +247,13 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list) {
     ggplot2::coord_cartesian(ylim = c(1, 6)) +
     ggplot2::theme_minimal() +
     ggplot2::theme(plot.title = ggplot2::element_text(size = 10, face = "bold", hjust = 0.5))
+
+  # Highlight plots that meet CPASS range threshold with a gold border
+  if (cpass_flag) {
+    p <- p + ggplot2::theme(
+      panel.border = ggplot2::element_rect(color = "goldenrod2", linewidth = 1.5, fill = NA)
+    )
+  }
   p
 }
 
@@ -328,9 +337,11 @@ for (current_id in ids_to_run) {
     dplyr::summarise(
       tested = dplyr::n(),
       n_sig  = sum(stars != "", na.rm = TRUE),
+      n_cpass = sum(is.finite(range) & range >= 1.5 & stars != "", na.rm = TRUE),
       .groups = "drop"
     ) %>%
-    tidyr::unite("count", n_sig, tested, sep = " / ")
+    tidyr::unite("count", n_sig, tested, sep = " / ") %>%
+    dplyr::rename(`Sig / Tested` = count, `CPASS (range >= 1.5)` = n_cpass)
 
   cover_theme <- gridExtra::ttheme_default(
     base_size = 9,
@@ -968,16 +979,22 @@ if (length(all_ids_signif) > 0) {
       gp = grid::gpar(fontsize = 12, fontface = "italic")
     )
 
+    n_cpass <- sum(result$data$significant_num == 1 &
+                    is.finite(result$data$range) &
+                    result$data$range >= 1.5, na.rm = TRUE)
+
     desc_df <- data.frame(
       Metric = c("Total Participants",
                  "N Significant (p < .05)",
                  "Proportion Significant",
+                 "N CPASS-level (p < .05 & range \u2265 1.5)",
                  "Median Range",
                  "Mean Observations per ID"),
       Value = c(
         as.character(result$descriptives_overall$n_participants),
         as.character(result$descriptives_overall$n_significant),
         sprintf("%.1f%%", result$descriptives_overall$prop_significant * 100),
+        as.character(n_cpass),
         sprintf("%.2f", median(result$data$range, na.rm = TRUE)),
         sprintf("%.1f", mean(result$data$n, na.rm = TRUE))
       ),
