@@ -46,7 +46,7 @@ df <- readRDS('/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR
 
 ```{r}
 # --- Path to the main output directory ---
-gam_output_base <- "~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/02_dataedits_output/06_Single_GAMs/"
+gam_output_base <- "~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/02_datasets_output/06_Single_GAMs/"
 
 # --- Define all Time Variables to iterate over (must be scaled to [-1, 1]) ---
 time_vars_to_run <- c("cyclic_time_impute")
@@ -481,28 +481,42 @@ if (nrow(sig_ranked) == 0) {
       )
       if (nrow(tl) < 4) return(NULL)  # need >= 2 per group for density estimation (total)
 
-      # Ensure each type group has at least 2 observations for density estimation
-      type_counts <- table(tl$type)
-      if (any(type_counts < 2)) return(NULL)
+      tl_peak   <- dplyr::filter(tl, type == "Peak (Max)")
+      tl_trough <- dplyr::filter(tl, type == "Trough (Min)")
 
-      ggplot2::ggplot(tl, ggplot2::aes(x = time, fill = type, color = type)) +
-        ggplot2::geom_density(ggplot2::aes(y = ggplot2::after_stat(ndensity) * max_n),
+      # Ensure each type group has at least 2 observations for density estimation
+      if (nrow(tl_peak) < 2 || nrow(tl_trough) < 2) return(NULL)
+
+      # Peaks go upward; troughs are mirrored downward so lower symptoms look lower
+      ggplot2::ggplot() +
+        ggplot2::geom_density(data = tl_peak,
+                              ggplot2::aes(x = time,
+                                           y = ggplot2::after_stat(ndensity) * max_n,
+                                           fill = "Peak (Max)", color = "Peak (Max)"),
                               alpha = 0.3, adjust = 1.2) +
-        ggplot2::geom_rug(alpha = 0.5, length = grid::unit(0.03, "npc")) +
+        ggplot2::geom_density(data = tl_trough,
+                              ggplot2::aes(x = time,
+                                           y = -ggplot2::after_stat(ndensity) * max_n,
+                                           fill = "Trough (Min)", color = "Trough (Min)"),
+                              alpha = 0.3, adjust = 1.2) +
+        ggplot2::geom_rug(data = tl, ggplot2::aes(x = time, color = type),
+                          alpha = 0.5, length = grid::unit(0.03, "npc")) +
+        ggplot2::geom_hline(yintercept = 0, linewidth = 0.5, color = "grey40") +
         ggplot2::geom_vline(xintercept = meta$menses, color = "red", linewidth = 0.8,
                             linetype = "dashed") +
         ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen", linewidth = 0.8,
                             linetype = "dashed") +
         ggplot2::scale_x_continuous(limits = c(-1, 1), breaks = seq(-1, 1, by = 0.5),
                                     labels = meta$labels) +
-        ggplot2::scale_y_continuous(limits = c(0, max_n),
-                                    breaks = seq(0, max_n, by = 1)) +
+        ggplot2::scale_y_continuous(limits = c(-max_n, max_n),
+                                    breaks = seq(-max_n, max_n, by = 1),
+                                    labels = abs(seq(-max_n, max_n, by = 1))) +
         ggplot2::labs(
           title = paste0(category_label, " Symptoms \u2014 ID: ", current_id),
           subtitle = paste0("N outcomes = ", nrow(sig_subset), " / ", max_n,
                             " | Time variable: ", tv),
           x = "Cycle Phase",
-          y = paste0("Relative Concentration (0\u2013", max_n, " scale)"),
+          y = paste0("Peaks \u2191 / Troughs \u2193 (0\u2013", max_n, " scale)"),
           fill = NULL, color = NULL
         ) +
         ggplot2::theme_minimal(base_size = 12) +
@@ -914,27 +928,49 @@ get_drsp_variables <- function(df) {
 plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
   meta <- axis_meta_list[[tv]]
 
-  timing_long <- dplyr::bind_rows(
-    df_sig %>% dplyr::transmute(time = peak_time, type = "Peak (Max)"),
-    df_sig %>% dplyr::transmute(time = trough_time, type = "Trough (Min)")
-  )
+  tl_peak   <- df_sig %>%
+    dplyr::filter(!is.na(peak_time)) %>%
+    dplyr::transmute(time = peak_time, type = "Peak (Max)")
+  tl_trough <- df_sig %>%
+    dplyr::filter(!is.na(trough_time)) %>%
+    dplyr::transmute(time = trough_time, type = "Trough (Min)")
 
-  if (nrow(timing_long) < 4) return(NULL)  # need >= 2 per group for density estimation
+  # Need >= 2 observations per group for density estimation
+  if (nrow(tl_peak) < 2 || nrow(tl_trough) < 2) return(NULL)
 
-  ggplot2::ggplot(timing_long, ggplot2::aes(x = time, fill = type, color = type)) +
-    ggplot2::geom_density(alpha = 0.3, adjust = 1.2) +
-    ggplot2::geom_rug(alpha = 0.5, length = grid::unit(0.03, "npc")) +
+  tl_all <- dplyr::bind_rows(tl_peak, tl_trough)
+
+  # Peaks go upward; troughs are mirrored downward so lower symptoms look lower
+  ggplot2::ggplot() +
+    ggplot2::geom_density(data = tl_peak,
+                          ggplot2::aes(x = time,
+                                       y = ggplot2::after_stat(ndensity),
+                                       fill = "Peak (Max)", color = "Peak (Max)"),
+                          alpha = 0.3, adjust = 1.2) +
+    ggplot2::geom_density(data = tl_trough,
+                          ggplot2::aes(x = time,
+                                       y = -ggplot2::after_stat(ndensity),
+                                       fill = "Trough (Min)", color = "Trough (Min)"),
+                          alpha = 0.3, adjust = 1.2) +
+    ggplot2::geom_rug(data = tl_all, ggplot2::aes(x = time, color = type),
+                      alpha = 0.5, length = grid::unit(0.03, "npc")) +
+    ggplot2::geom_hline(yintercept = 0, linewidth = 0.5, color = "grey40") +
     ggplot2::geom_vline(xintercept = meta$menses, color = "red", linewidth = 0.8,
                         linetype = "dashed") +
     ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen", linewidth = 0.8,
                         linetype = "dashed") +
     ggplot2::scale_x_continuous(limits = c(-1, 1), breaks = seq(-1, 1, by = 0.5),
                                 labels = meta$labels) +
+    ggplot2::scale_y_continuous(limits = c(-1, 1),
+                                breaks = seq(-1, 1, by = 0.25),
+                                labels = abs(seq(-1, 1, by = 0.25))) +
     ggplot2::labs(
       title = paste("Peak & Trough Timing:", outcome_label),
       subtitle = paste0("Among participants with significant GAMs (p < .05); N = ",
                         nrow(df_sig)),
-      x = "Cycle Phase", y = "Density", fill = NULL, color = NULL
+      x = "Cycle Phase",
+      y = "Peaks \u2191 / Troughs \u2193 (normalized density)",
+      fill = NULL, color = NULL
     ) +
     ggplot2::theme_minimal(base_size = 14) +
     ggplot2::scale_fill_manual(values = c("Peak (Max)" = "#D55E00",
