@@ -175,6 +175,11 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
   conf.low  <- exp(pr$fit - 1.96 * pr$se.fit) - 1
   conf.high <- exp(pr$fit + 1.96 * pr$se.fit) - 1
 
+  # Record cycle time at peak (max) and trough (min) of predicted curve
+  # pg and est are aligned: pg is the prediction grid, est is the back-transformed prediction
+  peak_time   <- pg[[tv]][which.max(est)]
+  trough_time <- pg[[tv]][which.min(est)]
+
   pred <- cbind(pg, estimate = est, conf.low = conf.low, conf.high = conf.high)
   pred$outcome_label <- outcomes_map[[outcome_var]]
   pred$p.value <- p
@@ -190,7 +195,9 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
       edf = edf,
       F = Fval,
       n = nrow(dat),
-      range = diff(range(est, na.rm = TRUE))
+      range = diff(range(est, na.rm = TRUE)),
+      peak_time = peak_time,
+      trough_time = trough_time
     )
   )
 }
@@ -495,7 +502,7 @@ if (length(all_ids_signif)) {
 
 ### 4. Per-Outcome Exploration PDFs
 
-> **Purpose:** For each DRSP outcome, generates a landscape PDF containing summary statistics, threshold analysis, logistic significance probability curves, and individual GAM trajectory pages for qualifying IDs (significant at p < .05 OR range >= 0.5).
+> **Purpose:** For each DRSP outcome, generates a landscape PDF containing summary statistics, threshold analysis, logistic significance probability curves, peak/trough timing distribution, and individual GAM trajectory pages — significant GAMs first, then non-significant with range >= 0.5.
 
 #### 4.1: Exploration Analysis Functions
 
@@ -524,7 +531,9 @@ clean_gam_summary <- function(df) {
 }
 
 # --- Filter to one outcome variable, one row per ID ---
-# Aggregates across potential multiple time_var rows per id/variable
+# Aggregates across potential multiple time_var rows per id/variable.
+# peak_time, trough_time, and best_time_var come from the row with the
+# smallest p.value (best significance), ensuring internal consistency.
 get_outcome_df <- function(df, target_var) {
   df %>%
     dplyr::filter(variable == target_var) %>%
@@ -534,6 +543,10 @@ get_outcome_df <- function(df, target_var) {
       range           = max(range,   na.rm = TRUE),
       n               = max(n,       na.rm = TRUE),
       significant_num = ifelse(any(significant_num == 1, na.rm = TRUE), 1, 0),
+      # Take timing from the most-significant (smallest p) time_var row
+      peak_time       = peak_time[which.min(p.value)][1],
+      trough_time     = trough_time[which.min(p.value)][1],
+      best_time_var   = time_var[which.min(p.value)][1],
       .groups         = "drop"
     ) %>%
     dplyr::mutate(
@@ -736,6 +749,37 @@ get_drsp_variables <- function(df) {
     dplyr::pull(variable) %>%
     .[grepl("^drsp", ., ignore.case = TRUE)]
 }
+
+# --- Peak and trough timing distribution plot for significant participants ---
+plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
+  meta <- axis_meta_list[[tv]]
+
+  timing_long <- dplyr::bind_rows(
+    df_sig %>% dplyr::transmute(time = peak_time, type = "Peak (Max)"),
+    df_sig %>% dplyr::transmute(time = trough_time, type = "Trough (Min)")
+  )
+
+  if (nrow(timing_long) == 0) return(NULL)
+
+  ggplot2::ggplot(timing_long, ggplot2::aes(x = time, fill = type)) +
+    ggplot2::geom_histogram(position = "dodge", bins = 20, alpha = 0.75,
+                            boundary = -1) +  # align bins to start of cycle time scale
+    ggplot2::geom_vline(xintercept = meta$menses, color = "red", linewidth = 0.8,
+                        linetype = "dashed") +
+    ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen", linewidth = 0.8,
+                        linetype = "dashed") +
+    ggplot2::scale_x_continuous(limits = c(-1, 1), breaks = seq(-1, 1, by = 0.5),
+                                labels = meta$labels) +
+    ggplot2::labs(
+      title = paste("Peak & Trough Timing:", outcome_label),
+      subtitle = paste0("Among participants with significant GAMs (p < .05); N = ",
+                        nrow(df_sig)),
+      x = "Cycle Phase", y = "Number of Participants", fill = NULL
+    ) +
+    ggplot2::theme_minimal(base_size = 14) +
+    ggplot2::scale_fill_manual(values = c("Peak (Max)" = "#D55E00",
+                                          "Trough (Min)" = "#0072B2"))
+}
 ```
 
 #### 4.2: Generate Per-Outcome Exploration PDFs
@@ -745,12 +789,15 @@ get_drsp_variables <- function(df) {
 # GENERATE PER-OUTCOME EXPLORATION PDF REPORTS
 # =========================================================
 # For each DRSP outcome, generates a landscape PDF containing:
-#   1. Summary page: descriptive stats + threshold table
+#   1. Summary page: descriptive stats + threshold table + peak/trough timing
 #   2. Significance probability plot (logistic curve)
 #   3. Histogram of range by significance
 #   4. Empirical + modeled probability plot
-#   5. Individual GAM trajectory pages for qualifying IDs
-#      (significant at p < .05 OR range >= 0.5)
+#   Per time variable:
+#   5. Peak & trough timing distribution (significant participants)
+#   6+. Individual GAM trajectory pages:
+#       - Significant GAMs first (p < .05), then
+#       - Non-significant with range >= 0.5
 # =========================================================
 
 # --- Build the exploration summary from in-memory results ---
@@ -799,11 +846,18 @@ if (length(all_ids_signif) > 0) {
     )
     if (is.null(result)) next
 
-    # 2. Identify qualifying IDs (significant OR range >= 0.5)
-    qualifying_ids <- result$data %>%
-      dplyr::filter(significant_num == 1 | range >= 0.5) %>%
+    # 2. Identify qualifying IDs: significant first, then non-significant with range >= 0.5
+    sig_ids <- result$data %>%
+      dplyr::filter(significant_num == 1) %>%
       dplyr::arrange(dplyr::desc(range)) %>%
       dplyr::pull(id)
+
+    nonsig_qualifying_ids <- result$data %>%
+      dplyr::filter(significant_num == 0 & range >= 0.5) %>%
+      dplyr::arrange(dplyr::desc(range)) %>%
+      dplyr::pull(id)
+
+    qualifying_ids <- c(sig_ids, nonsig_qualifying_ids)
 
     # 3. Get outcome label
     outcome_label <- if (target_var %in% names(outcomes)) {
@@ -846,6 +900,35 @@ if (length(all_ids_signif) > 0) {
       ),
       stringsAsFactors = FALSE
     )
+
+    # Add peak/trough timing summary for significant participants, per time_var
+    sig_peak_data <- result$data %>%
+      dplyr::filter(significant_num == 1, !is.na(peak_time), !is.na(trough_time))
+
+    if (nrow(sig_peak_data) > 0) {
+      timing_by_tv <- sig_peak_data %>%
+        dplyr::group_by(best_time_var) %>%
+        dplyr::summarise(
+          med_peak   = median(peak_time, na.rm = TRUE),
+          med_trough = median(trough_time, na.rm = TRUE),
+          n_sig      = dplyr::n(),
+          .groups    = "drop"
+        )
+      for (i in seq_len(nrow(timing_by_tv))) {
+        tv_label <- timing_by_tv$best_time_var[i]
+        suffix <- if (nrow(timing_by_tv) > 1) paste0(" [", tv_label, "]") else ""
+        desc_df <- rbind(desc_df, data.frame(
+          Metric = c(paste0("Median Peak Time (sig.)", suffix),
+                      paste0("Median Trough Time (sig.)", suffix)),
+          Value = c(
+            sprintf("%.2f (N=%d)", timing_by_tv$med_peak[i], timing_by_tv$n_sig[i]),
+            sprintf("%.2f (N=%d)", timing_by_tv$med_trough[i], timing_by_tv$n_sig[i])
+          ),
+          stringsAsFactors = FALSE
+        ))
+      }
+    }
+
     desc_tbl <- gridExtra::tableGrob(desc_df, rows = NULL, theme = summary_table_theme)
 
     thresh_display <- result$threshold_table %>%
@@ -867,7 +950,7 @@ if (length(all_ids_signif) > 0) {
       gp = grid::gpar(fontsize = 14, fontface = "bold")
     )
     note_grob <- grid::textGrob(
-      sprintf("Individual GAM pages follow for %d qualifying IDs (significant OR range >= 0.5)",
+      sprintf("Individual GAM pages follow for %d qualifying IDs (significant first, then range >= 0.5)",
               length(qualifying_ids)),
       gp = grid::gpar(fontsize = 11, fontface = "italic")
     )
@@ -875,7 +958,8 @@ if (length(all_ids_signif) > 0) {
     gridExtra::grid.arrange(
       title_grob, subtitle_grob, desc_tbl, thresh_header, thresh_tbl, note_grob,
       ncol = 1,
-      heights = grid::unit(c(0.10, 0.05, 0.22, 0.08, 0.40, 0.08), "npc")
+      # Heights: title, subtitle, desc table, thresh header, thresh table, note
+      heights = grid::unit(c(0.10, 0.05, 0.25, 0.08, 0.38, 0.08), "npc")
     )
 
     # ---- PAGE 2: Significance Probability Plot ----
@@ -887,58 +971,84 @@ if (length(all_ids_signif) > 0) {
     # ---- PAGE 4: Empirical + Model ----
     print(result$plot_empirical)
 
-    # ---- PAGES 5+: Individual GAM trajectory plots for qualifying IDs ----
-    if (length(qualifying_ids) > 0 && length(time_vars) > 0) {
-      tv <- time_vars[1]
+    # ---- PAGE 5+: Peak & Trough Timing Summary (per time variable) ----
+    for (tv in time_vars) {
+      sig_timing_data <- result$data %>%
+        dplyr::filter(significant_num == 1, best_time_var == tv,
+                      !is.na(peak_time), !is.na(trough_time))
 
-      id_plots <- list()
-      for (qid in qualifying_ids) {
-        dat_id <- subset(df, as.character(id) == qid)
-        if (nrow(dat_id) == 0) next
-
-        res <- tryCatch(
-          fit_outcome(dat_id, target_var, tv, outcomes),
-          error = function(e) NULL
-        )
-        if (is.null(res)) next
-
-        p <- create_annotated_plot(res$pred, tv, axis_meta)
-        if (!is.null(p)) {
-          id_range <- round(res$sig$range, 2)
-          id_pval  <- res$sig$p.value
-          id_stars <- dplyr::case_when(
-            is.finite(id_pval) & id_pval < 0.001 ~ "***",
-            is.finite(id_pval) & id_pval < 0.01  ~ "**",
-            is.finite(id_pval) & id_pval < 0.05  ~ "*",
-            TRUE ~ ""
-          )
-          p <- p + ggplot2::labs(
-            title = sprintf("ID %s %s (range=%.2f)", qid, id_stars, id_range)
-          )
-          id_plots[[length(id_plots) + 1]] <- p
-        }
+      if (nrow(sig_timing_data) > 0) {
+        p_timing <- plot_peak_trough_timing(sig_timing_data, tv, axis_meta,
+                                            outcome_label)
+        if (!is.null(p_timing)) print(p_timing)
       }
+    }
 
-      if (length(id_plots) > 0) {
-        pages <- split(id_plots,
-                       ceiling(seq_along(id_plots) / max_plots_per_page_exp))
+    # ---- Individual GAM trajectory plots for qualifying IDs (per time variable) ----
+    # Significant GAM examples come first, then non-significant with range >= 0.5
+    for (tv in time_vars) {
+      if (length(qualifying_ids) == 0) next
 
-        for (page_plots in pages) {
-          if (length(page_plots) < max_plots_per_page_exp) {
-            page_plots <- c(page_plots,
-                           rep(list(patchwork::plot_spacer()),
-                               max_plots_per_page_exp - length(page_plots)))
-          }
-          final_page <- patchwork::wrap_plots(plotlist = page_plots, ncol = plots_per_col_exp) +
-            patchwork::plot_annotation(
-              title    = paste("Individual GAM Trajectories:", outcome_label),
-              subtitle = paste("Time variable:", tv),
-              theme    = ggplot2::theme(
-                plot.title    = ggplot2::element_text(size = 14, face = "bold"),
-                plot.subtitle = ggplot2::element_text(size = 11)
-              )
+      groups <- list(
+        list(ids = sig_ids,
+             label = "Significant GAM Trajectories"),
+        list(ids = nonsig_qualifying_ids,
+             label = "Non-Significant Trajectories (Range >= 0.5)")
+      )
+
+      for (grp in groups) {
+        if (length(grp$ids) == 0) next
+
+        id_plots <- list()
+        for (qid in grp$ids) {
+          dat_id <- subset(df, as.character(id) == qid)
+          if (nrow(dat_id) == 0) next
+
+          res <- tryCatch(
+            fit_outcome(dat_id, target_var, tv, outcomes),
+            error = function(e) NULL
+          )
+          if (is.null(res)) next
+
+          p <- create_annotated_plot(res$pred, tv, axis_meta)
+          if (!is.null(p)) {
+            id_range <- round(res$sig$range, 2)
+            id_pval  <- res$sig$p.value
+            id_stars <- dplyr::case_when(
+              is.finite(id_pval) & id_pval < 0.001 ~ "***",
+              is.finite(id_pval) & id_pval < 0.01  ~ "**",
+              is.finite(id_pval) & id_pval < 0.05  ~ "*",
+              TRUE ~ ""
             )
-          print(final_page)
+            p <- p + ggplot2::labs(
+              title = sprintf("ID %s %s (range=%.2f)", qid, id_stars, id_range)
+            )
+            id_plots[[length(id_plots) + 1]] <- p
+          }
+        }
+
+        if (length(id_plots) > 0) {
+          pages <- split(id_plots,
+                         ceiling(seq_along(id_plots) / max_plots_per_page_exp))
+
+          for (page_plots in pages) {
+            if (length(page_plots) < max_plots_per_page_exp) {
+              page_plots <- c(page_plots,
+                             rep(list(patchwork::plot_spacer()),
+                                 max_plots_per_page_exp - length(page_plots)))
+            }
+            final_page <- patchwork::wrap_plots(plotlist = page_plots,
+                                                ncol = plots_per_col_exp) +
+              patchwork::plot_annotation(
+                title    = paste(grp$label, ":", outcome_label),
+                subtitle = paste("Time variable:", tv),
+                theme    = ggplot2::theme(
+                  plot.title    = ggplot2::element_text(size = 14, face = "bold"),
+                  plot.subtitle = ggplot2::element_text(size = 11)
+                )
+              )
+            print(final_page)
+          }
         }
       }
     }
