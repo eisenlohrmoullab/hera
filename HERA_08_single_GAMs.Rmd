@@ -531,7 +531,9 @@ clean_gam_summary <- function(df) {
 }
 
 # --- Filter to one outcome variable, one row per ID ---
-# Aggregates across potential multiple time_var rows per id/variable
+# Aggregates across potential multiple time_var rows per id/variable.
+# peak_time, trough_time, and best_time_var come from the row with the
+# smallest p.value (best significance), ensuring internal consistency.
 get_outcome_df <- function(df, target_var) {
   df %>%
     dplyr::filter(variable == target_var) %>%
@@ -541,8 +543,10 @@ get_outcome_df <- function(df, target_var) {
       range           = max(range,   na.rm = TRUE),
       n               = max(n,       na.rm = TRUE),
       significant_num = ifelse(any(significant_num == 1, na.rm = TRUE), 1, 0),
-      peak_time       = dplyr::first(peak_time),
-      trough_time     = dplyr::first(trough_time),
+      # Take timing from the most-significant (smallest p) time_var row
+      peak_time       = peak_time[which.min(p.value)][1],
+      trough_time     = trough_time[which.min(p.value)][1],
+      best_time_var   = time_var[which.min(p.value)][1],
       .groups         = "drop"
     ) %>%
     dplyr::mutate(
@@ -789,6 +793,7 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
 #   2. Significance probability plot (logistic curve)
 #   3. Histogram of range by significance
 #   4. Empirical + modeled probability plot
+#   Per time variable:
 #   5. Peak & trough timing distribution (significant participants)
 #   6+. Individual GAM trajectory pages:
 #       - Significant GAMs first (p < .05), then
@@ -896,20 +901,32 @@ if (length(all_ids_signif) > 0) {
       stringsAsFactors = FALSE
     )
 
-    # Add peak/trough timing summary for significant participants
+    # Add peak/trough timing summary for significant participants, per time_var
     sig_peak_data <- result$data %>%
       dplyr::filter(significant_num == 1, !is.na(peak_time), !is.na(trough_time))
 
     if (nrow(sig_peak_data) > 0) {
-      desc_df <- rbind(desc_df, data.frame(
-        Metric = c("Median Peak Time (sig. only)",
-                    "Median Trough Time (sig. only)"),
-        Value = c(
-          sprintf("%.2f", median(sig_peak_data$peak_time, na.rm = TRUE)),
-          sprintf("%.2f", median(sig_peak_data$trough_time, na.rm = TRUE))
-        ),
-        stringsAsFactors = FALSE
-      ))
+      timing_by_tv <- sig_peak_data %>%
+        dplyr::group_by(best_time_var) %>%
+        dplyr::summarise(
+          med_peak   = median(peak_time, na.rm = TRUE),
+          med_trough = median(trough_time, na.rm = TRUE),
+          n_sig      = dplyr::n(),
+          .groups    = "drop"
+        )
+      for (i in seq_len(nrow(timing_by_tv))) {
+        tv_label <- timing_by_tv$best_time_var[i]
+        suffix <- if (nrow(timing_by_tv) > 1) paste0(" [", tv_label, "]") else ""
+        desc_df <- rbind(desc_df, data.frame(
+          Metric = c(paste0("Median Peak Time (sig.)", suffix),
+                      paste0("Median Trough Time (sig.)", suffix)),
+          Value = c(
+            sprintf("%.2f (N=%d)", timing_by_tv$med_peak[i], timing_by_tv$n_sig[i]),
+            sprintf("%.2f (N=%d)", timing_by_tv$med_trough[i], timing_by_tv$n_sig[i])
+          ),
+          stringsAsFactors = FALSE
+        ))
+      }
     }
 
     desc_tbl <- gridExtra::tableGrob(desc_df, rows = NULL, theme = summary_table_theme)
@@ -954,21 +971,23 @@ if (length(all_ids_signif) > 0) {
     # ---- PAGE 4: Empirical + Model ----
     print(result$plot_empirical)
 
-    # ---- PAGE 5: Peak & Trough Timing Summary ----
-    sig_timing_data <- result$data %>%
-      dplyr::filter(significant_num == 1, !is.na(peak_time), !is.na(trough_time))
+    # ---- PAGE 5+: Peak & Trough Timing Summary (per time variable) ----
+    for (tv in time_vars) {
+      sig_timing_data <- result$data %>%
+        dplyr::filter(significant_num == 1, best_time_var == tv,
+                      !is.na(peak_time), !is.na(trough_time))
 
-    if (nrow(sig_timing_data) > 0 && length(time_vars) > 0) {
-      tv_timing <- time_vars[1]
-      p_timing <- plot_peak_trough_timing(sig_timing_data, tv_timing, axis_meta,
-                                          outcome_label)
-      if (!is.null(p_timing)) print(p_timing)
+      if (nrow(sig_timing_data) > 0) {
+        p_timing <- plot_peak_trough_timing(sig_timing_data, tv, axis_meta,
+                                            outcome_label)
+        if (!is.null(p_timing)) print(p_timing)
+      }
     }
 
-    # ---- PAGES 6+: Individual GAM trajectory plots for qualifying IDs ----
+    # ---- Individual GAM trajectory plots for qualifying IDs (per time variable) ----
     # Significant GAM examples come first, then non-significant with range >= 0.5
-    if (length(qualifying_ids) > 0 && length(time_vars) > 0) {
-      tv <- time_vars[1]
+    for (tv in time_vars) {
+      if (length(qualifying_ids) == 0) next
 
       groups <- list(
         list(ids = sig_ids,
