@@ -115,6 +115,10 @@ outcomes <- c(
   "drsp_21"          = "Joint/Muscle Pain"
 )
 
+# --- Physical vs Affect symptom classification (raw DRSP items only) ---
+physical_symptoms <- c("drsp_12", "drsp_13", "drsp_14", "drsp_15",
+                       "drsp_18", "drsp_19", "drsp_20", "drsp_21")
+
 # --- Pre-calculate log-transformations ---
 for (var in names(outcomes)) {
   if (var %in% names(df)) {
@@ -441,42 +445,62 @@ if (nrow(sig_ranked) == 0) {
 }
 
   # ---- Person-Specific Peak & Trough Timing Distribution ----
+  # Separate density plots for Physical vs Affect symptoms (raw items only)
   for (tv in names(sig_by_tv)) {
     sig_tv <- sig_by_tv[[tv]]
     if (nrow(sig_tv) == 0) next
 
-    timing_long <- dplyr::bind_rows(
-      sig_tv %>% dplyr::filter(!is.na(peak_time)) %>%
-        dplyr::transmute(time = peak_time, type = "Peak (Max)", outcome = outcome_label),
-      sig_tv %>% dplyr::filter(!is.na(trough_time)) %>%
-        dplyr::transmute(time = trough_time, type = "Trough (Min)", outcome = outcome_label)
-    )
-
-    if (nrow(timing_long) < 4) next  # need >= 2 per group for density estimation
+    # Keep only raw DRSP items (drsp_1, drsp_2, …), exclude composites
+    sig_tv_raw <- sig_tv %>% dplyr::filter(grepl("^drsp_\\d+$", variable))
+    if (nrow(sig_tv_raw) == 0) next
 
     meta <- axis_meta[[tv]]
 
-    p_timing <- ggplot2::ggplot(timing_long, ggplot2::aes(x = time, fill = type, color = type)) +
-      ggplot2::geom_density(alpha = 0.3, adjust = 1.2) +
-      ggplot2::geom_rug(alpha = 0.5, length = grid::unit(0.03, "npc")) +
-      ggplot2::geom_vline(xintercept = meta$menses, color = "red", linewidth = 0.8,
-                          linetype = "dashed") +
-      ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen", linewidth = 0.8,
-                          linetype = "dashed") +
-      ggplot2::scale_x_continuous(limits = c(-1, 1), breaks = seq(-1, 1, by = 0.5),
-                                  labels = meta$labels) +
-      ggplot2::labs(
-        title = paste("Peak & Trough Timing Distribution \u2014 ID:", current_id),
-        subtitle = paste0("Across all modeled outcomes (N outcomes = ",
-                          nrow(sig_tv), ") | Time variable: ", tv),
-        x = "Cycle Phase", y = "Density", fill = NULL, color = NULL
-      ) +
-      ggplot2::theme_minimal(base_size = 14) +
-      ggplot2::scale_fill_manual(values = c("Peak (Max)" = "#D55E00",
-                                            "Trough (Min)" = "#0072B2")) +
-      ggplot2::scale_color_manual(values = c("Peak (Max)" = "#D55E00",
-                                             "Trough (Min)" = "#0072B2"))
-    print(p_timing)
+    # Helper to build a density plot for one symptom category
+    make_timing_density <- function(sig_subset, category_label) {
+      tl <- dplyr::bind_rows(
+        sig_subset %>% dplyr::filter(!is.na(peak_time)) %>%
+          dplyr::transmute(time = peak_time, type = "Peak (Max)", outcome = outcome_label),
+        sig_subset %>% dplyr::filter(!is.na(trough_time)) %>%
+          dplyr::transmute(time = trough_time, type = "Trough (Min)", outcome = outcome_label)
+      )
+      if (nrow(tl) < 4) return(NULL)  # need >= 2 per group for density estimation
+
+      ggplot2::ggplot(tl, ggplot2::aes(x = time, fill = type, color = type)) +
+        ggplot2::geom_density(alpha = 0.3, adjust = 1.2) +
+        ggplot2::geom_rug(alpha = 0.5, length = grid::unit(0.03, "npc")) +
+        ggplot2::geom_vline(xintercept = meta$menses, color = "red", linewidth = 0.8,
+                            linetype = "dashed") +
+        ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen", linewidth = 0.8,
+                            linetype = "dashed") +
+        ggplot2::scale_x_continuous(limits = c(-1, 1), breaks = seq(-1, 1, by = 0.5),
+                                    labels = meta$labels) +
+        ggplot2::labs(
+          title = paste0(category_label, " Symptoms \u2014 ID: ", current_id),
+          subtitle = paste0("N outcomes = ", nrow(sig_subset), " | Time variable: ", tv),
+          x = "Cycle Phase", y = "Density", fill = NULL, color = NULL
+        ) +
+        ggplot2::theme_minimal(base_size = 12) +
+        ggplot2::scale_fill_manual(values = c("Peak (Max)" = "#D55E00",
+                                              "Trough (Min)" = "#0072B2")) +
+        ggplot2::scale_color_manual(values = c("Peak (Max)" = "#D55E00",
+                                               "Trough (Min)" = "#0072B2"))
+    }
+
+    p_physical <- make_timing_density(
+      sig_tv_raw %>% dplyr::filter(variable %in% physical_symptoms), "Physical"
+    )
+    p_affect <- make_timing_density(
+      sig_tv_raw %>% dplyr::filter(!variable %in% physical_symptoms), "Affect"
+    )
+
+    # Stack the two plots on one page; print whichever are available
+    plots <- Filter(Negate(is.null), list(p_physical, p_affect))
+    if (length(plots) == 2) {
+      gridExtra::grid.arrange(grobs = plots, ncol = 1)
+    } else if (length(plots) == 1) {
+      print(plots[[1]])
+    }
   }
 
   # ---- Sections per time variable: compact table + pages of plots ----
