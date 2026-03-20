@@ -176,6 +176,7 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
   conf.high <- exp(pr$fit + 1.96 * pr$se.fit) - 1
 
   # Record cycle time at peak (max) and trough (min) of predicted curve
+  # pg and est are aligned: pg is the prediction grid, est is the back-transformed prediction
   peak_time   <- pg[[tv]][which.max(est)]
   trough_time <- pg[[tv]][which.min(est)]
 
@@ -758,7 +759,7 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
 
   ggplot2::ggplot(timing_long, ggplot2::aes(x = time, fill = type)) +
     ggplot2::geom_histogram(position = "dodge", bins = 20, alpha = 0.75,
-                            boundary = -1) +
+                            boundary = -1) +  # align bins to start of cycle time scale
     ggplot2::geom_vline(xintercept = meta$menses, color = "red", linewidth = 0.8,
                         linetype = "dashed") +
     ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen", linewidth = 0.8,
@@ -940,6 +941,7 @@ if (length(all_ids_signif) > 0) {
     gridExtra::grid.arrange(
       title_grob, subtitle_grob, desc_tbl, thresh_header, thresh_tbl, note_grob,
       ncol = 1,
+      # Heights: title, subtitle, desc table, thresh header, thresh table, note
       heights = grid::unit(c(0.10, 0.05, 0.25, 0.08, 0.38, 0.08), "npc")
     )
 
