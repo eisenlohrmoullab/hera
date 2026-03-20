@@ -341,7 +341,7 @@ for (current_id in ids_to_run) {
       .groups = "drop"
     ) %>%
     tidyr::unite("count", n_sig, tested, sep = " / ") %>%
-    dplyr::rename(`Sig / Tested` = count, `CPASS (range >= 1.5)` = n_cpass)
+    dplyr::rename(`Sig / Tested` = count, `CPASS-level sig (range >= 1.5)` = n_cpass)
 
   cover_theme <- gridExtra::ttheme_default(
     base_size = 9,
@@ -473,7 +473,11 @@ if (nrow(sig_ranked) == 0) {
         sig_subset %>% dplyr::filter(!is.na(trough_time)) %>%
           dplyr::transmute(time = trough_time, type = "Trough (Min)", outcome = outcome_label)
       )
-      if (nrow(tl) < 4) return(NULL)  # need >= 2 per group for density estimation
+      if (nrow(tl) < 4) return(NULL)  # need >= 2 per group for density estimation (total)
+
+      # Ensure each type group has at least 2 observations for density estimation
+      type_counts <- table(tl$type)
+      if (any(type_counts < 2)) return(NULL)
 
       ggplot2::ggplot(tl, ggplot2::aes(x = time, fill = type, color = type)) +
         ggplot2::geom_density(alpha = 0.3, adjust = 1.2) +
