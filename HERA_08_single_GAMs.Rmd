@@ -162,6 +162,10 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
   dat <- dat[complete.cases(dat[, keep]), keep, drop = FALSE]
   if (nrow(dat) < 10 || var(dat[[log_out]], na.rm = TRUE) < 1e-6) return(NULL)
 
+  # Count observations in each phase half for adequacy flagging
+  n_pre  <- sum(dat[[tv]] <  0, na.rm = TRUE)
+  n_post <- sum(dat[[tv]] >= 0, na.rm = TRUE)
+
   k <- min(k_max, nrow(dat) - 1L); if (k < 3L) return(NULL)
 
   fml <- as.formula(paste0(log_out, " ~ s(", tv, ", bs = 'cc', k = ", k, ")"))
@@ -205,6 +209,8 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
       edf = edf,
       F = Fval,
       n = nrow(dat),
+      n_pre = n_pre,
+      n_post = n_post,
       range = diff(range(est, na.rm = TRUE)),
       peak_time = peak_time,
       trough_time = trough_time
@@ -1041,10 +1047,11 @@ if (length(all_ids_signif) > 0) {
     )
     if (is.null(result)) next
 
-    # 2. Identify qualifying IDs in three groups, each sorted by range descending:
+    # 2. Identify qualifying IDs in four groups, each sorted by range descending:
     #    (a) Significant & range > 0.33
     #    (b) Significant & range <= 0.33
     #    (c) Not significant & range > 0.33
+    #    (d) Not significant & range <= 0.33
     sig_above_cutoff <- result$data %>%
       dplyr::filter(significant_num == 1 & range > 0.33) %>%
       dplyr::arrange(dplyr::desc(range)) %>%
@@ -1060,7 +1067,13 @@ if (length(all_ids_signif) > 0) {
       dplyr::arrange(dplyr::desc(range)) %>%
       dplyr::pull(id)
 
-    qualifying_ids <- c(sig_above_cutoff, sig_below_cutoff, nonsig_above_cutoff)
+    nonsig_below_cutoff <- result$data %>%
+      dplyr::filter(significant_num == 0 & range <= 0.33) %>%
+      dplyr::arrange(dplyr::desc(range)) %>%
+      dplyr::pull(id)
+
+    qualifying_ids <- c(sig_above_cutoff, sig_below_cutoff,
+                        nonsig_above_cutoff, nonsig_below_cutoff)
 
     # 3. Get outcome label
     outcome_label <- if (target_var %in% names(outcomes)) {
@@ -1160,7 +1173,7 @@ if (length(all_ids_signif) > 0) {
     )
     note_grob <- if (length(qualifying_ids) > 0) {
       grid::textGrob(
-        sprintf("Individual GAM pages follow for %d IDs (sig range>0.33, sig range\u22640.33, then non-sig range>0.33)",
+        sprintf("Individual GAM pages follow for %d IDs (sig range>0.33, sig range\u22640.33, non-sig range>0.33, non-sig range\u22640.33)",
                 length(qualifying_ids)),
         gp = grid::gpar(fontsize = 11, fontface = "italic")
       )
@@ -1201,7 +1214,7 @@ if (length(all_ids_signif) > 0) {
     }
 
     # ---- Individual GAM trajectory plots for all IDs (per time variable) ----
-    # Pre-compute predictions for global y-axis; groups: sig>0.33, sig<=0.33, nonsig>0.33
+    # Pre-compute predictions for global y-axis; groups: sig>0.33, sig<=0.33, nonsig>0.33, nonsig<=0.33
     for (tv in time_vars) {
       if (length(qualifying_ids) == 0) next
 
@@ -1224,7 +1237,9 @@ if (length(all_ids_signif) > 0) {
         list(ids = sig_below_cutoff,
              label = "Significant, Range \u2264 0.33"),
         list(ids = nonsig_above_cutoff,
-             label = "Not Significant, Range > 0.33")
+             label = "Not Significant, Range > 0.33"),
+        list(ids = nonsig_below_cutoff,
+             label = "Not Significant, Range \u2264 0.33")
       )
 
       for (grp in groups) {
@@ -1249,6 +1264,13 @@ if (length(all_ids_signif) > 0) {
             p <- p + ggplot2::labs(
               title = sprintf("ID %s %s (range=%.2f, N=%d)", qid, id_stars, id_range, id_n)
             )
+            # Red title when either phase has fewer than 5 observations
+            if (isTRUE(res$sig$n_pre < 5) || isTRUE(res$sig$n_post < 5)) {
+              p <- p + ggplot2::theme(
+                plot.title = ggplot2::element_text(size = 10, face = "bold",
+                                                   hjust = 0.5, color = "red")
+              )
+            }
             id_plots[[length(id_plots) + 1]] <- p
           }
         }
