@@ -452,7 +452,7 @@ if (nrow(sig_ranked) == 0) {
         dplyr::transmute(time = trough_time, type = "Trough (Min)", outcome = outcome_label)
     )
 
-    if (nrow(timing_long) < 4) next
+    if (nrow(timing_long) < 4) next  # need >= 2 per group for density estimation
 
     meta <- axis_meta[[tv]]
 
@@ -809,7 +809,7 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
     df_sig %>% dplyr::transmute(time = trough_time, type = "Trough (Min)")
   )
 
-  if (nrow(timing_long) < 4) return(NULL)
+  if (nrow(timing_long) < 4) return(NULL)  # need >= 2 per group for density estimation
 
   ggplot2::ggplot(timing_long, ggplot2::aes(x = time, fill = type, color = type)) +
     ggplot2::geom_density(alpha = 0.3, adjust = 1.2) +
