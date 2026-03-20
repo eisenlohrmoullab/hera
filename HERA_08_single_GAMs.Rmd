@@ -184,6 +184,7 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
   pred$outcome_label <- outcomes_map[[outcome_var]]
   pred$p.value <- p
   pred$raw_range <- diff(range(est, na.rm = TRUE))
+  pred$n <- nrow(dat)
 
   list(
     pred = pred,
@@ -203,22 +204,27 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
 }
 
 # --- Plot one outcome curve with annotations ---
-create_annotated_plot <- function(plot_df, tv, axis_meta_list) {
+create_annotated_plot <- function(plot_df, tv, axis_meta_list, ylim_range = NULL) {
   if (is.null(plot_df) || nrow(plot_df) == 0) return(NULL)
   max_pt <- dplyr::slice_max(plot_df, order_by = estimate, n = 1, with_ties = FALSE)
   min_pt <- dplyr::slice_min(plot_df, order_by = estimate, n = 1, with_ties = FALSE)
   rng   <- dplyr::first(plot_df$raw_range)
   p_val <- dplyr::first(plot_df$p.value)
+  n_obs <- dplyr::first(plot_df$n)
   stars <- dplyr::case_when(
     is.finite(p_val) & p_val < 0.001 ~ "***",
     is.finite(p_val) & p_val < 0.01  ~ "**",
     is.finite(p_val) & p_val < 0.05  ~ "*",
     TRUE ~ ""
   )
-  ann   <- sprintf("%s Range = %.2f", stars, rng)
+  ann <- if (!is.null(n_obs) && !is.na(n_obs)) {
+    sprintf("%s Range = %.2f, N = %d", stars, rng, as.integer(n_obs))
+  } else {
+    sprintf("%s Range = %.2f", stars, rng)
+  }
   meta  <- axis_meta_list[[tv]]
 
-  ggplot2::ggplot(plot_df, ggplot2::aes(x = .data[[tv]], y = estimate)) +
+  p <- ggplot2::ggplot(plot_df, ggplot2::aes(x = .data[[tv]], y = estimate)) +
     ggplot2::geom_vline(xintercept = meta$menses, color = "red") +
     ggplot2::geom_vline(xintercept = meta$ov,     color = "forestgreen") +
     ggplot2::geom_line(linewidth = 1, color = "#0072B2") +
@@ -233,6 +239,11 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list) {
                                 labels = meta$labels) +
     ggplot2::theme_minimal() +
     ggplot2::theme(plot.title = ggplot2::element_text(size = 10, face = "bold", hjust = 0.5))
+
+  if (!is.null(ylim_range)) {
+    p <- p + ggplot2::coord_cartesian(ylim = ylim_range)
+  }
+  p
 }
 
 ```
@@ -429,6 +440,45 @@ if (nrow(sig_ranked) == 0) {
   )
 }
 
+  # ---- Person-Specific Peak & Trough Timing Distribution ----
+  for (tv in names(sig_by_tv)) {
+    sig_tv <- sig_by_tv[[tv]]
+    if (nrow(sig_tv) == 0) next
+
+    timing_long <- dplyr::bind_rows(
+      sig_tv %>% dplyr::filter(!is.na(peak_time)) %>%
+        dplyr::transmute(time = peak_time, type = "Peak (Max)", outcome = outcome_label),
+      sig_tv %>% dplyr::filter(!is.na(trough_time)) %>%
+        dplyr::transmute(time = trough_time, type = "Trough (Min)", outcome = outcome_label)
+    )
+
+    if (nrow(timing_long) < 4) next
+
+    meta <- axis_meta[[tv]]
+
+    p_timing <- ggplot2::ggplot(timing_long, ggplot2::aes(x = time, fill = type, color = type)) +
+      ggplot2::geom_density(alpha = 0.3, adjust = 1.2) +
+      ggplot2::geom_rug(alpha = 0.5, length = grid::unit(0.03, "npc")) +
+      ggplot2::geom_vline(xintercept = meta$menses, color = "red", linewidth = 0.8,
+                          linetype = "dashed") +
+      ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen", linewidth = 0.8,
+                          linetype = "dashed") +
+      ggplot2::scale_x_continuous(limits = c(-1, 1), breaks = seq(-1, 1, by = 0.5),
+                                  labels = meta$labels) +
+      ggplot2::labs(
+        title = paste("Peak & Trough Timing Distribution \u2014 ID:", current_id),
+        subtitle = paste0("Across all modeled outcomes (N outcomes = ",
+                          nrow(sig_tv), ") | Time variable: ", tv),
+        x = "Cycle Phase", y = "Density", fill = NULL, color = NULL
+      ) +
+      ggplot2::theme_minimal(base_size = 14) +
+      ggplot2::scale_fill_manual(values = c("Peak (Max)" = "#D55E00",
+                                            "Trough (Min)" = "#0072B2")) +
+      ggplot2::scale_color_manual(values = c("Peak (Max)" = "#D55E00",
+                                             "Trough (Min)" = "#0072B2"))
+    print(p_timing)
+  }
+
   # ---- Sections per time variable: compact table + pages of plots ----
   for (tv in names(preds_by_tv)) {
 
@@ -502,7 +552,7 @@ if (length(all_ids_signif)) {
 
 ### 4. Per-Outcome Exploration PDFs
 
-> **Purpose:** For each DRSP outcome, generates a landscape PDF containing summary statistics, threshold analysis, logistic significance probability curves, peak/trough timing distribution, and individual GAM trajectory pages — significant GAMs first, then non-significant with range >= 0.5.
+> **Purpose:** For each DRSP outcome, generates a landscape PDF containing summary statistics, threshold analysis, logistic significance probability curves, peak/trough timing distribution, and individual GAM trajectory pages — significant GAMs first, then non-significant sorted by range (with 0.33 range cutoff marked). All individual GAM plots share a fixed Y axis within each outcome for cross-person comparison.
 
 #### 4.1: Exploration Analysis Functions
 
@@ -759,11 +809,11 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
     df_sig %>% dplyr::transmute(time = trough_time, type = "Trough (Min)")
   )
 
-  if (nrow(timing_long) == 0) return(NULL)
+  if (nrow(timing_long) < 4) return(NULL)
 
-  ggplot2::ggplot(timing_long, ggplot2::aes(x = time, fill = type)) +
-    ggplot2::geom_histogram(position = "dodge", bins = 20, alpha = 0.75,
-                            boundary = -1) +  # align bins to start of cycle time scale
+  ggplot2::ggplot(timing_long, ggplot2::aes(x = time, fill = type, color = type)) +
+    ggplot2::geom_density(alpha = 0.3, adjust = 1.2) +
+    ggplot2::geom_rug(alpha = 0.5, length = grid::unit(0.03, "npc")) +
     ggplot2::geom_vline(xintercept = meta$menses, color = "red", linewidth = 0.8,
                         linetype = "dashed") +
     ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen", linewidth = 0.8,
@@ -774,11 +824,13 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
       title = paste("Peak & Trough Timing:", outcome_label),
       subtitle = paste0("Among participants with significant GAMs (p < .05); N = ",
                         nrow(df_sig)),
-      x = "Cycle Phase", y = "Number of Participants", fill = NULL
+      x = "Cycle Phase", y = "Density", fill = NULL, color = NULL
     ) +
     ggplot2::theme_minimal(base_size = 14) +
     ggplot2::scale_fill_manual(values = c("Peak (Max)" = "#D55E00",
-                                          "Trough (Min)" = "#0072B2"))
+                                          "Trough (Min)" = "#0072B2")) +
+    ggplot2::scale_color_manual(values = c("Peak (Max)" = "#D55E00",
+                                           "Trough (Min)" = "#0072B2"))
 }
 ```
 
@@ -794,10 +846,11 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
 #   3. Histogram of range by significance
 #   4. Empirical + modeled probability plot
 #   Per time variable:
-#   5. Peak & trough timing distribution (significant participants)
-#   6+. Individual GAM trajectory pages:
+#   5. Peak & trough timing density (significant participants)
+#   6+. Individual GAM trajectory pages (fixed Y axes across people):
 #       - Significant GAMs first (p < .05), then
-#       - Non-significant with range >= 0.5
+#       - Non-significant with range > 0.33, then
+#       - Non-significant with range <= 0.33
 # =========================================================
 
 # --- Build the exploration summary from in-memory results ---
@@ -846,18 +899,23 @@ if (length(all_ids_signif) > 0) {
     )
     if (is.null(result)) next
 
-    # 2. Identify qualifying IDs: significant first, then non-significant with range >= 0.5
+    # 2. Identify qualifying IDs: significant first, then non-significant sorted by range
     sig_ids <- result$data %>%
       dplyr::filter(significant_num == 1) %>%
       dplyr::arrange(dplyr::desc(range)) %>%
       dplyr::pull(id)
 
-    nonsig_qualifying_ids <- result$data %>%
-      dplyr::filter(significant_num == 0 & range >= 0.5) %>%
+    nonsig_above_cutoff <- result$data %>%
+      dplyr::filter(significant_num == 0 & range > 0.33) %>%
       dplyr::arrange(dplyr::desc(range)) %>%
       dplyr::pull(id)
 
-    qualifying_ids <- c(sig_ids, nonsig_qualifying_ids)
+    nonsig_below_cutoff <- result$data %>%
+      dplyr::filter(significant_num == 0 & range <= 0.33) %>%
+      dplyr::arrange(dplyr::desc(range)) %>%
+      dplyr::pull(id)
+
+    qualifying_ids <- c(sig_ids, nonsig_above_cutoff, nonsig_below_cutoff)
 
     # 3. Get outcome label
     outcome_label <- if (target_var %in% names(outcomes)) {
@@ -950,7 +1008,7 @@ if (length(all_ids_signif) > 0) {
       gp = grid::gpar(fontsize = 14, fontface = "bold")
     )
     note_grob <- grid::textGrob(
-      sprintf("Individual GAM pages follow for %d qualifying IDs (significant first, then range >= 0.5)",
+      sprintf("Individual GAM pages follow for %d IDs (significant first, then non-sig sorted by range; 0.33 cutoff marked)",
               length(qualifying_ids)),
       gp = grid::gpar(fontsize = 11, fontface = "italic")
     )
@@ -984,16 +1042,42 @@ if (length(all_ids_signif) > 0) {
       }
     }
 
-    # ---- Individual GAM trajectory plots for qualifying IDs (per time variable) ----
-    # Significant GAM examples come first, then non-significant with range >= 0.5
+    # ---- Individual GAM trajectory plots for all IDs (per time variable) ----
+    # Pre-compute predictions for global y-axis; group by sig, nonsig>0.33, nonsig<=0.33
     for (tv in time_vars) {
       if (length(qualifying_ids) == 0) next
+
+      # Pre-compute all predictions for global y-axis range
+      all_fit_results <- list()
+      for (qid in qualifying_ids) {
+        dat_id <- subset(df, as.character(id) == qid)
+        if (nrow(dat_id) == 0) next
+
+        res <- tryCatch(
+          fit_outcome(dat_id, target_var, tv, outcomes),
+          error = function(e) NULL
+        )
+        if (!is.null(res)) all_fit_results[[as.character(qid)]] <- res
+      }
+
+      # Compute global y-axis range from all participants' confidence intervals
+      global_ylim <- NULL
+      if (length(all_fit_results) > 0) {
+        global_ymin <- min(sapply(all_fit_results, function(r)
+          min(r$pred$conf.low, na.rm = TRUE)), na.rm = TRUE)
+        global_ymax <- max(sapply(all_fit_results, function(r)
+          max(r$pred$conf.high, na.rm = TRUE)), na.rm = TRUE)
+        pad <- (global_ymax - global_ymin) * 0.05
+        global_ylim <- c(global_ymin - pad, global_ymax + pad)
+      }
 
       groups <- list(
         list(ids = sig_ids,
              label = "Significant GAM Trajectories"),
-        list(ids = nonsig_qualifying_ids,
-             label = "Non-Significant Trajectories (Range >= 0.5)")
+        list(ids = nonsig_above_cutoff,
+             label = "Non-Significant Trajectories (Range > 0.33)"),
+        list(ids = nonsig_below_cutoff,
+             label = "Non-Significant Trajectories (Range \u2264 0.33)")
       )
 
       for (grp in groups) {
@@ -1001,18 +1085,13 @@ if (length(all_ids_signif) > 0) {
 
         id_plots <- list()
         for (qid in grp$ids) {
-          dat_id <- subset(df, as.character(id) == qid)
-          if (nrow(dat_id) == 0) next
-
-          res <- tryCatch(
-            fit_outcome(dat_id, target_var, tv, outcomes),
-            error = function(e) NULL
-          )
+          res <- all_fit_results[[as.character(qid)]]
           if (is.null(res)) next
 
-          p <- create_annotated_plot(res$pred, tv, axis_meta)
+          p <- create_annotated_plot(res$pred, tv, axis_meta, ylim_range = global_ylim)
           if (!is.null(p)) {
             id_range <- round(res$sig$range, 2)
+            id_n     <- res$sig$n
             id_pval  <- res$sig$p.value
             id_stars <- dplyr::case_when(
               is.finite(id_pval) & id_pval < 0.001 ~ "***",
@@ -1021,7 +1100,7 @@ if (length(all_ids_signif) > 0) {
               TRUE ~ ""
             )
             p <- p + ggplot2::labs(
-              title = sprintf("ID %s %s (range=%.2f)", qid, id_stars, id_range)
+              title = sprintf("ID %s %s (range=%.2f, N=%d)", qid, id_stars, id_range, id_n)
             )
             id_plots[[length(id_plots) + 1]] <- p
           }
