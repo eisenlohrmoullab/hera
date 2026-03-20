@@ -486,7 +486,7 @@ if (nrow(sig_ranked) == 0) {
       if (any(type_counts < 2)) return(NULL)
 
       ggplot2::ggplot(tl, ggplot2::aes(x = time, fill = type, color = type)) +
-        ggplot2::geom_density(ggplot2::aes(y = ggplot2::after_stat(count)),
+        ggplot2::geom_density(ggplot2::aes(y = ggplot2::after_stat(ndensity) * max_n),
                               alpha = 0.3, adjust = 1.2) +
         ggplot2::geom_rug(alpha = 0.5, length = grid::unit(0.03, "npc")) +
         ggplot2::geom_vline(xintercept = meta$menses, color = "red", linewidth = 0.8,
@@ -495,13 +495,14 @@ if (nrow(sig_ranked) == 0) {
                             linetype = "dashed") +
         ggplot2::scale_x_continuous(limits = c(-1, 1), breaks = seq(-1, 1, by = 0.5),
                                     labels = meta$labels) +
-        ggplot2::coord_cartesian(ylim = c(0, max_n)) +
+        ggplot2::scale_y_continuous(limits = c(0, max_n),
+                                    breaks = seq(0, max_n, by = 1)) +
         ggplot2::labs(
           title = paste0(category_label, " Symptoms \u2014 ID: ", current_id),
           subtitle = paste0("N outcomes = ", nrow(sig_subset), " / ", max_n,
                             " | Time variable: ", tv),
           x = "Cycle Phase",
-          y = paste0("N Symptoms (max ", max_n, ")"),
+          y = paste0("Relative Concentration (0\u2013", max_n, " scale)"),
           fill = NULL, color = NULL
         ) +
         ggplot2::theme_minimal(base_size = 12) +
@@ -530,7 +531,7 @@ if (nrow(sig_ranked) == 0) {
   }
 
   # ---- Overlay page: all qualifying GAM curves on one plot ----
-  # Show outcomes that are significant (p < .05) OR have range > 1.5
+  # Show outcomes that are significant (p < .05) OR have range >= 1.5
   for (tv in names(preds_by_tv)) {
     sig_tv   <- sig_by_tv[[tv]]
     pred_tv  <- preds_by_tv[[tv]]
@@ -540,7 +541,7 @@ if (nrow(sig_ranked) == 0) {
     qualifying <- sig_tv %>%
       dplyr::filter(
         (is.finite(p.value) & p.value < 0.05) |
-        (is.finite(range) & range > 1.5)
+        (is.finite(range) & range >= 1.5)
       )
     if (nrow(qualifying) == 0) next
 
@@ -568,8 +569,8 @@ if (nrow(sig_ranked) == 0) {
                                   labels = meta$labels) +
       ggplot2::coord_cartesian(ylim = c(1, 6)) +
       ggplot2::labs(
-        title = paste0("Overlayed GAM Curves \u2014 ID: ", current_id),
-        subtitle = paste0("Outcomes with p < .05 or range > 1.5  |  ",
+        title = paste0("Overlaid GAM Curves \u2014 ID: ", current_id),
+        subtitle = paste0("Outcomes with p < .05 or range \u2265 1.5  |  ",
                           "N curves = ", n_curves, "  |  Time variable: ", tv),
         x = "Cycle Phase", y = "Predicted Score",
         color = "Outcome", fill = "Outcome"
