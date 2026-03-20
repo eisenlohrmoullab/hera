@@ -524,10 +524,25 @@ clean_gam_summary <- function(df) {
 }
 
 # --- Filter to one outcome variable, one row per ID ---
+# Aggregates across potential multiple time_var rows per id/variable
 get_outcome_df <- function(df, target_var) {
   df %>%
     dplyr::filter(variable == target_var) %>%
-    dplyr::distinct(id, variable, .keep_all = TRUE)
+    dplyr::group_by(id, variable) %>%
+    dplyr::summarise(
+      p.value         = min(p.value, na.rm = TRUE),
+      range           = max(range,   na.rm = TRUE),
+      n               = max(n,       na.rm = TRUE),
+      significant_num = ifelse(any(significant_num == 1, na.rm = TRUE), 1, 0),
+      .groups         = "drop"
+    ) %>%
+    dplyr::mutate(
+      significant_f = factor(
+        significant_num,
+        levels = c(0, 1),
+        labels = c("Not Significant", "Significant")
+      )
+    )
 }
 
 # --- Descriptive summary (overall + by significance) ---
@@ -580,8 +595,8 @@ fit_logistic_models <- function(df_outcome) {
   list(
     model_range   = model_range,
     model_range_n = model_range_n,
-    tidy_range    = broom::tidy(model_range,   conf.int = TRUE, exponentiate = TRUE),
-    tidy_range_n  = broom::tidy(model_range_n, conf.int = TRUE, exponentiate = TRUE)
+    tidy_range    = broom::tidy(model_range,   exponentiate = TRUE),
+    tidy_range_n  = broom::tidy(model_range_n, exponentiate = TRUE)
   )
 }
 
@@ -878,7 +893,7 @@ if (length(all_ids_signif) > 0) {
 
       id_plots <- list()
       for (qid in qualifying_ids) {
-        dat_id <- subset(df, id == qid)
+        dat_id <- subset(df, as.character(id) == qid)
         if (nrow(dat_id) == 0) next
 
         res <- tryCatch(
