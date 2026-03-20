@@ -119,6 +119,11 @@ outcomes <- c(
 physical_symptoms <- c("drsp_12", "drsp_13", "drsp_14", "drsp_15",
                        "drsp_18", "drsp_19", "drsp_20", "drsp_21")
 
+# --- Max possible counts per category (for density-plot Y-axis scaling) ---
+all_raw_drsp <- names(outcomes)[grepl("^drsp_\\d+$", names(outcomes))]
+n_physical_max <- length(intersect(all_raw_drsp, physical_symptoms))
+n_affect_max   <- length(setdiff(all_raw_drsp, physical_symptoms))
+
 # --- Pre-calculate log-transformations ---
 for (var in names(outcomes)) {
   if (var %in% names(df)) {
@@ -222,7 +227,7 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list) {
     is.finite(p_val) & p_val < 0.05  ~ "*",
     TRUE ~ ""
   )
-  cpass_label <- if (cpass_flag) "\u25B2 CPASS | " else ""
+  cpass_label <- if (cpass_flag) "\u25B2 Range \u22651.5 | " else ""
   ann <- if (!is.null(n_obs) && !is.na(n_obs)) {
     sprintf("%s%s Range = %.2f, N = %d", cpass_label, stars, rng, as.integer(n_obs))
   } else {
@@ -248,7 +253,7 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list) {
     ggplot2::theme_minimal() +
     ggplot2::theme(plot.title = ggplot2::element_text(size = 10, face = "bold", hjust = 0.5))
 
-  # Highlight plots that meet CPASS range threshold with a gold border
+  # Highlight plots that meet range >= 1.5 threshold with a gold border
   if (cpass_flag) {
     p <- p + ggplot2::theme(
       panel.border = ggplot2::element_rect(color = "goldenrod2", linewidth = 1.5, fill = NA)
@@ -341,7 +346,7 @@ for (current_id in ids_to_run) {
       .groups = "drop"
     ) %>%
     tidyr::unite("count", n_sig, tested, sep = " / ") %>%
-    dplyr::rename(`Sig / Tested` = count, `CPASS-level sig (range >= 1.5)` = n_cpass)
+    dplyr::rename(`Sig / Tested` = count, `Range \u22651.5 sig` = n_cpass)
 
   cover_theme <- gridExtra::ttheme_default(
     base_size = 9,
@@ -466,7 +471,8 @@ if (nrow(sig_ranked) == 0) {
     meta <- axis_meta[[tv]]
 
     # Helper to build a density plot for one symptom category
-    make_timing_density <- function(sig_subset, category_label) {
+    # max_n = maximum possible number of variables in this category (for Y-axis)
+    make_timing_density <- function(sig_subset, category_label, max_n) {
       tl <- dplyr::bind_rows(
         sig_subset %>% dplyr::filter(!is.na(peak_time)) %>%
           dplyr::transmute(time = peak_time, type = "Peak (Max)", outcome = outcome_label),
@@ -480,7 +486,8 @@ if (nrow(sig_ranked) == 0) {
       if (any(type_counts < 2)) return(NULL)
 
       ggplot2::ggplot(tl, ggplot2::aes(x = time, fill = type, color = type)) +
-        ggplot2::geom_density(alpha = 0.3, adjust = 1.2) +
+        ggplot2::geom_density(ggplot2::aes(y = ggplot2::after_stat(ndensity) * max_n),
+                              alpha = 0.3, adjust = 1.2) +
         ggplot2::geom_rug(alpha = 0.5, length = grid::unit(0.03, "npc")) +
         ggplot2::geom_vline(xintercept = meta$menses, color = "red", linewidth = 0.8,
                             linetype = "dashed") +
@@ -488,10 +495,15 @@ if (nrow(sig_ranked) == 0) {
                             linetype = "dashed") +
         ggplot2::scale_x_continuous(limits = c(-1, 1), breaks = seq(-1, 1, by = 0.5),
                                     labels = meta$labels) +
+        ggplot2::scale_y_continuous(limits = c(0, max_n),
+                                    breaks = seq(0, max_n, by = 1)) +
         ggplot2::labs(
           title = paste0(category_label, " Symptoms \u2014 ID: ", current_id),
-          subtitle = paste0("N outcomes = ", nrow(sig_subset), " | Time variable: ", tv),
-          x = "Cycle Phase", y = "Density", fill = NULL, color = NULL
+          subtitle = paste0("N outcomes = ", nrow(sig_subset), " / ", max_n,
+                            " | Time variable: ", tv),
+          x = "Cycle Phase",
+          y = paste0("Relative Concentration (0\u2013", max_n, " scale)"),
+          fill = NULL, color = NULL
         ) +
         ggplot2::theme_minimal(base_size = 12) +
         ggplot2::scale_fill_manual(values = c("Peak (Max)" = "#D55E00",
@@ -501,10 +513,12 @@ if (nrow(sig_ranked) == 0) {
     }
 
     p_physical <- make_timing_density(
-      sig_tv_raw %>% dplyr::filter(variable %in% physical_symptoms), "Physical"
+      sig_tv_raw %>% dplyr::filter(variable %in% physical_symptoms), "Physical",
+      n_physical_max
     )
     p_affect <- make_timing_density(
-      sig_tv_raw %>% dplyr::filter(!variable %in% physical_symptoms), "Affect"
+      sig_tv_raw %>% dplyr::filter(!variable %in% physical_symptoms), "Affect",
+      n_affect_max
     )
 
     # Stack the two plots on one page; print whichever are available
@@ -514,6 +528,65 @@ if (nrow(sig_ranked) == 0) {
     } else if (length(plots) == 1) {
       print(plots[[1]])
     }
+  }
+
+  # ---- Overlay page: all qualifying GAM curves on one plot ----
+  # Show outcomes that are significant (p < .05) OR have range >= 1.5
+  for (tv in names(preds_by_tv)) {
+    sig_tv   <- sig_by_tv[[tv]]
+    pred_tv  <- preds_by_tv[[tv]]
+    meta     <- axis_meta[[tv]]
+
+    # Identify qualifying outcomes
+    qualifying <- sig_tv %>%
+      dplyr::filter(
+        (is.finite(p.value) & p.value < 0.05) |
+        (is.finite(range) & range >= 1.5)
+      )
+    if (nrow(qualifying) == 0) next
+
+    overlay_labels <- unique(qualifying$outcome_label)
+    overlay_data   <- pred_tv %>%
+      dplyr::filter(outcome_label %in% overlay_labels)
+    if (nrow(overlay_data) == 0) next
+
+    n_curves <- length(overlay_labels)
+
+    p_overlay <- ggplot2::ggplot(overlay_data,
+        ggplot2::aes(x = .data[[tv]], y = estimate,
+                     color = outcome_label, fill = outcome_label)) +
+      ggplot2::geom_hline(yintercept = 4, color = "red",
+                          linewidth = 0.4, alpha = 0.4) +
+      ggplot2::geom_vline(xintercept = meta$menses, color = "red",
+                          linewidth = 0.6, linetype = "dashed") +
+      ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen",
+                          linewidth = 0.6, linetype = "dashed") +
+      ggplot2::geom_ribbon(ggplot2::aes(ymin = conf.low, ymax = conf.high),
+                           alpha = 0.08) +
+      ggplot2::geom_line(linewidth = 0.9) +
+      ggplot2::scale_x_continuous(limits = c(-1, 1),
+                                  breaks = seq(-1, 1, by = 0.5),
+                                  labels = meta$labels) +
+      ggplot2::coord_cartesian(ylim = c(1, 6)) +
+      ggplot2::labs(
+        title = paste0("Overlaid GAM Curves \u2014 ID: ", current_id),
+        subtitle = paste0("Outcomes with p < .05 or range \u2265 1.5  |  ",
+                          "N curves = ", n_curves, "  |  Time variable: ", tv),
+        x = "Cycle Phase", y = "Predicted Score",
+        color = "Outcome", fill = "Outcome"
+      ) +
+      ggplot2::theme_minimal(base_size = 12) +
+      ggplot2::theme(
+        legend.position = "bottom",
+        legend.text = ggplot2::element_text(size = 7),
+        plot.title = ggplot2::element_text(face = "bold", size = 14)
+      ) +
+      ggplot2::guides(
+        color = ggplot2::guide_legend(ncol = 3),
+        fill  = ggplot2::guide_legend(ncol = 3)
+      )
+
+    print(p_overlay)
   }
 
   # ---- Sections per time variable: compact table + pages of plots ----
@@ -991,7 +1064,7 @@ if (length(all_ids_signif) > 0) {
       Metric = c("Total Participants",
                  "N Significant (p < .05)",
                  "Proportion Significant",
-                 "N CPASS-level (p < .05 & range \u2265 1.5)",
+                 "N Range \u22651.5 (p < .05 & range \u2265 1.5)",
                  "Median Range",
                  "Mean Observations per ID"),
       Value = c(
