@@ -27,6 +27,8 @@ library(grid)
 library(tibble)
 library(tidyr)
 library(knitr)
+library(broom)
+library(scales)
 
 options(scipen = 999)
 set.seed(12345)
@@ -489,3 +491,450 @@ if (length(all_ids_signif)) {
 
 ```
 
+---
+
+### 4. Per-Outcome Exploration PDFs
+
+> **Purpose:** For each DRSP outcome, generates a landscape PDF containing summary statistics, threshold analysis, logistic significance probability curves, and individual GAM trajectory pages for qualifying IDs (significant at p < .05 OR range >= 0.5).
+
+#### 4.1: Exploration Analysis Functions
+
+```{r exploration-analysis-functions}
+# =========================================================
+# EXPLORATION / THRESHOLD ANALYSIS FUNCTIONS
+# These power the per-outcome exploration PDFs below.
+# =========================================================
+
+# --- Basic cleaning: add numeric significance flag, coerce types ---
+clean_gam_summary <- function(df) {
+  df %>%
+    dplyr::mutate(
+      significant     = ifelse(p.value < 0.05, "Significant", "Not Significant"),
+      significant_num = ifelse(significant == "Significant", 1, 0),
+      significant_f   = factor(significant_num,
+                               levels = c(0, 1),
+                               labels = c("Not Significant", "Significant")),
+      range    = as.numeric(range),
+      n        = as.numeric(n),
+      variable = as.character(variable),
+      id       = as.character(id)
+    ) %>%
+    dplyr::filter(!is.na(range), !is.na(significant_num),
+                  !is.na(variable), !is.na(id))
+}
+
+# --- Filter to one outcome variable, one row per ID ---
+get_outcome_df <- function(df, target_var) {
+  df %>%
+    dplyr::filter(variable == target_var) %>%
+    dplyr::distinct(id, variable, .keep_all = TRUE)
+}
+
+# --- Descriptive summary (overall + by significance) ---
+summarize_cyclicity <- function(df_outcome) {
+  overall <- df_outcome %>%
+    dplyr::summarise(
+      n_participants   = dplyr::n(),
+      n_significant    = sum(significant_num == 1, na.rm = TRUE),
+      prop_significant = mean(significant_num == 1, na.rm = TRUE)
+    )
+  by_sig <- df_outcome %>%
+    dplyr::group_by(significant_f) %>%
+    dplyr::summarise(
+      n            = dplyr::n(),
+      mean_range   = mean(range, na.rm = TRUE),
+      sd_range     = sd(range, na.rm = TRUE),
+      median_range = median(range, na.rm = TRUE),
+      q25_range    = quantile(range, .25, na.rm = TRUE),
+      q75_range    = quantile(range, .75, na.rm = TRUE),
+      min_range    = min(range, na.rm = TRUE),
+      max_range    = max(range, na.rm = TRUE),
+      mean_n       = mean(n, na.rm = TRUE),
+      .groups      = "drop"
+    )
+  list(overall = overall, by_significance = by_sig)
+}
+
+# --- Proportion significant at various range thresholds ---
+threshold_table <- function(df_outcome,
+                            thresholds = c(0.10, 0.25, 0.36, 0.50, 0.75, 1.00)) {
+  do.call(rbind, lapply(thresholds, function(th) {
+    tmp <- df_outcome %>% dplyr::filter(range >= th)
+    tibble::tibble(
+      threshold        = th,
+      n_at_or_above    = nrow(tmp),
+      prop_of_sample   = ifelse(nrow(df_outcome) > 0,
+                                nrow(tmp) / nrow(df_outcome), NA_real_),
+      n_significant    = sum(tmp$significant_num == 1, na.rm = TRUE),
+      prop_significant = ifelse(nrow(tmp) > 0,
+                                mean(tmp$significant_num == 1, na.rm = TRUE),
+                                NA_real_)
+    )
+  }))
+}
+
+# --- Logistic regression: significance ~ range (& + n) ---
+fit_logistic_models <- function(df_outcome) {
+  model_range   <- glm(significant_num ~ range,     family = binomial, data = df_outcome)
+  model_range_n <- glm(significant_num ~ range + n, family = binomial, data = df_outcome)
+  list(
+    model_range   = model_range,
+    model_range_n = model_range_n,
+    tidy_range    = broom::tidy(model_range,   conf.int = TRUE, exponentiate = TRUE),
+    tidy_range_n  = broom::tidy(model_range_n, conf.int = TRUE, exponentiate = TRUE)
+  )
+}
+
+# --- Predicted probability of significance across range values ---
+make_prediction_df <- function(df_outcome, model_range, model_range_n = NULL,
+                               n_value = NULL) {
+  xseq <- seq(min(df_outcome$range, na.rm = TRUE),
+              max(df_outcome$range, na.rm = TRUE),
+              length.out = 300)
+  pred1 <- tibble::tibble(range = xseq) %>%
+    dplyr::mutate(pred_prob = predict(model_range, newdata = ., type = "response"),
+                  model     = "Range only")
+  if (!is.null(model_range_n)) {
+    if (is.null(n_value)) n_value <- median(df_outcome$n, na.rm = TRUE)
+    pred2 <- tibble::tibble(range = xseq, n = n_value) %>%
+      dplyr::mutate(pred_prob = predict(model_range_n, newdata = ., type = "response"),
+                    model     = paste0("Range + n (n fixed at ", round(n_value, 1), ")")) %>%
+      dplyr::select(range, pred_prob, model)
+    dplyr::bind_rows(pred1, pred2)
+  } else {
+    pred1
+  }
+}
+
+# --- Histogram of range, colored by significance ---
+plot_range_histogram <- function(df_outcome) {
+  ggplot2::ggplot(df_outcome, ggplot2::aes(x = range, fill = significant_f)) +
+    ggplot2::geom_histogram(position = "identity", alpha = 0.65, bins = 30) +
+    ggplot2::labs(
+      title = paste0("Histogram of ", unique(df_outcome$variable), " Range by Significance"),
+      x = "Cyclical range", y = "Count", fill = NULL
+    ) +
+    ggplot2::theme_minimal(base_size = 16)
+}
+
+# --- Logistic curve with jittered observed points ---
+plot_significance_probability <- function(df_outcome, pred_df,
+                                          thresholds = c(0.25, 0.36, 0.50),
+                                          jitter_height = 0.04) {
+  ggplot2::ggplot(df_outcome, ggplot2::aes(x = range, y = significant_num)) +
+    ggplot2::geom_jitter(ggplot2::aes(color = significant_f),
+                         width = 0, height = jitter_height,
+                         alpha = 0.45, size = 2) +
+    ggplot2::geom_line(data = pred_df,
+                       ggplot2::aes(x = range, y = pred_prob, linetype = model),
+                       linewidth = 1.2, inherit.aes = FALSE) +
+    ggplot2::geom_vline(xintercept = thresholds, linetype = "dashed", alpha = 0.6) +
+    ggplot2::scale_y_continuous(limits = c(-0.02, 1.02), breaks = seq(0, 1, by = 0.1),
+                                labels = scales::percent_format(accuracy = 1)) +
+    ggplot2::labs(
+      title = paste0("Probability of Significant Cyclicity: ", unique(df_outcome$variable)),
+      x = "Cyclical range",
+      y = "Predicted probability of significant GAM",
+      color = NULL, linetype = NULL
+    ) +
+    ggplot2::theme_minimal(base_size = 16)
+}
+
+# --- Binned empirical proportions ---
+make_empirical_bins <- function(df_outcome, n_bins = 10) {
+  df_outcome %>%
+    dplyr::mutate(range_bin = dplyr::ntile(range, n_bins)) %>%
+    dplyr::group_by(range_bin) %>%
+    dplyr::summarise(
+      mean_range       = mean(range, na.rm = TRUE),
+      prop_significant = mean(significant_num, na.rm = TRUE),
+      n                = dplyr::n(),
+      .groups          = "drop"
+    )
+}
+
+# --- Empirical bins + model overlay ---
+plot_empirical_and_model <- function(df_outcome, pred_df, empirical_df,
+                                     thresholds = c(0.25, 0.36, 0.50)) {
+  ggplot2::ggplot() +
+    ggplot2::geom_point(data = empirical_df,
+                        ggplot2::aes(x = mean_range, y = prop_significant, size = n),
+                        alpha = 0.8) +
+    ggplot2::geom_line(data = pred_df,
+                       ggplot2::aes(x = range, y = pred_prob, linetype = model),
+                       linewidth = 1.2) +
+    ggplot2::geom_vline(xintercept = thresholds, linetype = "dashed", alpha = 0.6) +
+    ggplot2::scale_y_continuous(limits = c(0, 1),
+                                labels = scales::percent_format(accuracy = 1)) +
+    ggplot2::labs(
+      title    = paste0("Empirical and Modeled Probability: ", unique(df_outcome$variable)),
+      x        = "Cyclical range",
+      y        = "Probability of significant GAM",
+      size     = "Bin n",
+      linetype = NULL
+    ) +
+    ggplot2::theme_minimal(base_size = 16)
+}
+
+# --- All-in-one analysis wrapper for one outcome variable ---
+analyze_one_outcome <- function(df, target_var,
+                                thresholds = c(0.25, 0.36, 0.50),
+                                n_bins = 10) {
+  df_clean   <- clean_gam_summary(df)
+  df_outcome <- get_outcome_df(df_clean, target_var)
+  if (nrow(df_outcome) == 0) stop(paste("No rows found for variable:", target_var))
+
+  desc      <- summarize_cyclicity(df_outcome)
+  thresh_tab <- threshold_table(df_outcome, thresholds = thresholds)
+  mods      <- fit_logistic_models(df_outcome)
+  pred_df   <- make_prediction_df(df_outcome  = df_outcome,
+                                  model_range   = mods$model_range,
+                                  model_range_n = mods$model_range_n)
+  emp_df    <- make_empirical_bins(df_outcome, n_bins = n_bins)
+
+  p_hist <- plot_range_histogram(df_outcome)
+  p_prob <- plot_significance_probability(df_outcome, pred_df, thresholds = thresholds)
+  p_emp  <- plot_empirical_and_model(df_outcome, pred_df, emp_df, thresholds = thresholds)
+
+  list(
+    data                        = df_outcome,
+    descriptives_overall        = desc$overall,
+    descriptives_by_significance = desc$by_significance,
+    threshold_table             = thresh_tab,
+    model_range                 = mods$model_range,
+    model_range_n               = mods$model_range_n,
+    model_range_tidy_OR         = mods$tidy_range,
+    model_range_n_tidy_OR       = mods$tidy_range_n,
+    predictions                 = pred_df,
+    empirical_bins              = emp_df,
+    plot_histogram              = p_hist,
+    plot_probability            = p_prob,
+    plot_empirical              = p_emp
+  )
+}
+
+# --- Extract DRSP variable names from the summary data ---
+get_drsp_variables <- function(df) {
+  df %>%
+    clean_gam_summary() %>%
+    dplyr::distinct(variable) %>%
+    dplyr::pull(variable) %>%
+    .[grepl("^drsp", ., ignore.case = TRUE)]
+}
+```
+
+#### 4.2: Generate Per-Outcome Exploration PDFs
+
+```{r generate-explore-pdfs, results='asis'}
+# =========================================================
+# GENERATE PER-OUTCOME EXPLORATION PDF REPORTS
+# =========================================================
+# For each DRSP outcome, generates a landscape PDF containing:
+#   1. Summary page: descriptive stats + threshold table
+#   2. Significance probability plot (logistic curve)
+#   3. Histogram of range by significance
+#   4. Empirical + modeled probability plot
+#   5. Individual GAM trajectory pages for qualifying IDs
+#      (significant at p < .05 OR range >= 0.5)
+# =========================================================
+
+# --- Build the exploration summary from in-memory results ---
+if (length(all_ids_signif)) {
+  gam_summary_df <- dplyr::bind_rows(all_ids_signif)
+
+  # Create output sub-folder for exploration PDFs
+  explore_folder <- file.path(output_folder, "Outcome_Exploration_PDFs")
+  dir.create(explore_folder, showWarnings = FALSE, recursive = TRUE)
+
+  drsp_vars <- get_drsp_variables(gam_summary_df)
+  cat("Found", length(drsp_vars), "DRSP variables to process\n")
+
+  # Thresholds for the exploration
+  explore_thresholds <- c(0.10, 0.20, 0.25, 0.36, 0.50, 0.75, 1.00)
+
+  # Plot layout for individual GAM pages
+  plots_per_col_exp <- 3
+  plots_per_row_exp <- 3
+  max_plots_per_page_exp <- plots_per_col_exp * plots_per_row_exp
+
+  # Table themes for summary pages
+  summary_table_theme <- gridExtra::ttheme_default(
+    base_size = 11,
+    core    = list(fg_params = list(hjust = 0, x = 0.05)),
+    colhead = list(fg_params = list(hjust = 0, x = 0.05, fontface = "bold"))
+  )
+  threshold_table_theme <- gridExtra::ttheme_default(
+    base_size = 10,
+    core    = list(fg_params = list(hjust = 0.5, x = 0.5)),
+    colhead = list(fg_params = list(hjust = 0.5, x = 0.5, fontface = "bold"))
+  )
+
+  for (target_var in drsp_vars) {
+    cat(sprintf("\n=== Processing: %s ===\n", target_var))
+
+    # 1. Run exploration analysis
+    result <- tryCatch(
+      analyze_one_outcome(gam_summary_df, target_var,
+                          thresholds = explore_thresholds,
+                          n_bins = 10),
+      error = function(e) {
+        message("  Skipping ", target_var, ": ", e$message)
+        NULL
+      }
+    )
+    if (is.null(result)) next
+
+    # 2. Identify qualifying IDs (significant OR range >= 0.5)
+    qualifying_ids <- result$data %>%
+      dplyr::filter(significant_num == 1 | range >= 0.5) %>%
+      dplyr::arrange(dplyr::desc(range)) %>%
+      dplyr::pull(id)
+
+    # 3. Get outcome label
+    outcome_label <- if (target_var %in% names(outcomes)) {
+      outcomes[[target_var]]
+    } else {
+      target_var
+    }
+
+    cat(sprintf("  N participants: %d | N significant: %d | N qualifying IDs: %d\n",
+                result$descriptives_overall$n_participants,
+                result$descriptives_overall$n_significant,
+                length(qualifying_ids)))
+
+    # 4. Open PDF
+    pdf_path <- file.path(explore_folder, paste0("Explore_", target_var, ".pdf"))
+    grDevices::pdf(pdf_path, width = 11, height = 8.5)
+
+    # ---- PAGE 1: Summary + Threshold Table ----
+    title_grob <- grid::textGrob(
+      paste("GAM Cyclicity Exploration:", outcome_label),
+      gp = grid::gpar(fontsize = 18, fontface = "bold")
+    )
+    subtitle_grob <- grid::textGrob(
+      paste("Variable:", target_var),
+      gp = grid::gpar(fontsize = 12, fontface = "italic")
+    )
+
+    desc_df <- data.frame(
+      Metric = c("Total Participants",
+                 "N Significant (p < .05)",
+                 "Proportion Significant",
+                 "Median Range",
+                 "Mean Observations per ID"),
+      Value = c(
+        as.character(result$descriptives_overall$n_participants),
+        as.character(result$descriptives_overall$n_significant),
+        sprintf("%.1f%%", result$descriptives_overall$prop_significant * 100),
+        sprintf("%.2f", median(result$data$range, na.rm = TRUE)),
+        sprintf("%.1f", mean(result$data$n, na.rm = TRUE))
+      ),
+      stringsAsFactors = FALSE
+    )
+    desc_tbl <- gridExtra::tableGrob(desc_df, rows = NULL, theme = summary_table_theme)
+
+    thresh_display <- result$threshold_table %>%
+      dplyr::mutate(
+        threshold        = sprintf("%.2f", threshold),
+        n_at_or_above    = as.character(n_at_or_above),
+        prop_of_sample   = sprintf("%.1f%%", prop_of_sample * 100),
+        n_significant    = as.character(n_significant),
+        prop_significant = ifelse(is.na(prop_significant), "N/A",
+                                  sprintf("%.1f%%", prop_significant * 100))
+      )
+    names(thresh_display) <- c("Range Threshold", "N >= Threshold",
+                               "% of Sample", "N Significant", "% Significant")
+
+    thresh_tbl <- gridExtra::tableGrob(thresh_display, rows = NULL,
+                                       theme = threshold_table_theme)
+    thresh_header <- grid::textGrob(
+      "Significance Rates at Range Thresholds",
+      gp = grid::gpar(fontsize = 14, fontface = "bold")
+    )
+    note_grob <- grid::textGrob(
+      sprintf("Individual GAM pages follow for %d qualifying IDs (significant OR range >= 0.5)",
+              length(qualifying_ids)),
+      gp = grid::gpar(fontsize = 11, fontface = "italic")
+    )
+
+    gridExtra::grid.arrange(
+      title_grob, subtitle_grob, desc_tbl, thresh_header, thresh_tbl, note_grob,
+      ncol = 1,
+      heights = grid::unit(c(0.10, 0.05, 0.22, 0.08, 0.40, 0.08), "npc")
+    )
+
+    # ---- PAGE 2: Significance Probability Plot ----
+    print(result$plot_probability)
+
+    # ---- PAGE 3: Histogram ----
+    print(result$plot_histogram)
+
+    # ---- PAGE 4: Empirical + Model ----
+    print(result$plot_empirical)
+
+    # ---- PAGES 5+: Individual GAM trajectory plots for qualifying IDs ----
+    if (length(qualifying_ids) > 0 && length(time_vars) > 0) {
+      tv <- time_vars[1]
+
+      id_plots <- list()
+      for (qid in qualifying_ids) {
+        dat_id <- subset(df, id == qid)
+        if (nrow(dat_id) == 0) next
+
+        res <- tryCatch(
+          fit_outcome(dat_id, target_var, tv, outcomes),
+          error = function(e) NULL
+        )
+        if (is.null(res)) next
+
+        p <- create_annotated_plot(res$pred, tv, axis_meta)
+        if (!is.null(p)) {
+          id_range <- round(res$sig$range, 2)
+          id_pval  <- res$sig$p.value
+          id_stars <- dplyr::case_when(
+            is.finite(id_pval) & id_pval < 0.001 ~ "***",
+            is.finite(id_pval) & id_pval < 0.01  ~ "**",
+            is.finite(id_pval) & id_pval < 0.05  ~ "*",
+            TRUE ~ ""
+          )
+          p <- p + ggplot2::labs(
+            title = sprintf("ID %s %s (range=%.2f)", qid, id_stars, id_range)
+          )
+          id_plots[[length(id_plots) + 1]] <- p
+        }
+      }
+
+      if (length(id_plots) > 0) {
+        pages <- split(id_plots,
+                       ceiling(seq_along(id_plots) / max_plots_per_page_exp))
+
+        for (page_plots in pages) {
+          if (length(page_plots) < max_plots_per_page_exp) {
+            page_plots <- c(page_plots,
+                           rep(list(patchwork::plot_spacer()),
+                               max_plots_per_page_exp - length(page_plots)))
+          }
+          final_page <- patchwork::wrap_plots(plotlist = page_plots, ncol = plots_per_col_exp) +
+            patchwork::plot_annotation(
+              title    = paste("Individual GAM Trajectories:", outcome_label),
+              subtitle = paste("Time variable:", tv),
+              theme    = ggplot2::theme(
+                plot.title    = ggplot2::element_text(size = 14, face = "bold"),
+                plot.subtitle = ggplot2::element_text(size = 11)
+              )
+            )
+          print(final_page)
+        }
+      }
+    }
+
+    grDevices::dev.off()
+    message(sprintf("  Saved: %s", pdf_path))
+  }
+
+  cat("\n=== All exploration PDFs generated ===\n")
+  cat("Output folder:", explore_folder, "\n")
+} else {
+  message("No significance data available; skipping per-outcome exploration PDFs.")
+}
+```
