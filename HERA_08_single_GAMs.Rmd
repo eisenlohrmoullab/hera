@@ -848,9 +848,9 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
 #   Per time variable:
 #   5. Peak & trough timing density (significant participants)
 #   6+. Individual GAM trajectory pages (fixed Y axes across people):
-#       - Significant GAMs first (p < .05), then
-#       - Non-significant with range > 0.33, then
-#       - Non-significant with range <= 0.33
+#       - Significant with range > 0.33 first, then
+#       - Significant with range <= 0.33, then
+#       - Not significant with range > 0.33
 # =========================================================
 
 # --- Build the exploration summary from in-memory results ---
@@ -899,9 +899,17 @@ if (length(all_ids_signif) > 0) {
     )
     if (is.null(result)) next
 
-    # 2. Identify qualifying IDs: significant first, then non-significant sorted by range
-    sig_ids <- result$data %>%
-      dplyr::filter(significant_num == 1) %>%
+    # 2. Identify qualifying IDs in three groups, each sorted by range descending:
+    #    (a) Significant & range > 0.33
+    #    (b) Significant & range <= 0.33
+    #    (c) Not significant & range > 0.33
+    sig_above_cutoff <- result$data %>%
+      dplyr::filter(significant_num == 1 & range > 0.33) %>%
+      dplyr::arrange(dplyr::desc(range)) %>%
+      dplyr::pull(id)
+
+    sig_below_cutoff <- result$data %>%
+      dplyr::filter(significant_num == 1 & range <= 0.33) %>%
       dplyr::arrange(dplyr::desc(range)) %>%
       dplyr::pull(id)
 
@@ -910,12 +918,7 @@ if (length(all_ids_signif) > 0) {
       dplyr::arrange(dplyr::desc(range)) %>%
       dplyr::pull(id)
 
-    nonsig_below_cutoff <- result$data %>%
-      dplyr::filter(significant_num == 0 & range <= 0.33) %>%
-      dplyr::arrange(dplyr::desc(range)) %>%
-      dplyr::pull(id)
-
-    qualifying_ids <- c(sig_ids, nonsig_above_cutoff, nonsig_below_cutoff)
+    qualifying_ids <- c(sig_above_cutoff, sig_below_cutoff, nonsig_above_cutoff)
 
     # 3. Get outcome label
     outcome_label <- if (target_var %in% names(outcomes)) {
@@ -1008,7 +1011,7 @@ if (length(all_ids_signif) > 0) {
       gp = grid::gpar(fontsize = 14, fontface = "bold")
     )
     note_grob <- grid::textGrob(
-      sprintf("Individual GAM pages follow for %d IDs (significant first, then non-sig sorted by range; 0.33 cutoff marked)",
+      sprintf("Individual GAM pages follow for %d IDs (sig range>0.33, sig range\u22640.33, then non-sig range>0.33)",
               length(qualifying_ids)),
       gp = grid::gpar(fontsize = 11, fontface = "italic")
     )
@@ -1043,7 +1046,7 @@ if (length(all_ids_signif) > 0) {
     }
 
     # ---- Individual GAM trajectory plots for all IDs (per time variable) ----
-    # Pre-compute predictions for global y-axis; group by sig, nonsig>0.33, nonsig<=0.33
+    # Pre-compute predictions for global y-axis; groups: sig>0.33, sig<=0.33, nonsig>0.33
     for (tv in time_vars) {
       if (length(qualifying_ids) == 0) next
 
@@ -1072,12 +1075,12 @@ if (length(all_ids_signif) > 0) {
       }
 
       groups <- list(
-        list(ids = sig_ids,
-             label = "Significant GAM Trajectories"),
+        list(ids = sig_above_cutoff,
+             label = "Significant, Range > 0.33"),
+        list(ids = sig_below_cutoff,
+             label = "Significant, Range \u2264 0.33"),
         list(ids = nonsig_above_cutoff,
-             label = "Non-Significant Trajectories (Range > 0.33)"),
-        list(ids = nonsig_below_cutoff,
-             label = "Non-Significant Trajectories (Range \u2264 0.33)")
+             label = "Not Significant, Range > 0.33")
       )
 
       for (grp in groups) {
