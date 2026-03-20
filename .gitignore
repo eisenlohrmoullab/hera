@@ -13,6 +13,14 @@ data/
 .Rds
 .rds
 
+# Image files
+.png
+.jpg
+.jpeg
+.svg
+.html
+.pdf
+
 # User-specific files
 .Ruserdata
 

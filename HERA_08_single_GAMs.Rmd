@@ -15,7 +15,7 @@ output: html_document
 ### 1. Setup & Configuration
 
 #### 1.1: Load Libraries
-```{r setup, message=FALSE}
+```{r}
 #install.packages(c("dplyr","ggplot2","mgcv","patchwork","gridExtra","grid","tibble","tidyr","knitr"))
 
 library(dplyr)
@@ -31,6 +31,7 @@ library(knitr)
 options(scipen = 999)
 set.seed(12345)
 ```
+
 
 
 ```{r}

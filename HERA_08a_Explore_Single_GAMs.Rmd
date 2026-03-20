@@ -12,32 +12,26 @@ library(broom)
 library(scales)
 ```
 
+
+
+```{r}
+# Load packages, set options, create output folder
+source("HERA_00_setup.R")
+
+# Create subfolder for data prep outputs
+gam_exp_folder <- file.path(output_folder, "08a_GAM_exploration")
+if (!dir.exists(gam_exp_folder)) {
+  dir.create(gam_exp_folder, recursive = TRUE)
+  cat("Created subfolder:", gam_exp_folder, "\n")
+}
+```
+
+
+
 ```{r load-data}
-# Set the date for the GAM reports (use Sys.Date() if you want this to be dynamic)
-current_date <- as.Date("2026-03-19")
-date_tag <- gsub("-", "", as.character(current_date))
 
-gam_reports_folder <- paste0("GAM_Reports_", date_tag)
-gam_filename <- paste0("participant_significance_summary_", date_tag, ".csv")
 
-csv_path <- file.path(
-  "~",
-  "Library",
-  "CloudStorage",
-  "Box-Box",
-  "00 - CLEAR Lab (Locked Folders)",
-  "02 - Data Management, Analysis, and Papers",
-  "Studies_Projects",
-  "HERA",
-  "03_analytic_projects",
-  "HERA-Primary ms",
-  "03_dataedits_output",
-  "06_Single_GAMs",
-  gam_reports_folder,
-  gam_filename
-)
-
-gam_df <- read.csv(csv_path)
+gam_df <- read.csv("~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/02_datasets_output/06_Single_GAMs/GAM_Reports_20260319/participant_significance_summary_20260319.csv")
 ```
 
 ```{r}
@@ -534,7 +528,6 @@ get_p50_threshold <- function(model_range) {
 
 ```{r}
 
-
 result_drsp_na <- analyze_one_outcome(gam_df, target_var = "drsp_NA")
 
 result_drsp_na$descriptives_overall
@@ -543,5 +536,16 @@ result_drsp_na$threshold_table
 result_drsp_na$model_range_tidy_OR
 result_drsp_na$model_range_n_tidy_OR
 result_drsp_na$plot_probability
+
+# save plot to gam_exp_folder
+ggsave(
+  filename = "drsp_NA_probability_of_significance.png",
+  plot = result_drsp_na$plot_probability,
+  path = gam_exp_folder,
+  width = 10,
+  height = 6,
+  dpi = 300
+)
+
 ```
 
