@@ -535,13 +535,9 @@ if (nrow(sig_ranked) == 0) {
       n_affect_max
     )
 
-    # Stack the two plots on one page; print whichever are available
-    plots <- Filter(Negate(is.null), list(p_physical, p_affect))
-    if (length(plots) == 2) {
-      gridExtra::grid.arrange(grobs = plots, ncol = 1)
-    } else if (length(plots) == 1) {
-      print(plots[[1]])
-    }
+    # Print each plot on its own page
+    if (!is.null(p_physical)) print(p_physical)
+    if (!is.null(p_affect))   print(p_affect)
   }
 
   # ---- Overlay page: all qualifying GAM curves on one plot ----
