@@ -208,7 +208,7 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
 }
 
 # --- Plot one outcome curve with annotations ---
-create_annotated_plot <- function(plot_df, tv, axis_meta_list, ylim_range = NULL) {
+create_annotated_plot <- function(plot_df, tv, axis_meta_list) {
   if (is.null(plot_df) || nrow(plot_df) == 0) return(NULL)
   max_pt <- dplyr::slice_max(plot_df, order_by = estimate, n = 1, with_ties = FALSE)
   min_pt <- dplyr::slice_min(plot_df, order_by = estimate, n = 1, with_ties = FALSE)
@@ -229,6 +229,7 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, ylim_range = NULL
   meta  <- axis_meta_list[[tv]]
 
   p <- ggplot2::ggplot(plot_df, ggplot2::aes(x = .data[[tv]], y = estimate)) +
+    ggplot2::geom_hline(yintercept = 4, color = "red", linewidth = 0.4, alpha = 0.4) +
     ggplot2::geom_vline(xintercept = meta$menses, color = "red") +
     ggplot2::geom_vline(xintercept = meta$ov,     color = "forestgreen") +
     ggplot2::geom_line(linewidth = 1, color = "#0072B2") +
@@ -241,12 +242,9 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, ylim_range = NULL
     ggplot2::labs(title = dplyr::first(plot_df$outcome_label), x = "Cycle Phase", y = NULL) +
     ggplot2::scale_x_continuous(limits = c(-1, 1), breaks = seq(-1, 1, by = 0.5),
                                 labels = meta$labels) +
+    ggplot2::coord_cartesian(ylim = c(1, 6)) +
     ggplot2::theme_minimal() +
     ggplot2::theme(plot.title = ggplot2::element_text(size = 10, face = "bold", hjust = 0.5))
-
-  if (!is.null(ylim_range)) {
-    p <- p + ggplot2::coord_cartesian(ylim = ylim_range)
-  }
   p
 }
 
@@ -1094,17 +1092,6 @@ if (length(all_ids_signif) > 0) {
         if (!is.null(res)) all_fit_results[[as.character(qid)]] <- res
       }
 
-      # Compute global y-axis range from all participants' confidence intervals
-      global_ylim <- NULL
-      if (length(all_fit_results) > 0) {
-        global_ymin <- min(sapply(all_fit_results, function(r)
-          min(r$pred$conf.low, na.rm = TRUE)), na.rm = TRUE)
-        global_ymax <- max(sapply(all_fit_results, function(r)
-          max(r$pred$conf.high, na.rm = TRUE)), na.rm = TRUE)
-        pad <- (global_ymax - global_ymin) * 0.05
-        global_ylim <- c(global_ymin - pad, global_ymax + pad)
-      }
-
       groups <- list(
         list(ids = sig_above_cutoff,
              label = "Significant, Range > 0.33"),
@@ -1122,7 +1109,7 @@ if (length(all_ids_signif) > 0) {
           res <- all_fit_results[[as.character(qid)]]
           if (is.null(res)) next
 
-          p <- create_annotated_plot(res$pred, tv, axis_meta, ylim_range = global_ylim)
+          p <- create_annotated_plot(res$pred, tv, axis_meta)
           if (!is.null(p)) {
             id_range <- round(res$sig$range, 2)
             id_n     <- res$sig$n
