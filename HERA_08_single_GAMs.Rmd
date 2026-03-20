@@ -552,7 +552,7 @@ if (length(all_ids_signif)) {
 
 ### 4. Per-Outcome Exploration PDFs
 
-> **Purpose:** For each DRSP outcome, generates a landscape PDF containing summary statistics, threshold analysis, logistic significance probability curves, peak/trough timing distribution, and individual GAM trajectory pages — significant GAMs first, then non-significant sorted by range (with 0.33 range cutoff marked). All individual GAM plots share a fixed Y axis within each outcome for cross-person comparison.
+> **Purpose:** For each DRSP outcome, generates a landscape PDF containing summary statistics, threshold analysis, logistic significance probability curves, peak/trough timing distribution, and individual GAM trajectory pages — significant GAMs first, then non-significant sorted by range. All individual GAM plots share a fixed Y axis within each outcome for cross-person comparison.
 
 #### 4.1: Exploration Analysis Functions
 
@@ -1010,11 +1010,18 @@ if (length(all_ids_signif) > 0) {
       "Significance Rates at Range Thresholds",
       gp = grid::gpar(fontsize = 14, fontface = "bold")
     )
-    note_grob <- grid::textGrob(
-      sprintf("Individual GAM pages follow for %d IDs (sig range>0.33, sig range\u22640.33, then non-sig range>0.33)",
-              length(qualifying_ids)),
-      gp = grid::gpar(fontsize = 11, fontface = "italic")
-    )
+    note_grob <- if (length(qualifying_ids) > 0) {
+      grid::textGrob(
+        sprintf("Individual GAM pages follow for %d IDs (sig range>0.33, sig range\u22640.33, then non-sig range>0.33)",
+                length(qualifying_ids)),
+        gp = grid::gpar(fontsize = 11, fontface = "italic")
+      )
+    } else {
+      grid::textGrob(
+        "No qualifying IDs for individual GAM pages",
+        gp = grid::gpar(fontsize = 11, fontface = "italic")
+      )
+    }
 
     gridExtra::grid.arrange(
       title_grob, subtitle_grob, desc_tbl, thresh_header, thresh_tbl, note_grob,
