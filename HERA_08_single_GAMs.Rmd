@@ -516,7 +516,7 @@ if (nrow(sig_ranked) == 0) {
                                     labels = meta$labels) +
         ggplot2::scale_y_continuous(limits = c(-max_n, max_n),
                                     breaks = seq(-max_n, max_n, by = 1),
-                                    labels = abs(seq(-max_n, max_n, by = 1))) +
+                                    labels = abs) +
         ggplot2::labs(
           title = paste0(category_label, " Symptoms \u2014 ID: ", current_id),
           subtitle = paste0("N outcomes = ", nrow(sig_subset), " / ", max_n,
@@ -965,7 +965,7 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
                                 labels = meta$labels) +
     ggplot2::scale_y_continuous(limits = c(-1, 1),
                                 breaks = seq(-1, 1, by = 0.25),
-                                labels = abs(seq(-1, 1, by = 0.25))) +
+                                labels = abs) +
     ggplot2::labs(
       title = paste("Peak & Trough Timing:", outcome_label),
       subtitle = paste0("Among participants with significant GAMs (p < .05); N = ",
