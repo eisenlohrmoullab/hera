@@ -34,6 +34,87 @@ if (!dir.exists(gam_exp_folder)) {
 gam_df <- read.csv("~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/02_datasets_output/06_Single_GAMs/GAM_Reports_20260319/participant_significance_summary_20260319.csv")
 ```
 
+```{r load-raw-data}
+# --- Load raw dataset for fitting individual GAMs per ID ---
+# Update this path to match your local data file
+raw_data_path <- "data/HERA_20260312_clean.rds"
+if (file.exists(raw_data_path)) {
+  df_raw <- readRDS(raw_data_path)
+  cat("Loaded raw data:", nrow(df_raw), "rows,", ncol(df_raw), "columns\n")
+} else {
+  stop("Raw data file not found at: ", raw_data_path,
+       "\nPlease update the path to your clean RDS file.")
+}
+```
+
+```{r define-outcomes-and-gam-setup}
+# --- Define Outcomes to Model (must match HERA_08_single_GAMs.Rmd) ---
+outcomes <- c(
+  "drsp_NA"          = "DRSP Negative Affect Mean",
+  "drsp_NAmax"       = "DRSP Negative Affect Max",
+  "drsp_total"       = "DRSP Total",
+  "drsp_distress"    = "Distress (DRSP)",
+  "drsp_labilsocsx"  = "Social/Affect Lability (DRSP)",
+  "drsp_breastpain"  = "Breast Sx (DRSP)",
+  "drsp_eatsx"       = "Eating Sx",
+  "drsp_lowarousal"  = "Low Arousal Sx (DRSP)",
+  "drsp_1"           = "Depression",
+  "drsp_2"           = "Hopelessness",
+  "drsp_3"           = "Worthlessness",
+  "drsp_4"           = "Anxiety",
+  "drsp_5"           = "Mood Swings",
+  "drsp_6"           = "Rejection Sensitivity",
+  "drsp_7"           = "Anger/Irritability",
+  "drsp_8"           = "Interpersonal Conflicts",
+  "drsp_9"           = "Loss of Interest",
+  "drsp_16"          = "Feeling Overwhelmed",
+  "drsp_17"          = "Feeling Out of Control",
+  "drsp_10"          = "Difficulty Concentrating",
+  "drsp_11"          = "Fatigue/Lethargy",
+  "drsp_14"          = "Hypersomnia",
+  "drsp_15"          = "Insomnia",
+  "drsp_12"          = "Overeating",
+  "drsp_13"          = "Specific Food Cravings",
+  "drsp_18"          = "Breast Tenderness",
+  "drsp_19"          = "Breast Swelling",
+  "drsp_20"          = "Headache",
+  "drsp_21"          = "Joint/Muscle Pain"
+)
+
+# --- Time Variable for individual GAM fitting ---
+time_vars_to_run <- c("cyclic_time_impute")
+time_vars <- intersect(time_vars_to_run, names(df_raw))
+if (length(time_vars) == 0) {
+  warning("No matching time variables found in raw data. Individual GAM plots will be skipped.")
+}
+
+# --- Pre-calculate log-transformations on raw data ---
+for (var in names(outcomes)) {
+  if (var %in% names(df_raw)) {
+    df_raw[[paste0(var, "_Log")]] <- log(df_raw[[var]] + 1)
+  }
+}
+
+# --- Prediction grids reused per time var ---
+pred_grid_list <- setNames(lapply(time_vars, function(tv) {
+  d <- data.frame(seq(-1, 1, by = 0.05))
+  names(d) <- tv
+  d
+}), time_vars)
+
+# --- Axis labels + reference lines per time var ---
+axis_meta <- lapply(time_vars, function(tv) {
+  if (grepl("ov", tv, ignore.case = TRUE)) {
+    list(labels = c("Menses", "50%F", "Ovulation", "50%L", "Menses"),
+         menses = c(-1, 1), ov = 0)
+  } else {
+    list(labels = c("Ovulation", "50%L", "Menses", "50%F", "Ovulation"),
+         menses = 0, ov = c(-1, 1))
+  }
+})
+names(axis_meta) <- time_vars
+```
+
 ```{r}
 names(gam_df)
 
@@ -526,26 +607,298 @@ get_p50_threshold <- function(model_range) {
 
 ```
 
-```{r}
+```{r gam-helper-functions}
+# =========================================================
+# GAM FITTING & PLOTTING FUNCTIONS (from HERA_08_single_GAMs.Rmd)
+# These are used to generate individual GAM trajectory plots
+# for qualifying IDs in the per-outcome exploration PDFs.
+# =========================================================
 
-result_drsp_na <- analyze_one_outcome(gam_df, target_var = "drsp_NA")
+fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
+  log_out <- paste0(outcome_var, "_Log")
+  keep <- c(log_out, tv)
+  if (!all(keep %in% names(dat))) return(NULL)
+  dat <- dat[complete.cases(dat[, keep]), keep, drop = FALSE]
+  if (nrow(dat) < 10 || var(dat[[log_out]], na.rm = TRUE) < 1e-6) return(NULL)
 
-result_drsp_na$descriptives_overall
-result_drsp_na$descriptives_by_significance
-result_drsp_na$threshold_table
-result_drsp_na$model_range_tidy_OR
-result_drsp_na$model_range_n_tidy_OR
-result_drsp_na$plot_probability
+  k <- min(k_max, nrow(dat) - 1L); if (k < 3L) return(NULL)
 
-# save plot to gam_exp_folder
-ggsave(
-  filename = "drsp_NA_probability_of_significance.png",
-  plot = result_drsp_na$plot_probability,
-  path = gam_exp_folder,
-  width = 10,
-  height = 6,
-  dpi = 300
+  fml <- as.formula(paste0(log_out, " ~ s(", tv, ", bs = 'cc', k = ", k, ")"))
+  knots <- setNames(list(c(-1, 1)), tv)
+
+  mf <- try(mgcv::bam(fml, data = dat, knots = knots, method = "fREML",
+                      discrete = TRUE, select = TRUE),
+            silent = TRUE)
+  if (inherits(mf, "try-error")) return(NULL)
+
+  s  <- summary(mf)
+  p  <- suppressWarnings(as.numeric(s$s.pv[1]))
+  st <- s$s.table
+  edf <- suppressWarnings(as.numeric(st[1, "edf"]))
+  Fval <- suppressWarnings(as.numeric(st[1, "F"]))
+
+  pg <- pred_grid_list[[tv]]
+  pr <- predict(mf, newdata = pg, se.fit = TRUE, type = "link")
+  est <- exp(pr$fit) - 1
+  conf.low  <- exp(pr$fit - 1.96 * pr$se.fit) - 1
+  conf.high <- exp(pr$fit + 1.96 * pr$se.fit) - 1
+
+  pred <- cbind(pg, estimate = est, conf.low = conf.low, conf.high = conf.high)
+  pred$outcome_label <- outcomes_map[[outcome_var]]
+  pred$p.value <- p
+  pred$raw_range <- diff(range(est, na.rm = TRUE))
+
+  list(
+    pred = pred,
+    sig  = tibble::tibble(
+      variable = outcome_var,
+      outcome_label = outcomes_map[[outcome_var]],
+      time_var = tv,
+      p.value = p,
+      edf = edf,
+      F = Fval,
+      n = nrow(dat),
+      range = diff(range(est, na.rm = TRUE))
+    )
+  )
+}
+
+create_annotated_plot <- function(plot_df, tv, axis_meta_list) {
+  if (is.null(plot_df) || nrow(plot_df) == 0) return(NULL)
+  max_pt <- dplyr::slice_max(plot_df, order_by = estimate, n = 1, with_ties = FALSE)
+  min_pt <- dplyr::slice_min(plot_df, order_by = estimate, n = 1, with_ties = FALSE)
+  rng   <- dplyr::first(plot_df$raw_range)
+  p_val <- dplyr::first(plot_df$p.value)
+  stars <- dplyr::case_when(
+    is.finite(p_val) & p_val < 0.001 ~ "***",
+    is.finite(p_val) & p_val < 0.01  ~ "**",
+    is.finite(p_val) & p_val < 0.05  ~ "*",
+    TRUE ~ ""
+  )
+  ann   <- sprintf("%s Range = %.2f", stars, rng)
+  meta  <- axis_meta_list[[tv]]
+
+  ggplot2::ggplot(plot_df, ggplot2::aes(x = .data[[tv]], y = estimate)) +
+    ggplot2::geom_vline(xintercept = meta$menses, color = "red") +
+    ggplot2::geom_vline(xintercept = meta$ov,     color = "forestgreen") +
+    ggplot2::geom_line(linewidth = 1, color = "#0072B2") +
+    ggplot2::geom_ribbon(ggplot2::aes(ymin = conf.low, ymax = conf.high),
+                         alpha = 0.2, fill = "#0072B2") +
+    ggplot2::geom_point(data = max_pt, size = 2.5) +
+    ggplot2::geom_point(data = min_pt, size = 2.5) +
+    ggplot2::annotate("text", x = -1, y = Inf, label = ann,
+                      hjust = -0.1, vjust = 1.5, size = 3, fontface = "bold") +
+    ggplot2::labs(title = dplyr::first(plot_df$outcome_label), x = "Cycle Phase", y = NULL) +
+    ggplot2::scale_x_continuous(limits = c(-1, 1), breaks = seq(-1, 1, by = 0.5),
+                                labels = meta$labels) +
+    ggplot2::theme_minimal() +
+    ggplot2::theme(plot.title = ggplot2::element_text(size = 10, face = "bold", hjust = 0.5))
+}
+```
+
+```{r generate-explore-pdfs, results='asis'}
+# =========================================================
+# GENERATE PER-OUTCOME EXPLORATION PDF REPORTS
+# =========================================================
+# For each DRSP outcome, generates a landscape PDF containing:
+#   1. Summary page: descriptive stats + threshold table
+#   2. Significance probability plot (logistic curve)
+#   3. Histogram of range by significance
+#   4. Empirical + modeled probability plot
+#   5. Individual GAM trajectory pages for qualifying IDs
+#      (significant at p < .05 OR range >= 0.5)
+# =========================================================
+
+drsp_vars <- get_drsp_variables(gam_df)
+cat("Found", length(drsp_vars), "DRSP variables to process\n")
+
+# Thresholds for the exploration (includes .20 as requested)
+explore_thresholds <- c(0.10, 0.20, 0.25, 0.36, 0.50, 0.75, 1.00)
+
+# Plot layout for individual GAM pages
+plots_per_col_exp <- 3
+plots_per_row_exp <- 3
+max_plots_per_page_exp <- plots_per_col_exp * plots_per_row_exp
+
+# Table theme for summary pages
+summary_table_theme <- gridExtra::ttheme_default(
+  base_size = 11,
+  core   = list(fg_params = list(hjust = 0, x = 0.05)),
+  colhead = list(fg_params = list(hjust = 0, x = 0.05, fontface = "bold"))
+)
+threshold_table_theme <- gridExtra::ttheme_default(
+  base_size = 10,
+  core   = list(fg_params = list(hjust = 0.5, x = 0.5)),
+  colhead = list(fg_params = list(hjust = 0.5, x = 0.5, fontface = "bold"))
 )
 
+for (target_var in drsp_vars) {
+  cat(sprintf("\n=== Processing: %s ===\n", target_var))
+
+  # 1. Run exploration analysis
+  result <- tryCatch(
+    analyze_one_outcome(gam_df, target_var,
+                        thresholds = explore_thresholds,
+                        n_bins = 10),
+    error = function(e) {
+      message("  Skipping ", target_var, ": ", e$message)
+      NULL
+    }
+  )
+  if (is.null(result)) next
+
+  # 2. Identify qualifying IDs (significant OR range >= 0.5)
+  qualifying_ids <- result$data %>%
+    dplyr::filter(significant_num == 1 | range >= 0.5) %>%
+    dplyr::arrange(dplyr::desc(range)) %>%
+    dplyr::pull(id)
+
+  # 3. Get outcome label
+  outcome_label <- if (target_var %in% names(outcomes)) {
+    outcomes[[target_var]]
+  } else {
+    target_var
+  }
+
+  cat(sprintf("  N participants: %d | N significant: %d | N qualifying IDs: %d\n",
+              result$descriptives_overall$n_participants,
+              result$descriptives_overall$n_significant,
+              length(qualifying_ids)))
+
+  # 4. Open PDF
+  pdf_path <- file.path(gam_exp_folder, paste0("Explore_", target_var, ".pdf"))
+  grDevices::pdf(pdf_path, width = 11, height = 8.5)
+
+  # ---- PAGE 1: Summary + Threshold Table ----
+  title_grob <- grid::textGrob(
+    paste("GAM Cyclicity Exploration:", outcome_label),
+    gp = grid::gpar(fontsize = 18, fontface = "bold")
+  )
+  subtitle_grob <- grid::textGrob(
+    paste("Variable:", target_var),
+    gp = grid::gpar(fontsize = 12, fontface = "italic")
+  )
+
+  desc_df <- data.frame(
+    Metric = c("Total Participants",
+               "N Significant (p < .05)",
+               "Proportion Significant",
+               "Median Range",
+               "Mean Observations per ID"),
+    Value = c(
+      as.character(result$descriptives_overall$n_participants),
+      as.character(result$descriptives_overall$n_significant),
+      sprintf("%.1f%%", result$descriptives_overall$prop_significant * 100),
+      sprintf("%.2f", median(result$data$range, na.rm = TRUE)),
+      sprintf("%.1f", mean(result$data$n, na.rm = TRUE))
+    ),
+    stringsAsFactors = FALSE
+  )
+  desc_tbl <- gridExtra::tableGrob(desc_df, rows = NULL, theme = summary_table_theme)
+
+  thresh_display <- result$threshold_table %>%
+    dplyr::mutate(
+      threshold = sprintf("%.2f", threshold),
+      n_at_or_above = as.character(n_at_or_above),
+      prop_of_sample = sprintf("%.1f%%", prop_of_sample * 100),
+      n_significant = as.character(n_significant),
+      prop_significant = ifelse(is.na(prop_significant), "\u2014",
+                                sprintf("%.1f%%", prop_significant * 100))
+    )
+  names(thresh_display) <- c("Range Threshold", "N >= Threshold",
+                             "% of Sample", "N Significant", "% Significant")
+
+  thresh_tbl <- gridExtra::tableGrob(thresh_display, rows = NULL,
+                                     theme = threshold_table_theme)
+
+  thresh_header <- grid::textGrob(
+    "Significance Rates at Range Thresholds",
+    gp = grid::gpar(fontsize = 14, fontface = "bold")
+  )
+
+  note_grob <- grid::textGrob(
+    sprintf("Individual GAM pages follow for %d qualifying IDs (significant OR range >= 0.5)",
+            length(qualifying_ids)),
+    gp = grid::gpar(fontsize = 11, fontface = "italic")
+  )
+
+  gridExtra::grid.arrange(
+    title_grob, subtitle_grob, desc_tbl, thresh_header, thresh_tbl, note_grob,
+    ncol = 1,
+    heights = grid::unit(c(0.10, 0.05, 0.22, 0.08, 0.40, 0.08), "npc")
+  )
+
+  # ---- PAGE 2: Significance Probability Plot ----
+  print(result$plot_probability)
+
+  # ---- PAGE 3: Histogram ----
+  print(result$plot_histogram)
+
+  # ---- PAGE 4: Empirical + Model ----
+  print(result$plot_empirical)
+
+  # ---- PAGES 5+: Individual GAM trajectory plots for qualifying IDs ----
+  if (length(qualifying_ids) > 0 && length(time_vars) > 0) {
+    tv <- time_vars[1]
+
+    id_plots <- list()
+    for (qid in qualifying_ids) {
+      dat_id <- subset(df_raw, id == qid)
+      if (nrow(dat_id) == 0) next
+
+      res <- tryCatch(
+        fit_outcome(dat_id, target_var, tv, outcomes),
+        error = function(e) NULL
+      )
+      if (is.null(res)) next
+
+      p <- create_annotated_plot(res$pred, tv, axis_meta)
+      if (!is.null(p)) {
+        id_range <- round(res$sig$range, 2)
+        id_pval <- res$sig$p.value
+        id_stars <- dplyr::case_when(
+          is.finite(id_pval) & id_pval < 0.001 ~ "***",
+          is.finite(id_pval) & id_pval < 0.01  ~ "**",
+          is.finite(id_pval) & id_pval < 0.05  ~ "*",
+          TRUE ~ ""
+        )
+        p <- p + ggplot2::labs(
+          title = sprintf("ID %s %s (range=%.2f)", qid, id_stars, id_range)
+        )
+        id_plots[[length(id_plots) + 1]] <- p
+      }
+    }
+
+    if (length(id_plots) > 0) {
+      pages <- split(id_plots,
+                     ceiling(seq_along(id_plots) / max_plots_per_page_exp))
+
+      for (page_plots in pages) {
+        if (length(page_plots) < max_plots_per_page_exp) {
+          page_plots <- c(page_plots,
+                         rep(list(patchwork::plot_spacer()),
+                             max_plots_per_page_exp - length(page_plots)))
+        }
+
+        final_page <- patchwork::wrap_plots(plotlist = page_plots, ncol = plots_per_col_exp) +
+          patchwork::plot_annotation(
+            title = paste("Individual GAM Trajectories:", outcome_label),
+            subtitle = paste("Time variable:", tv),
+            theme = ggplot2::theme(
+              plot.title = ggplot2::element_text(size = 14, face = "bold"),
+              plot.subtitle = ggplot2::element_text(size = 11)
+            )
+          )
+        print(final_page)
+      }
+    }
+  }
+
+  grDevices::dev.off()
+  message(sprintf("  Saved: %s", pdf_path))
+}
+
+cat("\n=== All exploration PDFs generated ===\n")
+cat("Output folder:", gam_exp_folder, "\n")
 ```
 
