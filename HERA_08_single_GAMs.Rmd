@@ -570,15 +570,13 @@ if (nrow(sig_ranked) == 0) {
 
     p_overlay <- ggplot2::ggplot(overlay_data,
         ggplot2::aes(x = .data[[tv]], y = estimate,
-                     color = outcome_label, fill = outcome_label)) +
+                     color = outcome_label)) +
       ggplot2::geom_hline(yintercept = 4, color = "red",
                           linewidth = 0.4, alpha = 0.4) +
       ggplot2::geom_vline(xintercept = meta$menses, color = "red",
                           linewidth = 0.6, linetype = "dashed") +
       ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen",
                           linewidth = 0.6, linetype = "dashed") +
-      ggplot2::geom_ribbon(ggplot2::aes(ymin = conf.low, ymax = conf.high),
-                           alpha = 0.08) +
       ggplot2::geom_line(linewidth = 0.9) +
       ggplot2::scale_x_continuous(limits = c(-1, 1),
                                   breaks = seq(-1, 1, by = 0.5),
@@ -589,7 +587,7 @@ if (nrow(sig_ranked) == 0) {
         subtitle = paste0("Outcomes with p < .05 or range \u2265 1.5  |  ",
                           "N curves = ", n_curves, "  |  Time variable: ", tv),
         x = "Cycle Phase", y = "Predicted Score",
-        color = "Outcome", fill = "Outcome"
+        color = "Outcome"
       ) +
       ggplot2::theme_minimal(base_size = 12) +
       ggplot2::theme(
@@ -598,8 +596,7 @@ if (nrow(sig_ranked) == 0) {
         plot.title = ggplot2::element_text(face = "bold", size = 14)
       ) +
       ggplot2::guides(
-        color = ggplot2::guide_legend(ncol = 3),
-        fill  = ggplot2::guide_legend(ncol = 3)
+        color = ggplot2::guide_legend(ncol = 3)
       )
 
     print(p_overlay)
