@@ -544,15 +544,16 @@ if (nrow(sig_ranked) == 0) {
     if (!is.null(p_affect))   print(p_affect)
   }
 
-  # ---- Overlay page: all qualifying GAM curves on one plot ----
-  # Show outcomes that are significant (p < .05) OR have range >= 1.5
+  # ---- Overlay page: all qualifying individual GAM curves on one plot ----
+  # Show individual DRSP items (not composites) that are significant (p < .05) OR have range >= 1.5
   for (tv in names(preds_by_tv)) {
     sig_tv   <- sig_by_tv[[tv]]
     pred_tv  <- preds_by_tv[[tv]]
     meta     <- axis_meta[[tv]]
 
-    # Identify qualifying outcomes
+    # Identify qualifying outcomes (individual DRSP items only, exclude composites)
     qualifying <- sig_tv %>%
+      dplyr::filter(grepl("^drsp_\\d+$", variable)) %>%
       dplyr::filter(
         (is.finite(p.value) & p.value < 0.05) |
         (is.finite(range) & range >= 1.5)
@@ -582,7 +583,7 @@ if (nrow(sig_ranked) == 0) {
       ggplot2::coord_cartesian(ylim = c(1, 6)) +
       ggplot2::labs(
         title = paste0("Overlaid GAM Curves \u2014 ID: ", current_id),
-        subtitle = paste0("Outcomes with p < .05 or range \u2265 1.5  |  ",
+        subtitle = paste0("Individual items with p < .05 or range \u2265 1.5  |  ",
                           "N curves = ", n_curves, "  |  Time variable: ", tv),
         x = "Cycle Phase", y = "Predicted Score",
         color = "Outcome"
