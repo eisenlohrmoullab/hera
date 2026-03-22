@@ -463,13 +463,20 @@ if (nrow(sig_ranked) == 0) {
 }
 
   # ---- Person-Specific Peak & Trough Timing Distribution ----
-  # Separate density plots for Physical vs Affect symptoms (raw items only)
+  # Separate density plots for Physical vs Affect symptoms
+  # Only raw DRSP items with p < .05 or range >= 1.5
   for (tv in names(sig_by_tv)) {
     sig_tv <- sig_by_tv[[tv]]
     if (nrow(sig_tv) == 0) next
 
-    # Keep only raw DRSP items (drsp_1, drsp_2, …), exclude composites
-    sig_tv_raw <- sig_tv %>% dplyr::filter(grepl("^drsp_\\d+$", variable))
+    # Keep only raw DRSP items (drsp_1, drsp_2, …), exclude composites;
+    # further restrict to items that are significant (p < .05) OR have range >= 1.5
+    sig_tv_raw <- sig_tv %>%
+      dplyr::filter(grepl("^drsp_\\d+$", variable)) %>%
+      dplyr::filter(
+        (is.finite(p.value) & p.value < 0.05) |
+        (is.finite(range) & range >= 1.5)
+      )
     if (nrow(sig_tv_raw) == 0) next
 
     meta <- axis_meta[[tv]]
@@ -517,8 +524,9 @@ if (nrow(sig_ranked) == 0) {
                                     labels = abs) +
         ggplot2::labs(
           title = paste0(category_label, " Symptoms \u2014 ID: ", current_id),
-          subtitle = paste0("N outcomes = ", nrow(sig_subset), " / ", max_n,
-                            " | Time variable: ", tv),
+          subtitle = paste0("Items with p < .05 or range \u2265 1.5  |  ",
+                            "N outcomes = ", nrow(sig_subset), " / ", max_n,
+                            "  |  Time variable: ", tv),
           x = "Cycle Phase",
           y = paste0("Peaks \u2191 / Troughs \u2193 (0\u2013", max_n, " scale)"),
           fill = NULL, color = NULL
