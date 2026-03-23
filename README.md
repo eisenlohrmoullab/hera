@@ -1,4 +1,4 @@
-# HERA: Hormones, Emotions, and Related Alcohol Use
+# HERA: Hormonal Changes in Emotion Regulation and Alcohol
 
 **R01 Analysis Repository **
 
@@ -13,6 +13,7 @@ The HERA project examines how alcohol use and related outcomes vary as a functio
 **Primary outcomes include:**
 - Alcohol use (drinks consumed, any drinking, binge drinking)
 - Premenstrual symptoms (DRSP; Daily Record of Severity of Problems)
+- Deficits in Emotion Regulation Scale 
 ---
 
 ## Repository Structure
