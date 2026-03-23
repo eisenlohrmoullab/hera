@@ -1,20 +1,18 @@
 # HERA: Hormones, Emotions, and Related Alcohol Use
 
-**R01 Analysis Repository | Eisenlohr-Moul Lab (CLEAR Lab)**
+**R01 Analysis Repository **
 
-This repository contains the R analysis pipeline for the **HERA R01** study, which investigates alcohol use and mood/symptom fluctuations across the menstrual cycle. Data are collected via daily ecological momentary assessment (EMA) and include symptom ratings, alcohol use measures, and biologically-confirmed ovulation tracking (LH surge + basal body temperature).
+This repository contains the R analysis pipeline for the **HERA R01** study, which investigates alcohol use and mood/symptom fluctuations across the menstrual cycle. Data are collected via daily ecological momentary assessment (EMA) and include symptom ratings, alcohol use measures, and biologically-confirmed ovulation tracking (LH surge + Oura basal body temperature).
 
 ---
 
 ## Study Overview
 
-The HERA project examines how alcohol use and related outcomes vary as a function of menstrual cycle phase. Cycle timing is standardized using the **PACTS** (Phase-Anchored Cycle Time Scaling) method via the [`menstrualcycleR`](https://github.com/eisenlohrmoullab/menstrualcycleR) package, which uses both menses onset and ovulation (LH surge) as anchors.
+The HERA project examines how alcohol use and related outcomes vary as a function of menstrual cycle phase, and how individual differences in affective sensitivity to the cycle might explain such changes). Cycle timing is standardized using the **PACTS** (Phase-Anchored Cycle Time Scaling) method via the [`menstrualcycleR`](https://github.com/eisenlohrmoullab/menstrualcycleR) package, which uses both menses onset and ovulation (LH surge) as anchors.
 
 **Primary outcomes include:**
 - Alcohol use (drinks consumed, any drinking, binge drinking)
 - Premenstrual symptoms (DRSP; Daily Record of Severity of Problems)
-- Negative affect, distress, social/lability symptoms, physical symptoms
-
 ---
 
 ## Repository Structure
