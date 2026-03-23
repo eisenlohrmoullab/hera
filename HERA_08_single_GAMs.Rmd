@@ -43,6 +43,16 @@ df <- readRDS('/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR
 
 ```
 
+# TEST CHUNK - KEEP COMMENTED OUT UNLESS TESTING
+
+```{r}
+#set.seed(12345)
+#test_ids <- sample(unique(df$id), 5)
+#df <- df %>% filter(id %in% test_ids)
+
+```
+
+
 
 ```{r}
 # --- Path to the main output directory ---
@@ -85,8 +95,8 @@ if (length(time_vars) < length(time_vars_to_run)) {
 outcomes <- c(
   #"numdrinkstoday" = "Number of Drinks",
   "drsp_NA"          = "DRSP Negative Affect Mean",
-  "drsp_NAmax"       = "DRSP Negative Affect Max",
-  "drsp_total"       = "DRSP Total",
+  #"drsp_NAmax"       = "DRSP Negative Affect Max",
+  #"drsp_total"       = "DRSP Total",
   "drsp_distress"    = "Distress (DRSP)",
   "drsp_labilsocsx"  = "Social/Affect Lability (DRSP)",
   "drsp_breastpain"  = "Breast Sx (DRSP)",
