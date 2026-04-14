@@ -12,12 +12,8 @@ output: html_document
 
 ---
 
-### 1. Setup & Configuration
-
-#### 1.1: Load Libraries
+# Libraries
 ```{r}
-#install.packages(c("dplyr","ggplot2","mgcv","patchwork","gridExtra","grid","tibble","tidyr","knitr"))
-
 library(dplyr)
 library(ggplot2)
 library(mgcv)
@@ -29,18 +25,15 @@ library(tidyr)
 library(knitr)
 library(broom)
 library(scales)
+library(glue)
 
 options(scipen = 999)
 set.seed(12345)
 ```
 
-
-
+# Data
 ```{r}
-# Import Data
-
 df <- readRDS('/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/02_datasets_output/HERA_20260319_clean.rds')
-
 ```
 
 # TEST CHUNK - KEEP COMMENTED OUT UNLESS TESTING
@@ -49,18 +42,16 @@ df <- readRDS('/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR
 #set.seed(12345)
 #test_ids <- sample(unique(df$id), 5)
 #df <- df %>% filter(id %in% test_ids)
-
 ```
 
-
-
+# Section 1: Set output folder & time vars
 ```{r}
 # --- Path to the main output directory ---
 gam_output_base <- "~/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/02_datasets_output/06_Single_GAMs/"
 
 # --- Define all Time Variables to iterate over (must be scaled to [-1, 1]) ---
 time_vars_to_run <- c("cyclic_time_impute")
-  
+
   #"cyclic_time", "cyclic_time_ov", "cyclic_time_impute", "cyclic_time_imp_ov")
 
 # --- Table Formatting ---
@@ -68,18 +59,21 @@ table_cols_per_page <- 6
 
 # --- Plot Layout (grid per page) ---
 plots_per_col <- 3
-plots_per_row <- 3 
+plots_per_row <- 3
 
+# --- Minimum observations per cycle-half to run GAMs ---
+# Per-outcome gate: after filtering to complete cases (outcome + time var),
+# if either cycle half has fewer than this many observations,
+# the GAM is skipped for that specific outcome × time-var combination.
+min_obs_per_half <- 3
 ```
 
+# Section 2: Create output folders & check time vars
 ```{r}
 # --- Create output folder with current date ---
 current_date <- format(Sys.Date(), "%Y%m%d")
 output_folder <- file.path(gam_output_base, paste0("GAM_Reports_", current_date))
 dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
-
-# --- Load Scaled Dataset ---
-#df
 
 # --- Robustness: Verify time variables exist ---
 time_vars <- intersect(time_vars_to_run, names(df))
@@ -87,41 +81,38 @@ if (length(time_vars) < length(time_vars_to_run)) {
   missing_vars <- setdiff(time_vars_to_run, time_vars)
   warning("The following time_vars were not found and will be skipped: ", paste(missing_vars, collapse = ", "))
 }
-
 ```
 
+# Section 3: Define outcomes
 ```{r}
 # --- Define Outcomes to Model ---
 outcomes <- c(
-  #"numdrinkstoday" = "Number of Drinks",
   "drsp_NA"          = "DRSP Negative Affect Mean",
-  #"drsp_NAmax"       = "DRSP Negative Affect Max",
-  #"drsp_total"       = "DRSP Total",
   "drsp_distress"    = "Distress (DRSP)",
   "drsp_labilsocsx"  = "Social/Affect Lability (DRSP)",
   "drsp_breastpain"  = "Breast Sx (DRSP)",
   "drsp_eatsx"       = "Eating Sx",
   "drsp_lowarousal"  = "Low Arousal Sx (DRSP)",
-  "drsp_1"              = "Depression",
-  "drsp_2"         = "Hopelessness",
-  "drsp_3"        = "Worthlessness",
-  "drsp_4"          = "Anxiety",
-  "drsp_5"       = "Mood Swings",
-  "drsp_6"         = "Rejection Sensitivity",
-  "drsp_7"            = "Anger/Irritability",
-  "drsp_8"        = "Interpersonal Conflicts",
-  "drsp_9"    = "Loss of Interest",
-  "drsp_16"        = "Feeling Overwhelmed",
-  "drsp_17"     = "Feeling Out of Control",
-  "drsp_10"        = "Difficulty Concentrating",
-  "drsp_11"            = "Fatigue/Lethargy",
-  "drsp_14"       = "Hypersomnia",
-  "drsp_15"       = "Insomnia",
-  "drsp_12"         = "Overeating",
-  "drsp_13"     = "Specific Food Cravings",
-  "drsp_18"      = "Breast Tenderness",
-  "drsp_19"     = "Breast Swelling",
-  "drsp_20"         = "Headache",
+  "drsp_1"           = "Depression",
+  "drsp_2"           = "Hopelessness",
+  "drsp_3"           = "Worthlessness",
+  "drsp_4"           = "Anxiety",
+  "drsp_5"           = "Mood Swings",
+  "drsp_6"           = "Rejection Sensitivity",
+  "drsp_7"           = "Anger/Irritability",
+  "drsp_8"           = "Interpersonal Conflicts",
+  "drsp_9"           = "Loss of Interest",
+  "drsp_16"          = "Feeling Overwhelmed",
+  "drsp_17"          = "Feeling Out of Control",
+  "drsp_10"          = "Difficulty Concentrating",
+  "drsp_11"          = "Fatigue/Lethargy",
+  "drsp_14"          = "Hypersomnia",
+  "drsp_15"          = "Insomnia",
+  "drsp_12"          = "Overeating",
+  "drsp_13"          = "Specific Food Cravings",
+  "drsp_18"          = "Breast Tenderness",
+  "drsp_19"          = "Breast Swelling",
+  "drsp_20"          = "Headache",
   "drsp_21"          = "Joint/Muscle Pain"
 )
 
@@ -129,10 +120,155 @@ outcomes <- c(
 physical_symptoms <- c("drsp_12", "drsp_13", "drsp_14", "drsp_15",
                        "drsp_18", "drsp_19", "drsp_20", "drsp_21")
 
+# --- Pattern constants for variable matching ---
+DRSP_VAR_PATTERN <- "^drsp_\\d+$"
+
 # --- Max possible counts per category (for density-plot Y-axis scaling) ---
-all_raw_drsp <- names(outcomes)[grepl("^drsp_\\d+$", names(outcomes))]
+all_raw_drsp <- names(outcomes)[grepl(DRSP_VAR_PATTERN, names(outcomes))]
 n_physical_max <- length(intersect(all_raw_drsp, physical_symptoms))
 n_affect_max   <- length(setdiff(all_raw_drsp, physical_symptoms))
+
+# --- Define colors for plots (each outcome stays consistent) ---
+## Use a colorblind friendly palette
+drsp_color_map <- c(
+  # DRSP mood/affect individual items
+  "drsp_1"  = "#0072B2",  # blue
+  "drsp_2"  = "#E69F00",  # orange
+  "drsp_3"  = "#009E73",  # green
+  "drsp_4"  = "#D55E00",  # vermillion
+  "drsp_5"  = "#CC79A7",  # reddish purple
+  "drsp_6"  = "#56B4E9",  # sky blue
+  "drsp_7"  = "#F0E442",  # yellow
+  "drsp_8"  = "#000000",  # black
+  "drsp_9"  = "#999999",  # gray
+  "drsp_10" = "#004488",  # dark blue
+  "drsp_11" = "#BB5566",  # muted red
+  "drsp_12" = "#228833",  # dark green
+  "drsp_13" = "#EE6677",  # soft red
+  "drsp_14" = "#AA3377",  # magenta
+  "drsp_15" = "#66CCEE",  # light cyan
+  "drsp_16" = "#332288",  # deep purple
+  "drsp_17" = "#117733",  # dark green 2
+  # DRSP physical items
+  "drsp_18" = "#44AA99",  # teal
+  "drsp_19" = "#88CCEE",  # light blue
+  "drsp_20" = "#DDCC77",  # sand
+  "drsp_21" = "#CC6677",  # rose
+  # DRSP composite outcomes (Okabe-Ito colorblind-friendly palette)
+  "drsp_NA"         = "#0072B2",  # blue
+  "drsp_distress"   = "#E69F00",  # orange
+  "drsp_labilsocsx" = "#009E73",  # green
+  "drsp_breastpain" = "#D55E00",  # vermillion
+  "drsp_eatsx"      = "#CC79A7",  # reddish purple
+  "drsp_lowarousal" = "#56B4E9"   # sky blue
+)
+
+# Safety check: warn (do not stop) if any outcome is missing a color
+missing_colors <- setdiff(names(outcomes), names(drsp_color_map))
+if (length(missing_colors) > 0) {
+  warning("Missing colors for: ", paste(missing_colors, collapse = ", "),
+          ". Falling back to #0072B2 for these outcomes.")
+}
+
+# --- Per-outcome y-axis limits and reference-line settings ---
+# y_axis_mode "fixed" uses a hard y_min/y_max (Likert 1-6 scale).
+# y_axis_mode "data"  uses data-driven limits; no fixed reference line.
+outcome_plot_settings <- tribble(
+  ~variable,          ~y_axis_mode, ~y_min, ~y_max, ~ref_line,
+  # DRSP composite outcomes — scale composites, no fixed 1-6 range
+  "drsp_NA",          "data",        NA,     NA,     NA,
+  "drsp_distress",    "data",        NA,     NA,     NA,
+  "drsp_labilsocsx",  "data",        NA,     NA,     NA,
+  "drsp_breastpain",  "data",        NA,     NA,     NA,
+  "drsp_eatsx",       "data",        NA,     NA,     NA,
+  "drsp_lowarousal",  "data",        NA,     NA,     NA,
+  # DRSP individual items — fixed 1-6 Likert scale
+  "drsp_1",           "fixed",       1,      6,      4,
+  "drsp_2",           "fixed",       1,      6,      4,
+  "drsp_3",           "fixed",       1,      6,      4,
+  "drsp_4",           "fixed",       1,      6,      4,
+  "drsp_5",           "fixed",       1,      6,      4,
+  "drsp_6",           "fixed",       1,      6,      4,
+  "drsp_7",           "fixed",       1,      6,      4,
+  "drsp_8",           "fixed",       1,      6,      4,
+  "drsp_9",           "fixed",       1,      6,      4,
+  "drsp_16",          "fixed",       1,      6,      4,
+  "drsp_17",          "fixed",       1,      6,      4,
+  "drsp_10",          "fixed",       1,      6,      4,
+  "drsp_11",          "fixed",       1,      6,      4,
+  "drsp_14",          "fixed",       1,      6,      4,
+  "drsp_15",          "fixed",       1,      6,      4,
+  "drsp_12",          "fixed",       1,      6,      4,
+  "drsp_13",          "fixed",       1,      6,      4,
+  "drsp_18",          "fixed",       1,      6,      4,
+  "drsp_19",          "fixed",       1,      6,      4,
+  "drsp_20",          "fixed",       1,      6,      4,
+  "drsp_21",          "fixed",       1,      6,      4
+)
+
+# --- Normalization scale ranges for normalized overlay pages ---
+# Fixed-scale outcomes use their configured y_min/y_max.
+# Data-mode outcomes fall back to per-curve GAM min/max at plot time.
+norm_scale_ranges <- outcome_plot_settings %>%
+  dplyr::mutate(
+    norm_min = dplyr::if_else(!is.na(y_min), y_min, NA_real_),
+    norm_max = dplyr::if_else(!is.na(y_max), y_max, NA_real_)
+  ) %>%
+  dplyr::select(variable, norm_min, norm_max)
+
+# --- Define Categories for organization ---
+outcome_categories <- tribble(
+  ~category,                ~variable,
+  "DRSP Composites",        "drsp_NA",
+  "DRSP Composites",        "drsp_distress",
+  "DRSP Composites",        "drsp_labilsocsx",
+  "DRSP Composites",        "drsp_breastpain",
+  "DRSP Composites",        "drsp_eatsx",
+  "DRSP Composites",        "drsp_lowarousal",
+  "Mood & Physical (DRSP)", "drsp_1",
+  "Mood & Physical (DRSP)", "drsp_2",
+  "Mood & Physical (DRSP)", "drsp_3",
+  "Mood & Physical (DRSP)", "drsp_4",
+  "Mood & Physical (DRSP)", "drsp_5",
+  "Mood & Physical (DRSP)", "drsp_6",
+  "Mood & Physical (DRSP)", "drsp_7",
+  "Mood & Physical (DRSP)", "drsp_8",
+  "Mood & Physical (DRSP)", "drsp_9",
+  "Mood & Physical (DRSP)", "drsp_16",
+  "Mood & Physical (DRSP)", "drsp_17",
+  "Mood & Physical (DRSP)", "drsp_10",
+  "Mood & Physical (DRSP)", "drsp_11",
+  "Mood & Physical (DRSP)", "drsp_14",
+  "Mood & Physical (DRSP)", "drsp_15",
+  "Mood & Physical (DRSP)", "drsp_12",
+  "Mood & Physical (DRSP)", "drsp_13",
+  "Mood & Physical (DRSP)", "drsp_18",
+  "Mood & Physical (DRSP)", "drsp_19",
+  "Mood & Physical (DRSP)", "drsp_20",
+  "Mood & Physical (DRSP)", "drsp_21"
+) %>%
+  right_join(enframe(outcomes, name = "variable", value = "outcome_label"), by = "variable")
+
+# --- Define custom page layouts ---
+page_definitions <- c(
+  list(
+    Composites_Page = outcome_categories %>%
+      filter(category == "DRSP Composites") %>%
+      pull(outcome_label)
+  ),
+  split(
+    outcome_categories %>%
+      filter(category == "Mood & Physical (DRSP)") %>%
+      pull(outcome_label),
+    ceiling(seq_along(
+      outcome_categories %>%
+        filter(category == "Mood & Physical (DRSP)") %>%
+        pull(outcome_label)
+    ) / 9)
+  )
+)
+names(page_definitions)[2:length(page_definitions)] <-
+  paste0("DRSP_Page_", seq_len(length(page_definitions) - 1))
 
 # --- Pre-calculate log-transformations ---
 for (var in names(outcomes)) {
@@ -141,15 +277,15 @@ for (var in names(outcomes)) {
     df[[log_var_name]] <- log(df[[var]] + 1)
   }
 }
-
 ```
 
+# Section 4: Per ID outcomes (fit functions + helpers)
 ```{r}
 # --- Prediction grids reused per time var ---
 pred_grid_list <- setNames(lapply(time_vars, function(tv) {
-  df <- data.frame(seq(-1, 1, by = 0.05))
-  names(df) <- tv
-  df
+  pg_df <- data.frame(seq(-1, 1, by = 0.05))
+  names(pg_df) <- tv
+  pg_df
 }), time_vars)
 
 # --- Axis labels + reference lines per time var ---
@@ -164,6 +300,77 @@ axis_meta <- lapply(time_vars, function(tv) {
 })
 names(axis_meta) <- time_vars
 
+# --- Assess cycle coverage for a given time variable ---
+# Divides the cycle variable range into 6 fixed bins and counts observations per bin.
+# Returns a list with total_n, bins_present, bins_with_2plus, empty_bins, and bin_counts.
+assess_cycle_coverage <- function(data, cycle_var) {
+  n_bins <- 6L
+  vals <- data[[cycle_var]]
+  vals <- vals[!is.na(vals)]
+
+  # Use fixed breakpoints across the full theoretical cycle range [-1, 1]
+  # so that bins are comparable across participants and outcomes
+  cycle_bin <- cut(vals,
+                   breaks = seq(-1, 1, length.out = n_bins + 1),
+                   labels = FALSE,
+                   include.lowest = TRUE)
+
+  bin_counts <- as.data.frame(table(cycle_bin = factor(cycle_bin, levels = seq_len(n_bins))),
+                              stringsAsFactors = FALSE)
+  names(bin_counts) <- c("cycle_bin", "n_per_bin")
+  bin_counts$n_per_bin <- as.integer(bin_counts$n_per_bin)
+
+  total_n <- length(vals)
+  bins_present <- sum(bin_counts$n_per_bin > 0)
+  bins_with_2plus <- sum(bin_counts$n_per_bin >= 2)
+  empty_bins <- n_bins - bins_present
+
+  list(
+    total_n = total_n,
+    bins_present = bins_present,
+    bins_with_2plus = bins_with_2plus,
+    empty_bins = empty_bins,
+    bin_counts = bin_counts
+  )
+}
+
+# --- Decide GAM specification based on cycle coverage ---
+# Returns a list with run_gam (logical), k (integer or NA), and mode (character).
+decide_gam_spec <- function(coverage) {
+  # Good coverage → full model
+  if (
+    coverage$total_n >= 15 &&
+    coverage$bins_present >= 5 &&
+    coverage$bins_with_2plus >= 4 &&
+    coverage$empty_bins <= 1
+  ) {
+    return(list(
+      run_gam = TRUE,
+      k = 6L,
+      mode = "full_cycle"
+    ))
+  }
+
+  # Moderate coverage → reduced complexity
+  if (
+    coverage$total_n >= 12 &&
+    coverage$bins_present >= 4
+  ) {
+    return(list(
+      run_gam = TRUE,
+      k = 4L,
+      mode = "reduced_k"
+    ))
+  }
+
+  # Poor coverage → do not run GAM
+  list(
+    run_gam = FALSE,
+    k = NA_integer_,
+    mode = "insufficient_coverage"
+  )
+}
+
 # --- Fit + predict one outcome for one time var (bam + predict) ---
 fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
   log_out <- paste0(outcome_var, "_Log")
@@ -172,11 +379,40 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
   dat <- dat[complete.cases(dat[, keep]), keep, drop = FALSE]
   if (nrow(dat) < 10 || var(dat[[log_out]], na.rm = TRUE) < 1e-6) return(NULL)
 
-  # Count observations in each phase half for adequacy flagging
-  n_pre  <- sum(dat[[tv]] <  0, na.rm = TRUE)
-  n_post <- sum(dat[[tv]] >= 0, na.rm = TRUE)
+  # Count observations in each positional half for adequacy flagging.
+  # These are orientation-neutral: n_neg = values in [-1, 0), n_nonneg = values in [0, 1].
+  # For menses-centered vars (cyclic_time, cyclic_time_impute): neg = luteal, nonneg = follicular.
+  # For ov-centered vars      (cyclic_time_ov, cyclic_time_imp_ov): neg = follicular, nonneg = luteal.
+  n_neg    <- sum(dat[[tv]] <  0, na.rm = TRUE)
+  n_nonneg <- sum(dat[[tv]] >= 0, na.rm = TRUE)
 
-  k <- min(k_max, nrow(dat) - 1L); if (k < 3L) return(NULL)
+  # Skip if either cycle half has fewer than min_obs_per_half observations.
+  if (min(n_neg, n_nonneg) < min_obs_per_half) {
+    message(glue::glue(
+      "Skipping GAM for {outcome_var}: only {min(n_neg, n_nonneg)} obs in one ",
+      "cycle half (min_obs_per_half={min_obs_per_half})"
+    ))
+    return(NULL)
+  }
+
+  # --- Cycle coverage check & adaptive k ---
+  coverage <- assess_cycle_coverage(data = dat, cycle_var = tv)
+  decision <- decide_gam_spec(coverage)
+
+  message(glue::glue(
+    "[{outcome_var}] Total N: {coverage$total_n}, Bins present: {coverage$bins_present}, ",
+    "Bins with >=2: {coverage$bins_with_2plus}, Empty bins: {coverage$empty_bins}, ",
+    "Mode: {decision$mode}"
+  ))
+
+  if (!decision$run_gam) {
+    message(glue::glue("Skipping GAM for {outcome_var}: insufficient cycle coverage"))
+    return(NULL)
+  }
+
+  # Use the coverage-based k, but still respect k_max and data-size constraints
+  k <- min(decision$k, k_max, nrow(dat) - 1L)
+  if (k < 3L) return(NULL)
 
   fml <- as.formula(paste0(log_out, " ~ s(", tv, ", bs = 'cc', k = ", k, ")"))
   knots <- setNames(list(c(-1, 1)), tv)
@@ -199,15 +435,16 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
   conf.high <- exp(pr$fit + 1.96 * pr$se.fit) - 1
 
   # Record cycle time at peak (max) and trough (min) of predicted curve
-  # pg and est are aligned: pg is the prediction grid, est is the back-transformed prediction
   peak_time   <- pg[[tv]][which.max(est)]
   trough_time <- pg[[tv]][which.min(est)]
 
   pred <- cbind(pg, estimate = est, conf.low = conf.low, conf.high = conf.high)
+  pred$outcome_var   <- outcome_var
   pred$outcome_label <- outcomes_map[[outcome_var]]
   pred$p.value <- p
   pred$raw_range <- diff(range(est, na.rm = TRUE))
   pred$n <- nrow(dat)
+  pred$edf <- edf
 
   list(
     pred = pred,
@@ -219,23 +456,50 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
       edf = edf,
       F = Fval,
       n = nrow(dat),
-      n_pre = n_pre,
-      n_post = n_post,
+      n_neg = n_neg,
+      n_nonneg = n_nonneg,
       range = diff(range(est, na.rm = TRUE)),
       peak_time = peak_time,
-      trough_time = trough_time
+      trough_time = trough_time,
+      coverage_mode = decision$mode
     )
   )
 }
 
 # --- Plot one outcome curve with annotations ---
-create_annotated_plot <- function(plot_df, tv, axis_meta_list) {
+# y_limits = NULL means: use per-outcome defaults from outcome_plot_settings
+#   (fixed outcomes → c(y_min, y_max); data-mode outcomes → data-driven, no clamp)
+# y_limits = c(lo, hi) means: use those limits as-is (e.g. from shared-y section)
+create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
+                                  raw_data = NULL) {
   if (is.null(plot_df) || nrow(plot_df) == 0) return(NULL)
+
   max_pt <- dplyr::slice_max(plot_df, order_by = estimate, n = 1, with_ties = FALSE)
   min_pt <- dplyr::slice_min(plot_df, order_by = estimate, n = 1, with_ties = FALSE)
   rng   <- dplyr::first(plot_df$raw_range)
   p_val <- dplyr::first(plot_df$p.value)
   n_obs <- dplyr::first(plot_df$n)
+  edf_val <- dplyr::first(plot_df$edf)
+
+  outcome_var <- dplyr::first(plot_df$outcome_var)
+  line_col <- drsp_color_map[[outcome_var]]
+  if (is.null(line_col) || is.na(line_col)) line_col <- "#0072B2"
+
+  # Look up per-outcome y-axis and reference-line settings
+  ps        <- outcome_plot_settings[outcome_plot_settings$variable == outcome_var, ]
+  mode      <- if (nrow(ps) > 0) ps$y_axis_mode[1] else "fixed"
+  ref_line  <- if (nrow(ps) > 0) ps$ref_line[1]    else 4
+  y_fix_min <- if (nrow(ps) > 0) ps$y_min[1]       else 1
+  y_fix_max <- if (nrow(ps) > 0) ps$y_max[1]       else 6
+
+  # Resolve y-axis limits when not explicitly supplied by the caller
+  if (is.null(y_limits)) {
+    if (mode == "fixed" && !is.na(y_fix_min) && !is.na(y_fix_max)) {
+      y_limits <- c(y_fix_min, y_fix_max)
+    }
+    # data mode: leave y_limits = NULL → ggplot auto-scales
+  }
+
   cpass_flag <- !is.null(rng) && is.finite(rng) && rng >= 1.5
   stars <- dplyr::case_when(
     is.finite(p_val) & p_val < 0.001 ~ "***",
@@ -244,46 +508,133 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list) {
     TRUE ~ ""
   )
   cpass_label <- if (cpass_flag) "\u25B2 Range \u22651.5 | " else ""
+  edf_str <- if (!is.null(edf_val) && !is.na(edf_val)) sprintf(", EDF = %.2f", edf_val) else ""
   ann <- if (!is.null(n_obs) && !is.na(n_obs)) {
-    sprintf("%s%s Range = %.2f, N = %d", cpass_label, stars, rng, as.integer(n_obs))
+    sprintf("%s%s Range = %.2f%s, N = %d", cpass_label, stars, rng, edf_str, as.integer(n_obs))
   } else {
-    sprintf("%s%s Range = %.2f", cpass_label, stars, rng)
+    sprintf("%s%s Range = %.2f%s", cpass_label, stars, rng, edf_str)
   }
   meta  <- axis_meta_list[[tv]]
 
-  p <- ggplot2::ggplot(plot_df, ggplot2::aes(x = .data[[tv]], y = estimate)) +
-    ggplot2::geom_hline(yintercept = 4, color = "red", linewidth = 0.4, alpha = 0.4) +
+  # Prepare raw data overlay using the same inclusion rule as fit_outcome:
+  # require non-missing log-transformed outcome and time var, then plot on original scale.
+  raw_pts <- NULL
+  log_out <- paste0(outcome_var, "_Log")
+  if (!is.null(raw_data) && outcome_var %in% names(raw_data) &&
+      log_out %in% names(raw_data) && tv %in% names(raw_data)) {
+    raw_pts <- raw_data[complete.cases(raw_data[, c(log_out, tv)]), c(outcome_var, tv), drop = FALSE]
+    if (nrow(raw_pts) == 0) raw_pts <- NULL
+  }
+
+  p <- ggplot2::ggplot(plot_df, ggplot2::aes(x = .data[[tv]], y = estimate))
+
+  # Reference line only for outcomes that define one (Likert-scale outcomes)
+  if (!is.na(ref_line)) {
+    p <- p + ggplot2::geom_hline(yintercept = ref_line, color = "red",
+                                 linewidth = 0.4, alpha = 0.4)
+  }
+
+  # Overlay raw data points behind the GAM curve
+  if (!is.null(raw_pts)) {
+    p <- p + ggplot2::geom_point(
+      data = raw_pts,
+      ggplot2::aes(x = .data[[tv]], y = .data[[outcome_var]]),
+      color = line_col, alpha = 0.25, size = 1.2, shape = 16,
+      inherit.aes = FALSE
+    )
+  }
+
+  p <- p +
     ggplot2::geom_vline(xintercept = meta$menses, color = "red") +
     ggplot2::geom_vline(xintercept = meta$ov,     color = "forestgreen") +
-    ggplot2::geom_line(linewidth = 1, color = "#0072B2") +
-    ggplot2::geom_point(data = max_pt, size = 2.5) +
-    ggplot2::geom_point(data = min_pt, size = 2.5) +
+    ggplot2::geom_line(linewidth = 1, color = line_col) +
+    ggplot2::geom_point(data = max_pt, size = 2.5, color = line_col) +
+    ggplot2::geom_point(data = min_pt, size = 2.5, color = line_col) +
     ggplot2::annotate("text", x = -1, y = Inf, label = ann,
-                      hjust = -0.1, vjust = 1.5, size = 3, fontface = "bold") +
+                      hjust = -0.05, vjust = 1.5, size = 2.5, fontface = "bold") +
     ggplot2::labs(title = dplyr::first(plot_df$outcome_label), x = "Cycle Phase", y = NULL) +
     ggplot2::scale_x_continuous(limits = c(-1, 1), breaks = seq(-1, 1, by = 0.5),
                                 labels = meta$labels) +
-    ggplot2::coord_cartesian(ylim = c(1, 6)) +
     ggplot2::theme_minimal() +
-    ggplot2::theme(plot.title = ggplot2::element_text(size = 10, face = "bold", hjust = 0.5))
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(size = 9, face = "bold", hjust = 0.5),
+      plot.margin = ggplot2::margin(t = 10, r = 5, b = 5, l = 5, unit = "pt"),
+      axis.text = ggplot2::element_text(size = 7)
+    )
 
-  # Highlight plots that meet range >= 1.5 threshold with a gold border
-  if (cpass_flag) {
-    p <- p + ggplot2::theme(
-      panel.border = ggplot2::element_rect(color = "goldenrod2", linewidth = 1.5, fill = NA)
+  # For fixed-scale outcomes, show all integer breaks on the y-axis
+  if (mode == "fixed" && !is.na(y_fix_min) && !is.na(y_fix_max)) {
+    p <- p + ggplot2::scale_y_continuous(
+      breaks = seq(y_fix_min, y_fix_max, by = 1)
     )
   }
+
+  # Always disable clipping so top annotations (y = Inf) are never cut off.
+  # When y_limits is defined, also lock the y-axis range.
+  if (!is.null(y_limits)) {
+    p <- p + ggplot2::coord_cartesian(ylim = y_limits, clip = "off")
+  } else {
+    p <- p + ggplot2::coord_cartesian(clip = "off")
+  }
+
+  # Colored effect-size borders for DRSP individual items
+  is_drsp <- grepl(DRSP_VAR_PATTERN, outcome_var)
+
+  if (is_drsp) {
+    border_col <- dplyr::case_when(
+      is.finite(rng) && rng >= 1.5 ~ "red",
+      is.finite(rng) && rng >= 1.0 ~ "salmon",
+      is.finite(rng) && rng >= 0.5 ~ "pink",
+      TRUE                         ~ NA_character_
+    )
+
+    if (!is.na(border_col)) {
+      p <- p + ggplot2::theme(
+        panel.border = ggplot2::element_rect(color = border_col, linewidth = 1.5, fill = NA)
+      )
+    }
+  }
+
   p
 }
 
+# --- Compute shared per-ID y-limits for a plot, clamped to [1, 6] ---
+make_shared_id_y_limits <- function(plot_df, shared_total_range, lower_bound = 1, upper_bound = 6) {
+  this_ymin <- min(plot_df$estimate, na.rm = TRUE)
+  this_ymax <- max(plot_df$estimate, na.rm = TRUE)
+  this_mid  <- (this_ymin + this_ymax) / 2
+
+  half_span <- shared_total_range / 2
+  y_low  <- this_mid - half_span
+  y_high <- this_mid + half_span
+
+  # Clamp to allowed symptom scale
+  if (y_low < lower_bound) {
+    shift_up <- lower_bound - y_low
+    y_low  <- y_low + shift_up
+    y_high <- y_high + shift_up
+  }
+  if (y_high > upper_bound) {
+    shift_down <- y_high - upper_bound
+    y_low  <- y_low - shift_down
+    y_high <- y_high - shift_down
+  }
+
+  # Final safeguard in case shared_total_range is very large
+  y_low  <- max(y_low, lower_bound)
+  y_high <- min(y_high, upper_bound)
+
+  c(y_low, y_high)
+}
 ```
 
+# Section 5: Per ID outcome reports (main PDF loop)
 ```{r}
 report_folder <- file.path(output_folder, "Participant_Reports_PDF_byID")
 dir.create(report_folder, showWarnings = FALSE, recursive = TRUE)
 
 ids_to_run    <- unique(df$id)   # set to subset for testing, e.g., c("203","109")
-skip_existing <- TRUE                         # set FALSE to overwrite
+skip_existing <- TRUE            # set FALSE to overwrite
 
 # collector for a single CSV at the end
 all_ids_signif <- list()
@@ -291,16 +642,151 @@ all_ids_signif <- list()
 # fixed layout controls
 max_plots_per_page <- plots_per_col * plots_per_row
 table_theme <- gridExtra::ttheme_default(
-  base_size = 9,
-  core   = list(fg_params = list(hjust = 0, x = 0.05)),
-  colhead = list(fg_params = list(hjust = 0, x = 0.05))
+  base_size = 7,
+  core    = list(fg_params = list(hjust = 0, x = 0.05)),
+  colhead = list(fg_params = list(hjust = 0, x = 0.05)),
+  padding = grid::unit(c(3, 2), "mm")
 )
 
 for (current_id in ids_to_run) {
   message(sprintf("--- Processing ID: %s ---", current_id))
   datSX_id <- subset(df, id == current_id)
 
-  # Pass 1: fit & collect
+  # ---- Open a single LANDSCAPE PDF per participant ----
+  pdf_filename <- file.path(report_folder, sprintf("Report_ID_%s.pdf", current_id))
+  if (isTRUE(skip_existing) && file.exists(pdf_filename)) {
+    message("    -> File exists; skipping. Set skip_existing=FALSE to overwrite.")
+    next
+  }
+  grDevices::pdf(pdf_filename, width = 11, height = 8.5)   # LANDSCAPE
+
+  # ---- Page 0: Raw data coverage (P4 + DRSP Negative Affect) ----
+  # Shows raw data points across the cycle variable so the reader can quickly
+  # judge whether there is enough data across phases for interpretation.
+  # This page is always produced, even if GAMs cannot be run.
+  if (length(time_vars) > 0) {
+    tv0 <- time_vars[1]
+    meta0 <- axis_meta[[tv0]]
+
+    # Shared helper: count observations in each cycle-phase half and label
+    # them as luteal vs follicular, accounting for time-variable orientation.
+    #   non-"ov" vars: -1=Ov, 0=Menses, 1=Ov  → [-1,0]=luteal, [0,1]=follicular
+    #   "ov" vars:     -1=Men, 0=Ov,    1=Men  → [-1,0]=follicular, [0,1]=luteal
+    count_phase_halves <- function(tv_vals, meta) {
+      # n_lo counts the "low" half (values in [-1, 0]) PLUS the opposite boundary at 1,
+      # because 1 and -1 are the same cyclic landmark (ovulation or menses).
+      # n_hi counts the "high" half (values in [0, 1]) PLUS the opposite boundary at -1.
+      # This intentionally allows boundary values (-1, 0, 1) to count toward both halves,
+      # as they are cycle-phase landmarks that border both halves of the cycle.
+      n_lo <- sum(tv_vals <= 0 | tv_vals == 1)
+      n_hi <- sum(tv_vals >= 0 | tv_vals == -1)
+      is_ov_centered <- identical(meta$ov, 0)
+      if (is_ov_centered) {
+        list(n_luteal = n_hi, n_follicular = n_lo)
+      } else {
+        list(n_luteal = n_lo, n_follicular = n_hi)
+      }
+    }
+
+    make_raw_panel <- function(dat, tv, meta, var, y_lab, color) {
+      if (!var %in% names(dat)) {
+        p <- ggplot2::ggplot() +
+          ggplot2::annotate("text", x = 0, y = 0, label = paste0(var, " not in data"),
+                            size = 5, color = "grey50") +
+          ggplot2::labs(x = "Cycle Phase", y = y_lab, subtitle = "n = 0 daily observations") +
+          ggplot2::theme_minimal(base_size = 12)
+        return(p)
+      }
+      vals <- dat[[var]]
+      tv_vals <- dat[[tv]]
+      valid <- !is.na(vals) & !is.na(tv_vals)
+      n_obs <- sum(valid)
+      has_data <- n_obs > 0
+      halves <- count_phase_halves(tv_vals[valid], meta)
+      sub_label <- paste0(
+        "n = ", n_obs, " daily observations",
+        "  (luteal: ", halves$n_luteal, ", follicular: ", halves$n_follicular, ")"
+      )
+      p <- ggplot2::ggplot(dat, ggplot2::aes(x = .data[[tv]], y = .data[[var]])) +
+        ggplot2::geom_vline(xintercept = meta$menses, color = "red",
+                            linewidth = 0.6, linetype = "dashed") +
+        ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen",
+                            linewidth = 0.6, linetype = "dashed") +
+        ggplot2::scale_x_continuous(
+          limits = c(-1, 1), breaks = seq(-1, 1, by = 0.5),
+          labels = meta$labels
+        ) +
+        ggplot2::labs(x = "Cycle Phase", y = y_lab, subtitle = sub_label) +
+        ggplot2::theme_minimal(base_size = 12)
+      if (has_data) {
+        p <- p + ggplot2::geom_point(color = color, alpha = 0.45, size = 1.8)
+      } else {
+        p <- p + ggplot2::annotate("text", x = 0, y = 0, label = "No data",
+                                   size = 5, color = "grey50")
+      }
+      p
+    }
+
+    p_p4     <- make_raw_panel(datSX_id, tv0, meta0, "P4",
+                               "Progesterone (P4)", "#7570B3")
+    p_drsp_na <- make_raw_panel(datSX_id, tv0, meta0, "drsp_NA",
+                                "DRSP Negative Affect Mean", "#D55E00")
+
+    tv0_vals <- datSX_id[[tv0]]
+    tv0_vals <- tv0_vals[!is.na(tv0_vals)]
+    gate_halves       <- count_phase_halves(tv0_vals, meta0)
+    n_half_luteal     <- gate_halves$n_luteal
+    n_half_follicular <- gate_halves$n_follicular
+    insufficient_coverage <- (n_half_luteal < min_obs_per_half) || (n_half_follicular < min_obs_per_half)
+
+    coverage_subtitle <- paste0("Time variable: ", tv0)
+    if (insufficient_coverage) {
+      coverage_subtitle <- paste0(
+        coverage_subtitle,
+        "\n\u26A0 Fewer than ", min_obs_per_half,
+        " observations in one or both cycle-halves — GAMs not run for this participant"
+      )
+    }
+
+    p_cover <- p_p4 / p_drsp_na +
+      patchwork::plot_annotation(
+        title    = paste0("Raw Data Coverage \u2014 ID: ", current_id),
+        subtitle = coverage_subtitle,
+        theme    = ggplot2::theme(
+          plot.title    = ggplot2::element_text(face = "bold", size = 12),
+          plot.subtitle = ggplot2::element_text(
+            size = if (insufficient_coverage) 10 else 9,
+            color = if (insufficient_coverage) "red" else "grey30"
+          )
+        )
+      )
+    print(p_cover)
+  } else {
+    insufficient_coverage <- TRUE
+    n_half_luteal     <- 0L
+    n_half_follicular <- 0L
+
+    grid::grid.newpage()
+    grid::grid.text(
+      label = paste0(
+        "Raw Data Coverage \u2014 ID: ", current_id,
+        "\n\nNo eligible time variables were available for GAM fitting.",
+        "\nA coverage-only placeholder report was generated."
+      ),
+      x = 0.5, y = 0.55,
+      gp = grid::gpar(fontsize = 12, fontface = "bold")
+    )
+  } # end Page 0
+
+  # ---- Gate: skip GAMs if cycle-half coverage is too sparse ----
+  if (insufficient_coverage) {
+    grDevices::dev.off()
+    message(sprintf("    -> Insufficient cycle-half coverage (n_luteal=%d, n_follicular=%d, min=%d); saved coverage-only report: %s",
+                    n_half_luteal, n_half_follicular, min_obs_per_half, pdf_filename))
+    next
+  }
+
+  # ---- Pass 1: fit & collect ----
   preds_by_tv <- list()
   sig_by_tv   <- list()
 
@@ -324,6 +810,7 @@ for (current_id in ids_to_run) {
 
   if (!length(preds_by_tv)) {
     message("    -> No successful models for this ID; skipping.")
+    grDevices::dev.off()
     next
   }
 
@@ -331,14 +818,6 @@ for (current_id in ids_to_run) {
   sig_all <- dplyr::bind_rows(sig_by_tv)
   sig_all$id <- current_id
   all_ids_signif[[as.character(current_id)]] <- sig_all
-
-  # ---- Open a single LANDSCAPE PDF per participant ----
-  pdf_filename <- file.path(report_folder, sprintf("Report_ID_%s.pdf", current_id))
-  if (isTRUE(skip_existing) && file.exists(pdf_filename)) {
-    message("    -> File exists; skipping. Set skip_existing=FALSE to overwrite.")
-    next
-  }
-  grDevices::pdf(pdf_filename, width = 11, height = 8.5)   # LANDSCAPE
 
   # ---- COVER: Compact counts by time_var ----
   sig_all_clean <- sig_all %>%
@@ -415,62 +894,59 @@ for (current_id in ids_to_run) {
     tbl <- gridExtra::tableGrob(compact_stars, rows = NULL, theme = compact_theme)
     gridExtra::grid.arrange(header, tbl, ncol = 1, heights = grid::unit(c(0.10, 0.90), "npc"))
   }
-  
+
   # ---- PAGE 2: Significant EDFs ranked by Range (across all time vars) ----
-sig_ranked <- sig_all_clean %>%
-  dplyr::filter(is.finite(p.value) & p.value < 0.05) %>%     # keep significant smooths
-  dplyr::mutate(
-    Outcome = dplyr::coalesce(outcome_label, variable),
-    Outcome = ifelse(nchar(Outcome) > 40, variable, Outcome) # shorten long names
-  ) %>%
-  dplyr::transmute(
-    Outcome,
-    TimeVar  = time_var,
-    EDF      = round(edf, 2),
-    Range    = round(range, 2),
-    F        = round(F, 2),
-    N        = n
-  ) %>%
-  dplyr::arrange(dplyr::desc(Range), Outcome, TimeVar)
+  sig_ranked <- sig_all_clean %>%
+    dplyr::filter(is.finite(p.value) & p.value < 0.05) %>%
+    dplyr::mutate(
+      Outcome = dplyr::coalesce(outcome_label, variable),
+      Outcome = ifelse(nchar(Outcome) > 40, variable, Outcome)
+    ) %>%
+    dplyr::transmute(
+      Outcome,
+      TimeVar  = time_var,
+      EDF      = round(edf, 2),
+      Range    = round(range, 2),
+      F        = round(F, 2),
+      N        = n
+    ) %>%
+    dplyr::arrange(dplyr::desc(Range), Outcome, TimeVar)
 
-if (nrow(sig_ranked) == 0) {
-  # show an empty-state page
-  header <- grid::textGrob(
-    paste("Significant Smooths — ID:", current_id, "(none at p < .05)"),
-    gp = grid::gpar(fontsize = 14, fontface = "bold")
-  )
-  sub <- grid::textGrob("No significant cyclic effects detected across any time variable.",
-                        gp = grid::gpar(fontsize = 10, fontface = "italic"))
-  gridExtra::grid.arrange(header, sub, ncol = 1,
-                          heights = grid::unit(c(0.2, 0.8), "npc"))
-} else {
-  # compact table theme to fit on a single landscape page
-  ranked_theme <- gridExtra::ttheme_default(
-    base_size = 8,
-    core = list(
-      fg_params = list(hjust = 0, x = 0.02),
-      padding = grid::unit(c(1.2, 2), "mm")
-    ),
-    colhead = list(
-      fg_params = list(hjust = 0.5, x = 0.5, fontface = "bold")
+  if (nrow(sig_ranked) == 0) {
+    header <- grid::textGrob(
+      paste("Significant Smooths — ID:", current_id, "(none at p < .05)"),
+      gp = grid::gpar(fontsize = 14, fontface = "bold")
     )
-  )
-  title_grob <- grid::textGrob(
-    paste("Significant Smooths (p < .05), Ranked by Range — ID:", current_id),
-    gp = grid::gpar(fontsize = 14, fontface = "bold")
-  )
-  note_grob <- grid::textGrob(
-    "Columns: EDF = effective degrees of freedom; Range = max(pred) − min(pred) on original scale.",
-    gp = grid::gpar(fontsize = 9, fontface = "italic")
-  )
-  ranked_tbl <- gridExtra::tableGrob(sig_ranked, rows = NULL, theme = ranked_theme)
-
-  gridExtra::grid.arrange(
-    title_grob, note_grob, ranked_tbl,
-    ncol = 1,
-    heights = grid::unit(c(0.12, 0.06, 0.82), "npc")
-  )
-}
+    sub <- grid::textGrob("No significant cyclic effects detected across any time variable.",
+                          gp = grid::gpar(fontsize = 10, fontface = "italic"))
+    gridExtra::grid.arrange(header, sub, ncol = 1,
+                            heights = grid::unit(c(0.2, 0.8), "npc"))
+  } else {
+    ranked_theme <- gridExtra::ttheme_default(
+      base_size = 8,
+      core = list(
+        fg_params = list(hjust = 0, x = 0.02),
+        padding = grid::unit(c(1.2, 2), "mm")
+      ),
+      colhead = list(
+        fg_params = list(hjust = 0.5, x = 0.5, fontface = "bold")
+      )
+    )
+    title_grob <- grid::textGrob(
+      paste("Significant Smooths (p < .05), Ranked by Range — ID:", current_id),
+      gp = grid::gpar(fontsize = 14, fontface = "bold")
+    )
+    note_grob <- grid::textGrob(
+      "Columns: EDF = effective degrees of freedom; Range = max(pred) − min(pred) on original scale.",
+      gp = grid::gpar(fontsize = 9, fontface = "italic")
+    )
+    ranked_tbl <- gridExtra::tableGrob(sig_ranked, rows = NULL, theme = ranked_theme)
+    gridExtra::grid.arrange(
+      title_grob, note_grob, ranked_tbl,
+      ncol = 1,
+      heights = grid::unit(c(0.12, 0.06, 0.82), "npc")
+    )
+  }
 
   # ---- Person-Specific Peak & Trough Timing Distribution ----
   # Separate density plots for Physical vs Affect symptoms
@@ -479,8 +955,6 @@ if (nrow(sig_ranked) == 0) {
     sig_tv <- sig_by_tv[[tv]]
     if (nrow(sig_tv) == 0) next
 
-    # Keep only raw DRSP items (drsp_1, drsp_2, …), exclude composites;
-    # further restrict to items that are significant (p < .05) OR have range >= 1.5
     sig_tv_raw <- sig_tv %>%
       dplyr::filter(grepl("^drsp_\\d+$", variable)) %>%
       dplyr::filter(
@@ -491,8 +965,6 @@ if (nrow(sig_ranked) == 0) {
 
     meta <- axis_meta[[tv]]
 
-    # Helper to build a density plot for one symptom category
-    # max_n = maximum possible number of variables in this category (for Y-axis)
     make_timing_density <- function(sig_subset, category_label, max_n) {
       tl <- dplyr::bind_rows(
         sig_subset %>% dplyr::filter(!is.na(peak_time)) %>%
@@ -500,15 +972,13 @@ if (nrow(sig_ranked) == 0) {
         sig_subset %>% dplyr::filter(!is.na(trough_time)) %>%
           dplyr::transmute(time = trough_time, type = "Trough (Min)", outcome = outcome_label)
       )
-      if (nrow(tl) < 4) return(NULL)  # need >= 2 per group for density estimation (total)
+      if (nrow(tl) < 4) return(NULL)
 
       tl_peak   <- dplyr::filter(tl, type == "Peak (Max)")
       tl_trough <- dplyr::filter(tl, type == "Trough (Min)")
 
-      # Ensure each type group has at least 2 observations for density estimation
       if (nrow(tl_peak) < 2 || nrow(tl_trough) < 2) return(NULL)
 
-      # Peaks go upward; troughs are mirrored downward so lower symptoms look lower
       ggplot2::ggplot() +
         ggplot2::geom_density(data = tl_peak,
                               ggplot2::aes(x = time,
@@ -557,73 +1027,213 @@ if (nrow(sig_ranked) == 0) {
       n_affect_max
     )
 
-    # Print each plot on its own page
     if (!is.null(p_physical)) print(p_physical)
     if (!is.null(p_affect))   print(p_affect)
   }
 
-  # ---- Overlay page: all qualifying individual GAM curves on one plot ----
-  # Show individual DRSP items (not composites) that are significant (p < .05) OR have range >= 1.5
-  for (tv in names(preds_by_tv)) {
-    sig_tv   <- sig_by_tv[[tv]]
-    pred_tv  <- preds_by_tv[[tv]]
-    meta     <- axis_meta[[tv]]
-
-    # Identify qualifying outcomes (individual DRSP items only, exclude composites)
-    qualifying <- sig_tv %>%
-      dplyr::filter(grepl("^drsp_\\d+$", variable)) %>%
+  # ---- Helper: generate an overlay page for qualifying GAM curves ----
+  # @param var_pattern    regex to select variables; used if var_list is NULL
+  # @param var_list       character vector of variable names; overrides var_pattern if provided
+  # @param range_thresh   minimum range for inclusion alongside p < .05
+  # @param title_prefix   text before " — ID: ..." in plot title
+  # @param subtitle_label description of items shown
+  # @param ylim_strategy  "fixed" uses fixed_ylim arg; "data" derives from conf intervals
+  # @param fixed_ylim     c(lo, hi) used when ylim_strategy == "fixed"
+  # @param show_hline     whether to show the horizontal reference line at hline_y
+  # @param hline_y        y-intercept for the reference line
+  # @param legend_ncol    number of columns in the legend
+  plot_overlay_page <- function(sig_tv, pred_tv, tv, meta,
+                                range_thresh, title_prefix, subtitle_label,
+                                var_pattern = NULL, var_list = NULL,
+                                ylim_strategy = "fixed", fixed_ylim = c(1, 6),
+                                show_hline = TRUE, hline_y = 4,
+                                legend_ncol = 3,
+                                show_range_in_labels = FALSE,
+                                normalize_01 = FALSE,
+                                ref_lines_per_var = NULL) {
+    if (!is.null(var_list)) {
+      qualifying <- sig_tv %>%
+        dplyr::filter(variable %in% var_list)
+    } else if (!is.null(var_pattern)) {
+      qualifying <- sig_tv %>%
+        dplyr::filter(grepl(var_pattern, variable))
+    } else {
+      return(invisible(NULL))
+    }
+    qualifying <- qualifying %>%
       dplyr::filter(
         (is.finite(p.value) & p.value < 0.05) |
-        (is.finite(range) & range >= 1.5)
+        (is.finite(range) & range >= range_thresh)
       )
-    if (nrow(qualifying) == 0) next
+    if (nrow(qualifying) == 0) return(invisible(NULL))
 
-    overlay_labels <- unique(qualifying$outcome_label)
-    overlay_data   <- pred_tv %>%
-      dplyr::filter(outcome_label %in% overlay_labels)
-    if (nrow(overlay_data) == 0) next
+    ov_vars <- unique(qualifying$variable)
+    ov_data <- pred_tv %>% dplyr::filter(outcome_var %in% ov_vars)
+    if (nrow(ov_data) == 0) return(invisible(NULL))
 
-    n_curves <- length(overlay_labels)
+    n_curves <- length(ov_vars)
 
-    p_overlay <- ggplot2::ggplot(overlay_data,
-        ggplot2::aes(x = .data[[tv]], y = estimate,
-                     color = outcome_label)) +
-      ggplot2::geom_hline(yintercept = 4, color = "red",
-                          linewidth = 0.4, alpha = 0.4) +
+    ov_colors <- drsp_color_map[ov_vars]
+    ov_colors[is.na(ov_colors)] <- "#0072B2"
+    names(ov_colors) <- ov_vars
+
+    range_lookup <- qualifying %>%
+      dplyr::distinct(variable, .keep_all = TRUE) %>%
+      dplyr::select(variable, range)
+
+    if (show_range_in_labels) {
+      ov_labels <- sapply(ov_vars, function(v) {
+        r <- range_lookup$range[range_lookup$variable == v]
+        if (length(r) > 0 && is.finite(r)) {
+          paste0(outcomes[v], " (", sprintf("%.2f", r), ")")
+        } else {
+          outcomes[v]
+        }
+      })
+    } else {
+      ov_labels <- outcomes[ov_vars]
+    }
+
+    if (normalize_01) {
+      ov_data <- ov_data %>%
+        dplyr::left_join(
+          norm_scale_ranges,
+          by = c("outcome_var" = "variable")
+        ) %>%
+        dplyr::group_by(outcome_var) %>%
+        dplyr::mutate(
+          scale_min = dplyr::coalesce(norm_min, min(estimate, na.rm = TRUE)),
+          scale_max = dplyr::coalesce(norm_max, max(estimate, na.rm = TRUE)),
+          scale_range = scale_max - scale_min,
+          estimate  = ifelse(scale_range > 0, (estimate  - scale_min) / scale_range, 0.5),
+          conf.low  = ifelse(scale_range > 0, (conf.low  - scale_min) / scale_range, 0.5),
+          conf.high = ifelse(scale_range > 0, (conf.high - scale_min) / scale_range, 0.5)
+        ) %>%
+        dplyr::select(-norm_min, -norm_max, -scale_min, -scale_max, -scale_range) %>%
+        dplyr::ungroup()
+      ylim_strategy <- "fixed"
+      fixed_ylim <- c(0, 1)
+    }
+
+    if (ylim_strategy == "data") {
+      y_min <- min(ov_data$conf.low, na.rm = TRUE)
+      y_max <- max(ov_data$conf.high, na.rm = TRUE)
+      y_pad <- (y_max - y_min) * 0.05
+      plot_ylim <- c(max(0, y_min - y_pad), y_max + y_pad)
+    } else {
+      plot_ylim <- fixed_ylim
+    }
+
+    range_label <- format(range_thresh, nsmall = 1)
+    y_axis_label <- if (normalize_01) "Normalized Score (0\u20131)" else "Predicted Score"
+
+    if (is.infinite(range_thresh)) {
+      filter_label <- "p < .05"
+    } else {
+      filter_label <- paste0("p < .05 or range \u2265 ", range_label)
+    }
+
+    p <- ggplot2::ggplot(ov_data,
+           ggplot2::aes(x = .data[[tv]], y = estimate, color = outcome_var))
+
+    if (show_hline) {
+      p <- p + ggplot2::geom_hline(yintercept = hline_y, color = "red",
+                                   linewidth = 0.4, alpha = 0.4)
+    }
+
+    if (!is.null(ref_lines_per_var)) {
+      for (rv in names(ref_lines_per_var)) {
+        if (rv %in% ov_vars) {
+          ref_col <- ov_colors[[rv]]
+          if (is.null(ref_col) || is.na(ref_col)) ref_col <- "#0072B2"
+          p <- p + ggplot2::geom_hline(
+            yintercept = ref_lines_per_var[[rv]],
+            color = ref_col, linewidth = 0.5, linetype = "solid", alpha = 0.7
+          )
+        }
+      }
+    }
+
+    p <- p +
       ggplot2::geom_vline(xintercept = meta$menses, color = "red",
                           linewidth = 0.6, linetype = "dashed") +
       ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen",
                           linewidth = 0.6, linetype = "dashed") +
       ggplot2::geom_line(linewidth = 0.9) +
-      ggplot2::scale_x_continuous(limits = c(-1, 1),
-                                  breaks = seq(-1, 1, by = 0.5),
-                                  labels = meta$labels) +
-      ggplot2::coord_cartesian(ylim = c(1, 6)) +
+      ggplot2::scale_color_manual(
+        values = ov_colors,
+        breaks = ov_vars,
+        labels = ov_labels
+      ) +
+      ggplot2::scale_x_continuous(
+        limits = c(-1, 1),
+        breaks = seq(-1, 1, by = 0.5),
+        labels = meta$labels
+      ) +
+      ggplot2::coord_cartesian(ylim = plot_ylim) +
       ggplot2::labs(
-        title = paste0("Overlaid GAM Curves \u2014 ID: ", current_id),
-        subtitle = paste0("Individual items with p < .05 or range \u2265 1.5  |  ",
-                          "N curves = ", n_curves, "  |  Time variable: ", tv),
-        x = "Cycle Phase", y = "Predicted Score",
+        title = paste0(title_prefix, " \u2014 ID: ", current_id),
+        subtitle = paste0(
+          subtitle_label, " with ", filter_label,
+          "  |  N curves = ", n_curves, "  |  Time variable: ", tv
+        ),
+        x = "Cycle Phase",
+        y = y_axis_label,
         color = "Outcome"
       ) +
-      ggplot2::theme_minimal(base_size = 12) +
+      ggplot2::theme_minimal(base_size = 10) +
       ggplot2::theme(
         legend.position = "bottom",
-        legend.text = ggplot2::element_text(size = 7),
-        plot.title = ggplot2::element_text(face = "bold", size = 14)
+        legend.text = ggplot2::element_text(size = 6),
+        plot.title = ggplot2::element_text(face = "bold", size = 12),
+        plot.subtitle = ggplot2::element_text(size = 8),
+        plot.margin = ggplot2::margin(t = 8, r = 8, b = 8, l = 8, unit = "pt")
       ) +
       ggplot2::guides(
-        color = ggplot2::guide_legend(ncol = 3)
+        color = ggplot2::guide_legend(ncol = legend_ncol)
       )
 
-    print(p_overlay)
+    print(p)
+  }
+
+  # ---- Overlaid GAM pages by outcome category ----
+  for (tv in names(preds_by_tv)) {
+
+    # (1) Individual DRSP items: sig OR range >= 0.5, Y scale 1-6
+    plot_overlay_page(
+      sig_tv = sig_by_tv[[tv]], pred_tv = preds_by_tv[[tv]],
+      tv = tv, meta = axis_meta[[tv]],
+      var_list       = all_raw_drsp,
+      range_thresh   = 0.5,
+      title_prefix   = "Overlaid GAM Curves (Individual DRSP Items)",
+      subtitle_label = "Individual DRSP items",
+      ylim_strategy  = "fixed", fixed_ylim = c(1, 6),
+      show_hline = TRUE, hline_y = 4,
+      legend_ncol = 4,
+      show_range_in_labels = TRUE
+    )
+
+    # (2) DRSP composite outcomes: sig only, data-driven Y scale
+    composite_vars <- names(outcomes)[!grepl(DRSP_VAR_PATTERN, names(outcomes))]
+    plot_overlay_page(
+      sig_tv = sig_by_tv[[tv]], pred_tv = preds_by_tv[[tv]],
+      tv = tv, meta = axis_meta[[tv]],
+      var_list       = composite_vars,
+      range_thresh   = Inf,
+      title_prefix   = "Overlaid GAM Curves (DRSP Composites)",
+      subtitle_label = "DRSP composite outcomes",
+      ylim_strategy  = "data",
+      show_hline = FALSE,
+      legend_ncol = 3,
+      show_range_in_labels = TRUE
+    )
   }
 
   # ---- Sections per time variable: compact table + pages of plots ----
   for (tv in names(preds_by_tv)) {
 
-    # NA-safe compact significance table (optionally filter to significant only)
     summary_df <- sig_by_tv[[tv]] %>%
+      dplyr::left_join(dplyr::select(outcome_categories, variable, category), by = "variable") %>%
       dplyr::mutate(
         stars = dplyr::case_when(
           is.finite(p.value) & p.value < 0.001 ~ "***",
@@ -633,10 +1243,8 @@ if (nrow(sig_ranked) == 0) {
         ),
         Outcome = dplyr::coalesce(outcome_label, variable)
       ) %>%
-      dplyr::select(Outcome, N = n, EDF = edf, F = F, Range = range, Sig = stars) %>%
-      dplyr::arrange(Outcome)
-    # Uncomment to show significant rows only:
-    # summary_df <- dplyr::filter(summary_df, Sig != "")
+      dplyr::select(Category = category, Outcome, N = n, EDF = edf, F = F, Range = range, Sig = stars) %>%
+      dplyr::arrange(Category, Outcome)
 
     tv_title <- grid::textGrob(paste("Significance — ID:", current_id, "| Time Variable:", tv),
                                gp = grid::gpar(fontsize = 14, fontface = "bold"))
@@ -644,18 +1252,18 @@ if (nrow(sig_ranked) == 0) {
     gridExtra::grid.arrange(tv_title, tv_table, ncol = 1,
                             heights = grid::unit(c(0.12, 0.88), "npc"))
 
-    # Plots paginated across all outcomes
+    # Plots organized by outcome category (using page_definitions)
     combined_plot_data <- preds_by_tv[[tv]]
-    all_outcome_labels <- unique(combined_plot_data$outcome_label)
-    outcome_pages <- split(all_outcome_labels, ceiling(seq_along(all_outcome_labels) / max_plots_per_page))
 
-    for (page_outcomes in outcome_pages) {
-      page_data <- dplyr::filter(combined_plot_data, outcome_label %in% page_outcomes)
+    for (page_name in names(page_definitions)) {
+      page_outcome_labels <- page_definitions[[page_name]]
+      page_data <- dplyr::filter(combined_plot_data, outcome_label %in% page_outcome_labels)
       if (nrow(page_data) == 0) next
 
-      plot_list <- lapply(page_outcomes, function(lab) {
+      plot_list <- lapply(page_outcome_labels, function(lab) {
         plot_df <- dplyr::filter(page_data, outcome_label == lab)
-        create_annotated_plot(plot_df, tv, axis_meta)
+        if (nrow(plot_df) == 0) return(NULL)
+        create_annotated_plot(plot_df, tv, axis_meta, raw_data = datSX_id)
       })
       plot_list <- Filter(Negate(is.null), plot_list)
 
@@ -664,19 +1272,143 @@ if (nrow(sig_ranked) == 0) {
           plot_list <- c(plot_list,
                          rep(list(patchwork::plot_spacer()), max_plots_per_page - length(plot_list)))
         }
-        page_title <- paste("Symptom Trajectories — ID:", current_id, "| Time Variable:", tv)
+        page_title_label <- gsub("_", " ", page_name)
+        page_title <- paste(page_title_label, "\u2014 ID:", current_id, "| Time Variable:", tv)
         final_page <- patchwork::wrap_plots(plotlist = plot_list, ncol = plots_per_col) +
           patchwork::plot_annotation(
             title = page_title,
-            theme = ggplot2::theme(plot.title = ggplot2::element_text(size = 14, face = "bold"))
+            theme = ggplot2::theme(plot.title = ggplot2::element_text(size = 12, face = "bold"))
           )
         print(final_page)
       }
     }
   }
 
+  # ---- Symptom Trajectories with ID-specific shared y-range ----
+  # For each ID and time variable:
+  #   - find the largest predicted range per y_axis_mode group (fixed / data)
+  #   - add 0.25, then apply that shared total y-range to every outcome in the group
+  #   - fixed-scale outcomes (DRSP individual items): clamped to [1, 6]
+  #   - data-scale outcomes (DRSP composites): unclamped, data-driven bounds
+  for (tv in names(preds_by_tv)) {
+
+    combined_plot_data <- preds_by_tv[[tv]]
+    if (is.null(combined_plot_data) || nrow(combined_plot_data) == 0) next
+
+    id_range_df <- combined_plot_data %>%
+      dplyr::group_by(outcome_var, outcome_label) %>%
+      dplyr::summarise(
+        ymin = min(estimate, na.rm = TRUE),
+        ymax = max(estimate, na.rm = TRUE),
+        yrange = ymax - ymin,
+        .groups = "drop"
+      ) %>%
+      dplyr::left_join(
+        dplyr::select(outcome_plot_settings, variable, y_axis_mode, y_min, y_max),
+        by = c("outcome_var" = "variable")
+      ) %>%
+      dplyr::mutate(
+        y_axis_mode = dplyr::coalesce(y_axis_mode, "fixed"),
+        lower_bound = dplyr::if_else(
+          y_axis_mode == "fixed", dplyr::coalesce(y_min, 1), ymin - 0.5
+        ),
+        upper_bound = dplyr::if_else(
+          y_axis_mode == "fixed", dplyr::coalesce(y_max, 6), ymax + 0.5
+        )
+      )
+
+    if (nrow(id_range_df) == 0) next
+
+    shared_range_by_mode <- id_range_df %>%
+      dplyr::group_by(y_axis_mode) %>%
+      dplyr::summarise(
+        shared_total_range = max(yrange, na.rm = TRUE) + 0.25,
+        .groups = "drop"
+      ) %>%
+      dplyr::mutate(
+        shared_total_range = dplyr::if_else(
+          y_axis_mode == "fixed",
+          pmin(shared_total_range, 5),
+          shared_total_range
+        )
+      )
+
+    for (page_name in names(page_definitions)) {
+      page_outcome_labels <- page_definitions[[page_name]]
+      page_outcome_labels <- page_outcome_labels[page_outcome_labels %in% id_range_df$outcome_label]
+      if (length(page_outcome_labels) == 0) next
+
+      page_data <- dplyr::filter(combined_plot_data, outcome_label %in% page_outcome_labels)
+      if (nrow(page_data) == 0) next
+
+      plot_list_shared <- lapply(page_outcome_labels, function(lab) {
+        plot_df <- dplyr::filter(page_data, outcome_label == lab)
+        if (nrow(plot_df) == 0) return(NULL)
+
+        ov        <- dplyr::first(plot_df$outcome_var)
+        mode_row  <- id_range_df[id_range_df$outcome_var == ov, ]
+        mode_str  <- if (nrow(mode_row) > 0) mode_row$y_axis_mode[1] else "fixed"
+        lb        <- if (nrow(mode_row) > 0) mode_row$lower_bound[1] else 1
+        ub        <- if (nrow(mode_row) > 0) mode_row$upper_bound[1] else 6
+        rng_row   <- shared_range_by_mode[shared_range_by_mode$y_axis_mode == mode_str, ]
+        str_range <- if (nrow(rng_row) > 0) rng_row$shared_total_range[1] else 5
+
+        shared_y_limits <- make_shared_id_y_limits(
+          plot_df = plot_df,
+          shared_total_range = str_range,
+          lower_bound = lb,
+          upper_bound = ub
+        )
+
+        create_annotated_plot(
+          plot_df = plot_df,
+          tv = tv,
+          axis_meta_list = axis_meta,
+          y_limits = shared_y_limits,
+          raw_data = datSX_id
+        )
+      })
+
+      plot_list_shared <- Filter(Negate(is.null), plot_list_shared)
+
+      if (length(plot_list_shared) > 0) {
+        if (length(plot_list_shared) < max_plots_per_page) {
+          plot_list_shared <- c(
+            plot_list_shared,
+            rep(list(patchwork::plot_spacer()), max_plots_per_page - length(plot_list_shared))
+          )
+        }
+
+        page_title_label <- gsub("_", " ", page_name)
+        page_title_shared <- paste(
+          "Symptom Trajectories (ID-Scaled Y Axis) \u2014", page_title_label,
+          "\u2014 ID:", current_id, "| Time Variable:", tv
+        )
+        page_subtitle_shared <- paste0(
+          "Shared y-range per scale group (fixed=Likert [1-6]; data=data-driven). ",
+          "Time variable: ", tv
+        )
+
+        final_page_shared <- patchwork::wrap_plots(
+          plotlist = plot_list_shared,
+          ncol = plots_per_col
+        ) +
+          patchwork::plot_annotation(
+            title = page_title_shared,
+            subtitle = page_subtitle_shared,
+            theme = ggplot2::theme(
+              plot.title = ggplot2::element_text(size = 12, face = "bold"),
+              plot.subtitle = ggplot2::element_text(size = 9)
+            )
+          )
+
+        print(final_page_shared)
+      }
+    }
+  }
+
   grDevices::dev.off()
-  message(sprintf("    --- ✅ Saved Report: %s ---", pdf_filename))
+  message(sprintf("    --- \u2705 Saved Report: %s ---", pdf_filename))
 }
 
 # ---- Write long CSV for evaluation across IDs ----
@@ -685,16 +1417,11 @@ if (length(all_ids_signif)) {
   write.csv(dplyr::bind_rows(all_ids_signif), eval_csv, row.names = FALSE)
   message(sprintf("Wrote summary CSV: %s", eval_csv))
 }
-
 ```
 
 ---
 
-### 4. Per-Outcome Exploration PDFs
-
-> **Purpose:** For each DRSP outcome, generates a landscape PDF containing summary statistics, threshold analysis, logistic significance probability curves, peak/trough timing distribution, and individual GAM trajectory pages — significant GAMs first, then non-significant sorted by range. All individual GAM plots share a fixed Y axis within each outcome for cross-person comparison.
-
-#### 4.1: Exploration Analysis Functions
+# Section 6: Per outcome exploration (analysis functions)
 
 ```{r exploration-analysis-functions}
 # =========================================================
@@ -733,7 +1460,6 @@ get_outcome_df <- function(df, target_var) {
       range           = max(range,   na.rm = TRUE),
       n               = max(n,       na.rm = TRUE),
       significant_num = ifelse(any(significant_num == 1, na.rm = TRUE), 1, 0),
-      # Take timing from the most-significant (smallest p) time_var row
       peak_time       = peak_time[which.min(p.value)][1],
       trough_time     = trough_time[which.min(p.value)][1],
       best_time_var   = time_var[which.min(p.value)][1],
@@ -940,6 +1666,57 @@ get_drsp_variables <- function(df) {
     .[grepl("^drsp", ., ignore.case = TRUE)]
 }
 
+# --- Combined overlay GAM plot for a group of participants ---
+# Overlays individual GAM fitted curves on a single plot.
+# fit_results_list: named list (keyed by id) of fit_outcome() results
+# ids: character vector of participant IDs to include
+# tv: time variable name
+# axis_meta_list: axis metadata (labels, reference lines)
+# outcome_label: display label for the outcome
+# title_prefix: e.g., "Significant GAMs" or "Non-Significant GAMs"
+plot_overlay_gam <- function(fit_results_list, ids, tv, axis_meta_list,
+                             outcome_label, title_prefix) {
+  meta <- axis_meta_list[[tv]]
+
+  overlay_data <- do.call(rbind, lapply(ids, function(qid) {
+    res <- fit_results_list[[as.character(qid)]]
+    if (is.null(res)) return(NULL)
+    pred_df <- res$pred
+    pred_df$id <- qid
+    pred_df
+  }))
+
+  if (is.null(overlay_data) || nrow(overlay_data) == 0) return(NULL)
+
+  n_people <- length(unique(overlay_data$id))
+
+  p <- ggplot2::ggplot(overlay_data,
+                       ggplot2::aes(x = .data[[tv]], y = estimate, group = id)) +
+    ggplot2::geom_vline(xintercept = meta$menses, color = "red",
+                        linewidth = 0.8) +
+    ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen",
+                        linewidth = 0.8) +
+    ggplot2::geom_line(alpha = 0.4, linewidth = 0.6, color = "#0072B2") +
+    ggplot2::scale_x_continuous(
+      limits = c(-1, 1),
+      breaks = seq(-1, 1, by = 0.5),
+      labels = meta$labels
+    ) +
+    ggplot2::labs(
+      title    = paste0(title_prefix, ": ", outcome_label),
+      subtitle = paste0("N = ", n_people, " participants | Time variable: ", tv),
+      x        = "Cycle Phase",
+      y        = outcome_label
+    ) +
+    ggplot2::theme_minimal(base_size = 14) +
+    ggplot2::theme(
+      plot.title    = ggplot2::element_text(size = 16, face = "bold"),
+      plot.subtitle = ggplot2::element_text(size = 12)
+    )
+
+  p
+}
+
 # --- Peak and trough timing distribution plot for significant participants ---
 plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
   meta <- axis_meta_list[[tv]]
@@ -951,12 +1728,10 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
     dplyr::filter(!is.na(trough_time)) %>%
     dplyr::transmute(time = trough_time, type = "Trough (Min)")
 
-  # Need >= 2 observations per group for density estimation
   if (nrow(tl_peak) < 2 || nrow(tl_trough) < 2) return(NULL)
 
   tl_all <- dplyr::bind_rows(tl_peak, tl_trough)
 
-  # Peaks go upward; troughs are mirrored downward so lower symptoms look lower
   ggplot2::ggplot() +
     ggplot2::geom_density(data = tl_peak,
                           ggplot2::aes(x = time,
@@ -996,7 +1771,7 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
 }
 ```
 
-#### 4.2: Generate Per-Outcome Exploration PDFs
+# Section 7: Per outcome reports (exploration PDF loop)
 
 ```{r generate-explore-pdfs, results='asis'}
 # =========================================================
@@ -1004,18 +1779,16 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
 # =========================================================
 # For each DRSP outcome, generates a landscape PDF containing:
 #   1. Summary page: descriptive stats + threshold table + peak/trough timing
-#   2. Significance probability plot (logistic curve)
-#   3. Histogram of range by significance
-#   4. Empirical + modeled probability plot
+#   2. Combined overlay GAM plot (significant participants only)
+#   3. Combined overlay GAM plot (non-significant participants only)
+#   4. Significance probability plot (logistic curve)
+#   5. Histogram of range by significance
+#   6. Empirical + modeled probability plot
 #   Per time variable:
-#   5. Peak & trough timing density (significant participants)
-#   6+. Individual GAM trajectory pages (fixed Y axes across people):
-#       - Significant with range > 0.33 first, then
-#       - Significant with range <= 0.33, then
-#       - Not significant with range > 0.33
+#   7. Peak & trough timing density (significant participants)
+#   8+. Individual GAM trajectory pages (all IDs, sorted by descending range)
 # =========================================================
 
-# --- Build the exploration summary from in-memory results ---
 if (length(all_ids_signif) > 0) {
   gam_summary_df <- dplyr::bind_rows(all_ids_signif)
 
@@ -1024,6 +1797,7 @@ if (length(all_ids_signif) > 0) {
   dir.create(explore_folder, showWarnings = FALSE, recursive = TRUE)
 
   drsp_vars <- get_drsp_variables(gam_summary_df)
+  all_outcome_vars <- drsp_vars
   cat("Found", length(drsp_vars), "DRSP variables to process\n")
 
   # Thresholds for the exploration
@@ -1046,7 +1820,7 @@ if (length(all_ids_signif) > 0) {
     colhead = list(fg_params = list(hjust = 0.5, x = 0.5, fontface = "bold"))
   )
 
-  for (target_var in drsp_vars) {
+  for (target_var in all_outcome_vars) {
     cat(sprintf("\n=== Processing: %s ===\n", target_var))
 
     # 1. Run exploration analysis
@@ -1061,33 +1835,20 @@ if (length(all_ids_signif) > 0) {
     )
     if (is.null(result)) next
 
-    # 2. Identify qualifying IDs in four groups, each sorted by range descending:
-    #    (a) Significant & range > 0.33
-    #    (b) Significant & range <= 0.33
-    #    (c) Not significant & range > 0.33
-    #    (d) Not significant & range <= 0.33
-    sig_above_cutoff <- result$data %>%
-      dplyr::filter(significant_num == 1 & range > 0.33) %>%
+    # 2. Identify all IDs sorted by range descending, plus sig/nonsig splits for overlay pages
+    sig_ids <- result$data %>%
+      dplyr::filter(significant_num == 1) %>%
       dplyr::arrange(dplyr::desc(range)) %>%
       dplyr::pull(id)
 
-    sig_below_cutoff <- result$data %>%
-      dplyr::filter(significant_num == 1 & range <= 0.33) %>%
+    nonsig_ids <- result$data %>%
+      dplyr::filter(significant_num == 0) %>%
       dplyr::arrange(dplyr::desc(range)) %>%
       dplyr::pull(id)
 
-    nonsig_above_cutoff <- result$data %>%
-      dplyr::filter(significant_num == 0 & range > 0.33) %>%
+    qualifying_ids <- result$data %>%
       dplyr::arrange(dplyr::desc(range)) %>%
       dplyr::pull(id)
-
-    nonsig_below_cutoff <- result$data %>%
-      dplyr::filter(significant_num == 0 & range <= 0.33) %>%
-      dplyr::arrange(dplyr::desc(range)) %>%
-      dplyr::pull(id)
-
-    qualifying_ids <- c(sig_above_cutoff, sig_below_cutoff,
-                        nonsig_above_cutoff, nonsig_below_cutoff)
 
     # 3. Get outcome label
     outcome_label <- if (target_var %in% names(outcomes)) {
@@ -1101,7 +1862,23 @@ if (length(all_ids_signif) > 0) {
                 result$descriptives_overall$n_significant,
                 length(qualifying_ids)))
 
-    # 4. Open PDF
+    # 4. Pre-compute GAM fit results for all qualifying IDs (all time variables)
+    all_fit_results_by_tv <- list()
+    for (tv in time_vars) {
+      tv_fits <- list()
+      for (qid in qualifying_ids) {
+        dat_id <- subset(df, as.character(id) == qid)
+        if (nrow(dat_id) == 0) next
+        res <- tryCatch(
+          fit_outcome(dat_id, target_var, tv, outcomes),
+          error = function(e) NULL
+        )
+        if (!is.null(res)) tv_fits[[as.character(qid)]] <- res
+      }
+      all_fit_results_by_tv[[tv]] <- tv_fits
+    }
+
+    # 5. Open PDF
     pdf_path <- file.path(explore_folder, paste0("Explore_", target_var, ".pdf"))
     grDevices::pdf(pdf_path, width = 11, height = 8.5)
 
@@ -1142,7 +1919,6 @@ if (length(all_ids_signif) > 0) {
       stringsAsFactors = FALSE
     )
 
-    # Add peak/trough timing summary for significant participants, per time_var
     sig_peak_data <- result$data %>%
       dplyr::filter(significant_num == 1, !is.na(peak_time), !is.na(trough_time))
 
@@ -1192,7 +1968,7 @@ if (length(all_ids_signif) > 0) {
     )
     note_grob <- if (length(qualifying_ids) > 0) {
       grid::textGrob(
-        sprintf("Individual GAM pages follow for %d IDs (sig range>0.33, sig range\u22640.33, non-sig range>0.33, non-sig range\u22640.33)",
+        sprintf("Individual GAM pages follow for %d IDs (sorted by descending range)",
                 length(qualifying_ids)),
         gp = grid::gpar(fontsize = 11, fontface = "italic")
       )
@@ -1206,20 +1982,45 @@ if (length(all_ids_signif) > 0) {
     gridExtra::grid.arrange(
       title_grob, subtitle_grob, desc_tbl, thresh_header, thresh_tbl, note_grob,
       ncol = 1,
-      # Heights: title, subtitle, desc table, thresh header, thresh table, note
       heights = grid::unit(c(0.10, 0.05, 0.25, 0.08, 0.38, 0.08), "npc")
     )
 
-    # ---- PAGE 2: Significance Probability Plot ----
+    # ---- PAGE 2: Combined Overlay GAM - Significant Participants ----
+    for (tv in time_vars) {
+      p_sig_overlay <- plot_overlay_gam(
+        fit_results_list = all_fit_results_by_tv[[tv]],
+        ids              = sig_ids,
+        tv               = tv,
+        axis_meta_list   = axis_meta,
+        outcome_label    = outcome_label,
+        title_prefix     = "Significant GAMs (p < .05)"
+      )
+      if (!is.null(p_sig_overlay)) print(p_sig_overlay)
+    }
+
+    # ---- PAGE 3: Combined Overlay GAM - Non-Significant Participants ----
+    for (tv in time_vars) {
+      p_nonsig_overlay <- plot_overlay_gam(
+        fit_results_list = all_fit_results_by_tv[[tv]],
+        ids              = nonsig_ids,
+        tv               = tv,
+        axis_meta_list   = axis_meta,
+        outcome_label    = outcome_label,
+        title_prefix     = "Non-Significant GAMs (p \u2265 .05)"
+      )
+      if (!is.null(p_nonsig_overlay)) print(p_nonsig_overlay)
+    }
+
+    # ---- PAGE 4: Significance Probability Plot ----
     print(result$plot_probability)
 
-    # ---- PAGE 3: Histogram ----
+    # ---- PAGE 5: Histogram ----
     print(result$plot_histogram)
 
-    # ---- PAGE 4: Empirical + Model ----
+    # ---- PAGE 6: Empirical + Model ----
     print(result$plot_empirical)
 
-    # ---- PAGE 5+: Peak & Trough Timing Summary (per time variable) ----
+    # ---- PAGE 7+: Peak & Trough Timing Summary (per time variable) ----
     for (tv in time_vars) {
       sig_timing_data <- result$data %>%
         dplyr::filter(significant_num == 1, best_time_var == tv,
@@ -1233,89 +2034,64 @@ if (length(all_ids_signif) > 0) {
     }
 
     # ---- Individual GAM trajectory plots for all IDs (per time variable) ----
-    # Pre-compute predictions for global y-axis; groups: sig>0.33, sig<=0.33, nonsig>0.33, nonsig<=0.33
+    # All IDs sorted by descending range
     for (tv in time_vars) {
       if (length(qualifying_ids) == 0) next
 
-      # Pre-compute all predictions for global y-axis range
-      all_fit_results <- list()
-      for (qid in qualifying_ids) {
-        dat_id <- subset(df, as.character(id) == qid)
-        if (nrow(dat_id) == 0) next
+      all_fit_results <- all_fit_results_by_tv[[tv]]
 
-        res <- tryCatch(
-          fit_outcome(dat_id, target_var, tv, outcomes),
-          error = function(e) NULL
-        )
-        if (!is.null(res)) all_fit_results[[as.character(qid)]] <- res
+      id_plots <- list()
+      for (qid in qualifying_ids) {
+        res <- all_fit_results[[as.character(qid)]]
+        if (is.null(res)) next
+
+        datSX_qid <- subset(df, as.character(id) == qid)
+        p <- create_annotated_plot(res$pred, tv, axis_meta, raw_data = datSX_qid)
+        if (!is.null(p)) {
+          id_range <- round(res$sig$range, 2)
+          id_n     <- res$sig$n
+          id_pval  <- res$sig$p.value
+          id_stars <- dplyr::case_when(
+            is.finite(id_pval) & id_pval < 0.001 ~ "***",
+            is.finite(id_pval) & id_pval < 0.01  ~ "**",
+            is.finite(id_pval) & id_pval < 0.05  ~ "*",
+            TRUE ~ ""
+          )
+          p <- p + ggplot2::labs(
+            title = sprintf("ID %s %s (range=%.2f, N=%d)", qid, id_stars, id_range, id_n)
+          )
+          # Red title when either positional half has fewer than 5 observations
+          if (isTRUE(res$sig$n_neg < 5) || isTRUE(res$sig$n_nonneg < 5)) {
+            p <- p + ggplot2::theme(
+              plot.title = ggplot2::element_text(size = 10, face = "bold",
+                                                 hjust = 0.5, color = "red")
+            )
+          }
+          id_plots[[length(id_plots) + 1]] <- p
+        }
       }
 
-      groups <- list(
-        list(ids = sig_above_cutoff,
-             label = "Significant, Range > 0.33"),
-        list(ids = sig_below_cutoff,
-             label = "Significant, Range \u2264 0.33"),
-        list(ids = nonsig_above_cutoff,
-             label = "Not Significant, Range > 0.33"),
-        list(ids = nonsig_below_cutoff,
-             label = "Not Significant, Range \u2264 0.33")
-      )
+      if (length(id_plots) > 0) {
+        pages <- split(id_plots,
+                       ceiling(seq_along(id_plots) / max_plots_per_page_exp))
 
-      for (grp in groups) {
-        if (length(grp$ids) == 0) next
-
-        id_plots <- list()
-        for (qid in grp$ids) {
-          res <- all_fit_results[[as.character(qid)]]
-          if (is.null(res)) next
-
-          p <- create_annotated_plot(res$pred, tv, axis_meta)
-          if (!is.null(p)) {
-            id_range <- round(res$sig$range, 2)
-            id_n     <- res$sig$n
-            id_pval  <- res$sig$p.value
-            id_stars <- dplyr::case_when(
-              is.finite(id_pval) & id_pval < 0.001 ~ "***",
-              is.finite(id_pval) & id_pval < 0.01  ~ "**",
-              is.finite(id_pval) & id_pval < 0.05  ~ "*",
-              TRUE ~ ""
-            )
-            p <- p + ggplot2::labs(
-              title = sprintf("ID %s %s (range=%.2f, N=%d)", qid, id_stars, id_range, id_n)
-            )
-            # Red title when either phase has fewer than 5 observations
-            if (isTRUE(res$sig$n_pre < 5) || isTRUE(res$sig$n_post < 5)) {
-              p <- p + ggplot2::theme(
-                plot.title = ggplot2::element_text(size = 10, face = "bold",
-                                                   hjust = 0.5, color = "red")
-              )
-            }
-            id_plots[[length(id_plots) + 1]] <- p
+        for (page_plots in pages) {
+          if (length(page_plots) < max_plots_per_page_exp) {
+            page_plots <- c(page_plots,
+                           rep(list(patchwork::plot_spacer()),
+                               max_plots_per_page_exp - length(page_plots)))
           }
-        }
-
-        if (length(id_plots) > 0) {
-          pages <- split(id_plots,
-                         ceiling(seq_along(id_plots) / max_plots_per_page_exp))
-
-          for (page_plots in pages) {
-            if (length(page_plots) < max_plots_per_page_exp) {
-              page_plots <- c(page_plots,
-                             rep(list(patchwork::plot_spacer()),
-                                 max_plots_per_page_exp - length(page_plots)))
-            }
-            final_page <- patchwork::wrap_plots(plotlist = page_plots,
-                                                ncol = plots_per_col_exp) +
-              patchwork::plot_annotation(
-                title    = paste(grp$label, ":", outcome_label),
-                subtitle = paste("Time variable:", tv),
-                theme    = ggplot2::theme(
-                  plot.title    = ggplot2::element_text(size = 14, face = "bold"),
-                  plot.subtitle = ggplot2::element_text(size = 11)
-                )
+          final_page <- patchwork::wrap_plots(plotlist = page_plots,
+                                              ncol = plots_per_col_exp) +
+            patchwork::plot_annotation(
+              title    = paste("Individual GAMs:", outcome_label),
+              subtitle = paste("Sorted by descending range | Time variable:", tv),
+              theme    = ggplot2::theme(
+                plot.title    = ggplot2::element_text(size = 12, face = "bold"),
+                plot.subtitle = ggplot2::element_text(size = 9)
               )
-            print(final_page)
-          }
+            )
+          print(final_page)
         }
       }
     }
