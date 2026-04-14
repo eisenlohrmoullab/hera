@@ -1470,8 +1470,8 @@ if (length(all_ids_signif) > 0) {
       `Median Range` = sprintf("%.2f", median_range),
       `Mean Range`  = sprintf("%.2f", mean_range),
       `SD Range`    = sprintf("%.2f", sd_range),
-      `IQR`         = sprintf("%.2f\u2013%.2f", q25_range, q75_range),
-      `Min\u2013Max`  = sprintf("%.2f\u2013%.2f", min_range, max_range),
+      `IQR`         = sprintf("%.2f-%.2f", q25_range, q75_range),
+      `Min-Max`     = sprintf("%.2f-%.2f", min_range, max_range),
       `N Sig`       = n_sig,
       `% Sig`       = sprintf("%.1f%%", pct_sig),
       `N \u22651.5`  = n_range15,
@@ -1556,7 +1556,7 @@ if (length(all_ids_signif) > 0) {
       x = "Number of outcomes with range \u2265 1.5",
       y = "Number of participants"
     ) +
-    ggplot2::scale_x_continuous(breaks = seq(0, max(ids_range15_all$n_outcomes_range15, na.rm = TRUE))) +
+    ggplot2::scale_x_continuous(breaks = seq(0, max(c(0, ids_range15_all$n_outcomes_range15), na.rm = TRUE))) +
     ggplot2::theme_minimal(base_size = 12) +
     ggplot2::theme(plot.title = ggplot2::element_text(face = "bold", size = 14))
   print(p_count_hist)
