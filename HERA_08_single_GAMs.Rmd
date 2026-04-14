@@ -1363,13 +1363,14 @@ if (length(all_ids_signif) > 0) {
   all_affective_outcomes <- c(affective_raw_drsp, affective_composites)
 
   # --- Per-ID summary: best result per outcome (one row per id × variable) ---
+  # Use finite-safe aggregation to avoid Inf/-Inf when all values are NA.
   id_outcome_summary <- gam_summary_all %>%
     dplyr::group_by(id, variable) %>%
     dplyr::summarise(
-      best_p      = min(p.value, na.rm = TRUE),
-      best_range  = max(range, na.rm = TRUE),
-      best_n      = max(n, na.rm = TRUE),
-      sig         = any(p.value < 0.05, na.rm = TRUE),
+      best_p      = ifelse(any(is.finite(p.value)), min(p.value[is.finite(p.value)]), NA_real_),
+      best_range  = ifelse(any(is.finite(range)),   max(range[is.finite(range)]),     NA_real_),
+      best_n      = ifelse(any(is.finite(n)),        max(n[is.finite(n)]),             NA_real_),
+      sig         = any(is.finite(p.value) & p.value < 0.05, na.rm = TRUE),
       .groups     = "drop"
     )
 
@@ -1378,14 +1379,15 @@ if (length(all_ids_signif) > 0) {
 
   # --- KEY METRIC 1: % of sample with at least one symptom/composite range >= 1.5 ---
   ids_any_range15 <- id_outcome_summary %>%
-    dplyr::filter(best_range >= 1.5) %>%
+    dplyr::filter(is.finite(best_range) & best_range >= 1.5) %>%
     dplyr::distinct(id) %>%
     dplyr::pull(id)
   pct_any_range15 <- length(ids_any_range15) / n_sample * 100
 
   # --- KEY METRIC 2: % of sample with at least one affective symptom/composite range >= 1.5 ---
   ids_affective_range15 <- id_outcome_summary %>%
-    dplyr::filter(variable %in% all_affective_outcomes, best_range >= 1.5) %>%
+    dplyr::filter(variable %in% all_affective_outcomes,
+                  is.finite(best_range) & best_range >= 1.5) %>%
     dplyr::distinct(id) %>%
     dplyr::pull(id)
   pct_affective_range15 <- length(ids_affective_range15) / n_sample * 100
@@ -1405,8 +1407,8 @@ if (length(all_ids_signif) > 0) {
       max_range   = max(best_range, na.rm = TRUE),
       n_sig       = sum(sig, na.rm = TRUE),
       pct_sig     = mean(sig, na.rm = TRUE) * 100,
-      n_range15   = sum(best_range >= 1.5, na.rm = TRUE),
-      pct_range15 = sum(best_range >= 1.5, na.rm = TRUE) / dplyr::n() * 100,
+      n_range15   = sum(is.finite(best_range) & best_range >= 1.5, na.rm = TRUE),
+      pct_range15 = sum(is.finite(best_range) & best_range >= 1.5, na.rm = TRUE) / dplyr::n() * 100,
       .groups     = "drop"
     ) %>%
     dplyr::left_join(
@@ -1536,7 +1538,7 @@ if (length(all_ids_signif) > 0) {
 
   # ---- PAGE 4: Per-person count of outcomes meeting range >= 1.5 ----
   ids_range15_count <- id_outcome_summary %>%
-    dplyr::filter(best_range >= 1.5) %>%
+    dplyr::filter(is.finite(best_range) & best_range >= 1.5) %>%
     dplyr::group_by(id) %>%
     dplyr::summarise(n_outcomes_range15 = dplyr::n(), .groups = "drop")
 
@@ -1580,7 +1582,10 @@ if (length(all_ids_signif) > 0) {
   print(p_median_bar)
 
   # ---- PAGE 6: % Significant and % Range >= 1.5 by outcome (side-by-side bars) ----
+  # Precompute ordering by % Range >= 1.5 before pivoting so both metrics
+  # share a consistent outcome order (rather than ordering by the mean of both).
   pct_data <- outcome_desc %>%
+    dplyr::mutate(label = factor(label, levels = label[order(pct_range15)])) %>%
     dplyr::select(label, pct_sig, pct_range15) %>%
     tidyr::pivot_longer(cols = c(pct_sig, pct_range15),
                         names_to = "metric", values_to = "pct") %>%
@@ -1593,7 +1598,7 @@ if (length(all_ids_signif) > 0) {
     )
 
   p_pct_bars <- ggplot2::ggplot(pct_data,
-                                 ggplot2::aes(x = reorder(label, pct),
+                                 ggplot2::aes(x = label,
                                               y = pct, fill = metric)) +
     ggplot2::geom_col(position = "dodge", alpha = 0.8) +
     ggplot2::coord_flip() +
