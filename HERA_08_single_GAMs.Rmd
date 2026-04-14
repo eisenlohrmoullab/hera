@@ -1477,8 +1477,8 @@ if (length(all_ids_signif) > 0) {
       `Min-Max`     = sprintf("%.2f-%.2f", min_range, max_range),
       `N Sig`       = n_sig,
       `% Sig`       = sprintf("%.1f%%", pct_sig),
-      `N \u22651.5`  = n_range15,
-      `% \u22651.5`  = sprintf("%.1f%%", pct_range15)
+      `N ≥1.5`  = n_range15,
+      `% ≥1.5`  = sprintf("%.1f%%", pct_range15)
     )
 
   desc_theme <- gridExtra::ttheme_default(
