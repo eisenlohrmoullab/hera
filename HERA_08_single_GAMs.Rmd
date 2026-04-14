@@ -503,7 +503,7 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
 
   # Dynamic expansion for composite outcomes: expand y_max to 5 or 6 if predictions exceed it
   is_composite <- !grepl(DRSP_VAR_PATTERN, outcome_var)
-  if (is_composite && !is.null(y_limits)) {
+  if (is_composite && !is.null(y_limits) && any(is.finite(plot_df$estimate))) {
     max_pred <- max(plot_df$estimate, na.rm = TRUE)
     expanded_ymax <- expand_composite_ymax(y_limits[2], max_pred)
     if (expanded_ymax > y_limits[2]) {
@@ -1158,7 +1158,7 @@ for (current_id in ids_to_run) {
     # Compute dynamic Y-max for composites: default 4, expand if predictions exceed
     composite_pred <- preds_by_tv[[tv]] %>% dplyr::filter(outcome_var %in% composite_vars)
     composite_ymax <- 4
-    if (nrow(composite_pred) > 0) {
+    if (nrow(composite_pred) > 0 && any(is.finite(composite_pred$estimate))) {
       max_est <- max(composite_pred$estimate, na.rm = TRUE)
       composite_ymax <- expand_composite_ymax(4, max_est)
     }
@@ -1998,7 +1998,9 @@ plot_overlay_gam <- function(fit_results_list, ids, tv, axis_meta_list,
 
   # Apply composite-specific Y-axis limits (1-4, expanding to 5 or 6 if needed)
   if (!is.null(outcome_var) && !grepl(DRSP_VAR_PATTERN, outcome_var)) {
-    max_pred <- max(overlay_data$estimate, na.rm = TRUE)
+    estimate_vals <- overlay_data$estimate
+    finite_estimate_vals <- estimate_vals[is.finite(estimate_vals)]
+    max_pred <- if (length(finite_estimate_vals) > 0) max(finite_estimate_vals) else NA_real_
     comp_ymax <- expand_composite_ymax(4, max_pred)
     p <- p +
       ggplot2::scale_y_continuous(breaks = seq(1, comp_ymax, by = 1)) +
