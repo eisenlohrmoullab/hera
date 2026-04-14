@@ -33,15 +33,16 @@ set.seed(12345)
 
 # Data
 ```{r}
-df <- readRDS('/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/02_datasets_output/HERA_20260319_clean.rds')
+
+df <- readRDS('/Users/toryeisenlohr-moul/Library/CloudStorage/Box-Box/00 - CLEAR Lab (Locked Folders)/02 - Data Management, Analysis, and Papers/Studies_Projects/HERA/03_analytic_projects/HERA-Primary ms/02_datasets_output/HERA_20260414_clean.rds')
 ```
 
 # TEST CHUNK - KEEP COMMENTED OUT UNLESS TESTING
 
 ```{r}
-#set.seed(12345)
-#test_ids <- sample(unique(df$id), 5)
-#df <- df %>% filter(id %in% test_ids)
+set.seed(12345)
+test_ids <- sample(unique(df$id), 5)
+df <- df %>% filter(id %in% test_ids)
 ```
 
 # Section 1: Set output folder & time vars
