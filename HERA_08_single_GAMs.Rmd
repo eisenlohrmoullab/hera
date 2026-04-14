@@ -660,7 +660,7 @@ for (current_id in ids_to_run) {
   }
   grDevices::pdf(pdf_filename, width = 11, height = 8.5)   # LANDSCAPE
 
-  # ---- Page 0: Raw data coverage (P4 + DRSP Negative Affect) ----
+  # ---- Page 0: Raw data coverage (Joint/Muscle Pain + DRSP Negative Affect) ----
   # Shows raw data points across the cycle variable so the reader can quickly
   # judge whether there is enough data across phases for interpretation.
   # This page is always produced, even if GAMs cannot be run.
@@ -728,8 +728,8 @@ for (current_id in ids_to_run) {
       p
     }
 
-    p_p4     <- make_raw_panel(datSX_id, tv0, meta0, "P4",
-                               "Progesterone (P4)", "#7570B3")
+    p_joint  <- make_raw_panel(datSX_id, tv0, meta0, "drsp_21",
+                               "Joint/Muscle Pain (DRSP 21)", "#CC6677")
     p_drsp_na <- make_raw_panel(datSX_id, tv0, meta0, "drsp_NA",
                                 "DRSP Negative Affect Mean", "#D55E00")
 
@@ -748,7 +748,7 @@ for (current_id in ids_to_run) {
       )
     }
 
-    p_cover <- p_p4 / p_drsp_na +
+    p_cover <- p_joint / p_drsp_na +
       patchwork::plot_annotation(
         title    = paste0("Raw Data Coverage \u2014 ID: ", current_id),
         subtitle = coverage_subtitle,
@@ -948,89 +948,6 @@ for (current_id in ids_to_run) {
       ncol = 1,
       heights = grid::unit(c(0.12, 0.06, 0.82), "npc")
     )
-  }
-
-  # ---- Person-Specific Peak & Trough Timing Distribution ----
-  # Separate density plots for Physical vs Affect symptoms
-  # Only raw DRSP items with p < .05 or range >= 1.5
-  for (tv in names(sig_by_tv)) {
-    sig_tv <- sig_by_tv[[tv]]
-    if (nrow(sig_tv) == 0) next
-
-    sig_tv_raw <- sig_tv %>%
-      dplyr::filter(grepl("^drsp_\\d+$", variable)) %>%
-      dplyr::filter(
-        (is.finite(p.value) & p.value < 0.05) |
-        (is.finite(range) & range >= 1.5)
-      )
-    if (nrow(sig_tv_raw) == 0) next
-
-    meta <- axis_meta[[tv]]
-
-    make_timing_density <- function(sig_subset, category_label, max_n) {
-      tl <- dplyr::bind_rows(
-        sig_subset %>% dplyr::filter(!is.na(peak_time)) %>%
-          dplyr::transmute(time = peak_time, type = "Peak (Max)", outcome = outcome_label),
-        sig_subset %>% dplyr::filter(!is.na(trough_time)) %>%
-          dplyr::transmute(time = trough_time, type = "Trough (Min)", outcome = outcome_label)
-      )
-      if (nrow(tl) < 4) return(NULL)
-
-      tl_peak   <- dplyr::filter(tl, type == "Peak (Max)")
-      tl_trough <- dplyr::filter(tl, type == "Trough (Min)")
-
-      if (nrow(tl_peak) < 2 || nrow(tl_trough) < 2) return(NULL)
-
-      ggplot2::ggplot() +
-        ggplot2::geom_density(data = tl_peak,
-                              ggplot2::aes(x = time,
-                                           y = ggplot2::after_stat(ndensity) * max_n,
-                                           fill = "Peak (Max)", color = "Peak (Max)"),
-                              alpha = 0.3, adjust = 1.2) +
-        ggplot2::geom_density(data = tl_trough,
-                              ggplot2::aes(x = time,
-                                           y = -ggplot2::after_stat(ndensity) * max_n,
-                                           fill = "Trough (Min)", color = "Trough (Min)"),
-                              alpha = 0.3, adjust = 1.2) +
-        ggplot2::geom_rug(data = tl, ggplot2::aes(x = time, color = type),
-                          alpha = 0.5, length = grid::unit(0.03, "npc")) +
-        ggplot2::geom_hline(yintercept = 0, linewidth = 0.5, color = "grey40") +
-        ggplot2::geom_vline(xintercept = meta$menses, color = "red", linewidth = 0.8,
-                            linetype = "dashed") +
-        ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen", linewidth = 0.8,
-                            linetype = "dashed") +
-        ggplot2::scale_x_continuous(limits = c(-1, 1), breaks = seq(-1, 1, by = 0.5),
-                                    labels = meta$labels) +
-        ggplot2::scale_y_continuous(limits = c(-max_n, max_n),
-                                    breaks = seq(-max_n, max_n, by = 1),
-                                    labels = abs) +
-        ggplot2::labs(
-          title = paste0(category_label, " Symptoms \u2014 ID: ", current_id),
-          subtitle = paste0("Items with p < .05 or range \u2265 1.5  |  ",
-                            "N outcomes = ", nrow(sig_subset), " / ", max_n,
-                            "  |  Time variable: ", tv),
-          x = "Cycle Phase",
-          y = paste0("Peaks \u2191 / Troughs \u2193 (0\u2013", max_n, " scale)"),
-          fill = NULL, color = NULL
-        ) +
-        ggplot2::theme_minimal(base_size = 12) +
-        ggplot2::scale_fill_manual(values = c("Peak (Max)" = "#D55E00",
-                                              "Trough (Min)" = "#0072B2")) +
-        ggplot2::scale_color_manual(values = c("Peak (Max)" = "#D55E00",
-                                               "Trough (Min)" = "#0072B2"))
-    }
-
-    p_physical <- make_timing_density(
-      sig_tv_raw %>% dplyr::filter(variable %in% physical_symptoms), "Physical",
-      n_physical_max
-    )
-    p_affect <- make_timing_density(
-      sig_tv_raw %>% dplyr::filter(!variable %in% physical_symptoms), "Affect",
-      n_affect_max
-    )
-
-    if (!is.null(p_physical)) print(p_physical)
-    if (!is.null(p_affect))   print(p_affect)
   }
 
   # ---- Helper: generate an overlay page for qualifying GAM curves ----
@@ -1418,6 +1335,287 @@ if (length(all_ids_signif)) {
   eval_csv <- file.path(output_folder, paste0("participant_significance_summary_", current_date, ".csv"))
   write.csv(dplyr::bind_rows(all_ids_signif), eval_csv, row.names = FALSE)
   message(sprintf("Wrote summary CSV: %s", eval_csv))
+}
+```
+
+# Section 5b: Overall Sample Summary Report
+```{r overall-summary-report}
+# =========================================================
+# OVERALL SAMPLE SUMMARY REPORT
+# Generates a landscape PDF summarizing the distributions and
+# descriptives of cyclical symptom change across the full sample.
+# =========================================================
+
+if (length(all_ids_signif) > 0) {
+  gam_summary_all <- dplyr::bind_rows(all_ids_signif)
+
+  overall_pdf <- file.path(output_folder, paste0("Overall_Sample_Summary_", current_date, ".pdf"))
+  grDevices::pdf(overall_pdf, width = 11, height = 8.5)
+
+  # --- Classify outcomes for affective calculations ---
+  # Affective raw DRSP items: all individual DRSP items EXCEPT physical symptoms
+  affective_raw_drsp <- setdiff(all_raw_drsp, physical_symptoms)
+
+  # Affective composites: composites capturing mood/affect constructs
+  affective_composites <- c("drsp_NA", "drsp_distress", "drsp_labilsocsx", "drsp_lowarousal")
+
+  # All affective outcomes (raw + composite)
+  all_affective_outcomes <- c(affective_raw_drsp, affective_composites)
+
+  # --- Per-ID summary: best result per outcome (one row per id × variable) ---
+  id_outcome_summary <- gam_summary_all %>%
+    dplyr::group_by(id, variable) %>%
+    dplyr::summarise(
+      best_p      = min(p.value, na.rm = TRUE),
+      best_range  = max(range, na.rm = TRUE),
+      best_n      = max(n, na.rm = TRUE),
+      sig         = any(p.value < 0.05, na.rm = TRUE),
+      .groups     = "drop"
+    )
+
+  all_ids <- unique(gam_summary_all$id)
+  n_sample <- length(all_ids)
+
+  # --- KEY METRIC 1: % of sample with at least one symptom/composite range >= 1.5 ---
+  ids_any_range15 <- id_outcome_summary %>%
+    dplyr::filter(best_range >= 1.5) %>%
+    dplyr::distinct(id) %>%
+    dplyr::pull(id)
+  pct_any_range15 <- length(ids_any_range15) / n_sample * 100
+
+  # --- KEY METRIC 2: % of sample with at least one affective symptom/composite range >= 1.5 ---
+  ids_affective_range15 <- id_outcome_summary %>%
+    dplyr::filter(variable %in% all_affective_outcomes, best_range >= 1.5) %>%
+    dplyr::distinct(id) %>%
+    dplyr::pull(id)
+  pct_affective_range15 <- length(ids_affective_range15) / n_sample * 100
+
+  # ---- PAGE 1: Overall Descriptive Summary ----
+  # Per-outcome descriptive statistics across all participants
+  outcome_desc <- id_outcome_summary %>%
+    dplyr::group_by(variable) %>%
+    dplyr::summarise(
+      N           = dplyr::n(),
+      mean_range  = mean(best_range, na.rm = TRUE),
+      sd_range    = sd(best_range, na.rm = TRUE),
+      median_range = median(best_range, na.rm = TRUE),
+      q25_range   = quantile(best_range, 0.25, na.rm = TRUE),
+      q75_range   = quantile(best_range, 0.75, na.rm = TRUE),
+      min_range   = min(best_range, na.rm = TRUE),
+      max_range   = max(best_range, na.rm = TRUE),
+      n_sig       = sum(sig, na.rm = TRUE),
+      pct_sig     = mean(sig, na.rm = TRUE) * 100,
+      n_range15   = sum(best_range >= 1.5, na.rm = TRUE),
+      pct_range15 = sum(best_range >= 1.5, na.rm = TRUE) / dplyr::n() * 100,
+      .groups     = "drop"
+    ) %>%
+    dplyr::left_join(
+      tibble::enframe(outcomes, name = "variable", value = "label"),
+      by = "variable"
+    ) %>%
+    dplyr::mutate(label = dplyr::coalesce(label, variable)) %>%
+    dplyr::arrange(dplyr::desc(median_range))
+
+  # Key metrics summary table
+  key_metrics <- data.frame(
+    Metric = c(
+      "Total Participants in Sample",
+      "N with \u2265 1 symptom/composite range \u2265 1.5",
+      "% with \u2265 1 symptom/composite range \u2265 1.5",
+      "N with \u2265 1 affective symptom/composite range \u2265 1.5",
+      "% with \u2265 1 affective symptom/composite range \u2265 1.5"
+    ),
+    Value = c(
+      as.character(n_sample),
+      as.character(length(ids_any_range15)),
+      sprintf("%.1f%%", pct_any_range15),
+      as.character(length(ids_affective_range15)),
+      sprintf("%.1f%%", pct_affective_range15)
+    ),
+    stringsAsFactors = FALSE
+  )
+
+  key_theme <- gridExtra::ttheme_default(
+    base_size = 11,
+    core    = list(fg_params = list(hjust = 0, x = 0.05)),
+    colhead = list(fg_params = list(hjust = 0, x = 0.05, fontface = "bold"))
+  )
+
+  title_grob <- grid::textGrob(
+    "Overall Sample Summary \u2014 Cyclical Symptom Change",
+    gp = grid::gpar(fontsize = 18, fontface = "bold")
+  )
+  subtitle_grob <- grid::textGrob(
+    paste0("Based on GAM results across ", n_sample, " participants"),
+    gp = grid::gpar(fontsize = 12, fontface = "italic")
+  )
+  key_tbl <- gridExtra::tableGrob(key_metrics, rows = NULL, theme = key_theme)
+  note_grob <- grid::textGrob(
+    paste0("Affective outcomes include: raw DRSP emotional/affective items (excl. physical) ",
+           "and composites (Neg. Affect, Distress, Social/Affect Lability, Low Arousal)"),
+    gp = grid::gpar(fontsize = 8, fontface = "italic")
+  )
+
+  gridExtra::grid.arrange(
+    title_grob, subtitle_grob, key_tbl, note_grob,
+    ncol = 1,
+    heights = grid::unit(c(0.10, 0.06, 0.72, 0.08), "npc")
+  )
+
+  # ---- PAGE 2: Per-Outcome Range Descriptives Table ----
+  display_desc <- outcome_desc %>%
+    dplyr::transmute(
+      Outcome       = label,
+      N             = N,
+      `Median Range` = sprintf("%.2f", median_range),
+      `Mean Range`  = sprintf("%.2f", mean_range),
+      `SD Range`    = sprintf("%.2f", sd_range),
+      `IQR`         = sprintf("%.2f\u2013%.2f", q25_range, q75_range),
+      `Min\u2013Max`  = sprintf("%.2f\u2013%.2f", min_range, max_range),
+      `N Sig`       = n_sig,
+      `% Sig`       = sprintf("%.1f%%", pct_sig),
+      `N \u22651.5`  = n_range15,
+      `% \u22651.5`  = sprintf("%.1f%%", pct_range15)
+    )
+
+  desc_theme <- gridExtra::ttheme_default(
+    base_size = 7,
+    core    = list(fg_params = list(hjust = 0, x = 0.02)),
+    colhead = list(fg_params = list(hjust = 0.5, x = 0.5, fontface = "bold")),
+    padding = grid::unit(c(2, 1.5), "mm")
+  )
+
+  title2 <- grid::textGrob(
+    "Per-Outcome Range Descriptives (sorted by median range)",
+    gp = grid::gpar(fontsize = 14, fontface = "bold")
+  )
+  note2 <- grid::textGrob(
+    "Range = max(predicted) \u2013 min(predicted) on original scale; Sig = p < .05",
+    gp = grid::gpar(fontsize = 9, fontface = "italic")
+  )
+  desc_tbl <- gridExtra::tableGrob(display_desc, rows = NULL, theme = desc_theme)
+  gridExtra::grid.arrange(
+    title2, note2, desc_tbl,
+    ncol = 1,
+    heights = grid::unit(c(0.08, 0.05, 0.87), "npc")
+  )
+
+  # ---- PAGE 3: Distribution of Ranges (histogram faceted by outcome) ----
+  # Show range distributions for all outcomes, faceted
+  range_plot_data <- id_outcome_summary %>%
+    dplyr::left_join(
+      tibble::enframe(outcomes, name = "variable", value = "label"),
+      by = "variable"
+    ) %>%
+    dplyr::mutate(label = dplyr::coalesce(label, variable))
+
+  p_range_dist <- ggplot2::ggplot(range_plot_data,
+                                   ggplot2::aes(x = best_range, fill = sig)) +
+    ggplot2::geom_histogram(bins = 20, alpha = 0.7, position = "identity") +
+    ggplot2::geom_vline(xintercept = 1.5, color = "red", linetype = "dashed",
+                        linewidth = 0.6) +
+    ggplot2::facet_wrap(~ label, scales = "free_y", ncol = 4) +
+    ggplot2::scale_fill_manual(
+      values = c("TRUE" = "#0072B2", "FALSE" = "#999999"),
+      labels = c("TRUE" = "Significant", "FALSE" = "Not Significant"),
+      name = NULL
+    ) +
+    ggplot2::labs(
+      title = "Distribution of GAM Ranges Across Participants",
+      subtitle = "Red dashed line = range \u2265 1.5 threshold",
+      x = "Range (max \u2013 min predicted)",
+      y = "Count"
+    ) +
+    ggplot2::theme_minimal(base_size = 8) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold", size = 12),
+      strip.text = ggplot2::element_text(size = 6),
+      legend.position = "bottom"
+    )
+  print(p_range_dist)
+
+  # ---- PAGE 4: Per-person count of outcomes meeting range >= 1.5 ----
+  ids_range15_count <- id_outcome_summary %>%
+    dplyr::filter(best_range >= 1.5) %>%
+    dplyr::group_by(id) %>%
+    dplyr::summarise(n_outcomes_range15 = dplyr::n(), .groups = "drop")
+
+  # Include IDs with zero qualifying outcomes
+  ids_range15_all <- tibble::tibble(id = all_ids) %>%
+    dplyr::left_join(ids_range15_count, by = "id") %>%
+    dplyr::mutate(n_outcomes_range15 = dplyr::coalesce(n_outcomes_range15, 0L))
+
+  p_count_hist <- ggplot2::ggplot(ids_range15_all,
+                                   ggplot2::aes(x = n_outcomes_range15)) +
+    ggplot2::geom_histogram(binwidth = 1, fill = "#0072B2", color = "white", alpha = 0.8) +
+    ggplot2::labs(
+      title = "Number of Outcomes with Range \u2265 1.5 per Participant",
+      subtitle = paste0("N = ", n_sample, " participants; ",
+                        sprintf("%.1f%%", pct_any_range15),
+                        " have at least one outcome with range \u2265 1.5"),
+      x = "Number of outcomes with range \u2265 1.5",
+      y = "Number of participants"
+    ) +
+    ggplot2::scale_x_continuous(breaks = seq(0, max(ids_range15_all$n_outcomes_range15, na.rm = TRUE))) +
+    ggplot2::theme_minimal(base_size = 12) +
+    ggplot2::theme(plot.title = ggplot2::element_text(face = "bold", size = 14))
+  print(p_count_hist)
+
+  # ---- PAGE 5: Median range by outcome (bar chart) ----
+  p_median_bar <- ggplot2::ggplot(outcome_desc,
+                                   ggplot2::aes(x = reorder(label, median_range),
+                                                y = median_range)) +
+    ggplot2::geom_col(fill = "#0072B2", alpha = 0.8) +
+    ggplot2::geom_hline(yintercept = 1.5, color = "red", linetype = "dashed",
+                        linewidth = 0.6) +
+    ggplot2::coord_flip() +
+    ggplot2::labs(
+      title = "Median GAM Range by Outcome",
+      subtitle = "Red dashed line = range \u2265 1.5 threshold",
+      x = NULL,
+      y = "Median Range"
+    ) +
+    ggplot2::theme_minimal(base_size = 10) +
+    ggplot2::theme(plot.title = ggplot2::element_text(face = "bold", size = 14))
+  print(p_median_bar)
+
+  # ---- PAGE 6: % Significant and % Range >= 1.5 by outcome (side-by-side bars) ----
+  pct_data <- outcome_desc %>%
+    dplyr::select(label, pct_sig, pct_range15) %>%
+    tidyr::pivot_longer(cols = c(pct_sig, pct_range15),
+                        names_to = "metric", values_to = "pct") %>%
+    dplyr::mutate(
+      metric = dplyr::case_when(
+        metric == "pct_sig"     ~ "% Significant (p < .05)",
+        metric == "pct_range15" ~ "% Range \u2265 1.5",
+        TRUE ~ metric
+      )
+    )
+
+  p_pct_bars <- ggplot2::ggplot(pct_data,
+                                 ggplot2::aes(x = reorder(label, pct),
+                                              y = pct, fill = metric)) +
+    ggplot2::geom_col(position = "dodge", alpha = 0.8) +
+    ggplot2::coord_flip() +
+    ggplot2::scale_fill_manual(values = c("% Significant (p < .05)" = "#0072B2",
+                                          "% Range \u2265 1.5" = "#D55E00")) +
+    ggplot2::labs(
+      title = "Percentage of Sample: Significant and Range \u2265 1.5 by Outcome",
+      x = NULL,
+      y = "Percentage",
+      fill = NULL
+    ) +
+    ggplot2::theme_minimal(base_size = 10) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold", size = 13),
+      legend.position = "bottom"
+    )
+  print(p_pct_bars)
+
+  grDevices::dev.off()
+  message(sprintf("Wrote overall summary report: %s", overall_pdf))
+} else {
+  message("No significance data available; skipping overall summary report.")
 }
 ```
 
