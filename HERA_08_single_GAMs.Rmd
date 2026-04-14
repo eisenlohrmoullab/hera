@@ -1407,25 +1407,41 @@ if (length(all_ids_signif) > 0) {
     )
 
   all_ids <- unique(gam_summary_all$id)
-  n_sample <- length(all_ids)
+  n_gam_valid <- length(all_ids)
+  n_total_sample <- length(unique(df$id))
 
-  # --- KEY METRIC 1: % of sample with at least one symptom/composite range >= 1.5 ---
+  # --- KEY METRIC 1: % of GAM-valid sample with at least one symptom/composite range >= 1.5 ---
   ids_any_range15 <- id_outcome_summary %>%
     dplyr::filter(is.finite(best_range) & best_range >= 1.5) %>%
     dplyr::distinct(id) %>%
     dplyr::pull(id)
-  pct_any_range15 <- length(ids_any_range15) / n_sample * 100
+  pct_any_range15 <- length(ids_any_range15) / n_gam_valid * 100
 
-  # --- KEY METRIC 2: % of sample with at least one affective symptom/composite range >= 1.5 ---
+  # --- KEY METRIC 2: % of GAM-valid sample with at least one affective symptom/composite range >= 1.5 ---
   ids_affective_range15 <- id_outcome_summary %>%
     dplyr::filter(variable %in% all_affective_outcomes,
                   is.finite(best_range) & best_range >= 1.5) %>%
     dplyr::distinct(id) %>%
     dplyr::pull(id)
-  pct_affective_range15 <- length(ids_affective_range15) / n_sample * 100
+  pct_affective_range15 <- length(ids_affective_range15) / n_gam_valid * 100
+
+  # --- KEY METRIC 3: % of GAM-valid sample with at least one significant GAM (any outcome) ---
+  ids_any_sig <- id_outcome_summary %>%
+    dplyr::filter(sig) %>%
+    dplyr::distinct(id) %>%
+    dplyr::pull(id)
+  pct_any_sig <- length(ids_any_sig) / n_gam_valid * 100
+
+  # --- KEY METRIC 4: % of GAM-valid sample with at least one significant affective GAM ---
+  ids_affective_sig <- id_outcome_summary %>%
+    dplyr::filter(variable %in% all_affective_outcomes, sig) %>%
+    dplyr::distinct(id) %>%
+    dplyr::pull(id)
+  pct_affective_sig <- length(ids_affective_sig) / n_gam_valid * 100
 
   # ---- PAGE 1: Overall Descriptive Summary ----
   # Per-outcome descriptive statistics across all participants
+  # Percentages use n_gam_valid (participants with valid GAM data) as denominator
   outcome_desc <- id_outcome_summary %>%
     dplyr::group_by(variable) %>%
     dplyr::summarise(
@@ -1438,9 +1454,9 @@ if (length(all_ids_signif) > 0) {
       min_range   = min(best_range, na.rm = TRUE),
       max_range   = max(best_range, na.rm = TRUE),
       n_sig       = sum(sig, na.rm = TRUE),
-      pct_sig     = mean(sig, na.rm = TRUE) * 100,
+      pct_sig     = sum(sig, na.rm = TRUE) / n_gam_valid * 100,
       n_range15   = sum(is.finite(best_range) & best_range >= 1.5, na.rm = TRUE),
-      pct_range15 = sum(is.finite(best_range) & best_range >= 1.5, na.rm = TRUE) / dplyr::n() * 100,
+      pct_range15 = sum(is.finite(best_range) & best_range >= 1.5, na.rm = TRUE) / n_gam_valid * 100,
       .groups     = "drop"
     ) %>%
     dplyr::left_join(
@@ -1453,14 +1469,28 @@ if (length(all_ids_signif) > 0) {
   # Key metrics summary table
   key_metrics <- data.frame(
     Metric = c(
-      "Total Participants in Sample",
+      "Total Participants in Data",
+      "Participants with Valid GAM Data",
+      "",
+      "N with \u2265 1 significant GAM (any outcome)",
+      "% with \u2265 1 significant GAM (any outcome)",
+      "N with \u2265 1 significant affective GAM",
+      "% with \u2265 1 significant affective GAM",
+      "",
       "N with \u2265 1 symptom/composite range \u2265 1.5",
       "% with \u2265 1 symptom/composite range \u2265 1.5",
       "N with \u2265 1 affective symptom/composite range \u2265 1.5",
       "% with \u2265 1 affective symptom/composite range \u2265 1.5"
     ),
     Value = c(
-      as.character(n_sample),
+      as.character(n_total_sample),
+      as.character(n_gam_valid),
+      "",
+      as.character(length(ids_any_sig)),
+      sprintf("%.1f%%", pct_any_sig),
+      as.character(length(ids_affective_sig)),
+      sprintf("%.1f%%", pct_affective_sig),
+      "",
       as.character(length(ids_any_range15)),
       sprintf("%.1f%%", pct_any_range15),
       as.character(length(ids_affective_range15)),
@@ -1480,13 +1510,15 @@ if (length(all_ids_signif) > 0) {
     gp = grid::gpar(fontsize = 18, fontface = "bold")
   )
   subtitle_grob <- grid::textGrob(
-    paste0("Based on GAM results across ", n_sample, " participants"),
-    gp = grid::gpar(fontsize = 12, fontface = "italic")
+    paste0("N = ", n_total_sample, " total | N = ", n_gam_valid,
+           " with valid GAM data (percentages use GAM-valid N as denominator)"),
+    gp = grid::gpar(fontsize = 11, fontface = "italic")
   )
   key_tbl <- gridExtra::tableGrob(key_metrics, rows = NULL, theme = key_theme)
   note_grob <- grid::textGrob(
     paste0("Affective outcomes include: raw DRSP emotional/affective items (excl. physical) ",
-           "and composites (Neg. Affect, Distress, Social/Affect Lability, Low Arousal)"),
+           "and composites (Neg. Affect, Distress, Social/Affect Lability, Low Arousal). ",
+           "All percentages use GAM-valid N = ", n_gam_valid, " as denominator."),
     gp = grid::gpar(fontsize = 8, fontface = "italic")
   )
 
@@ -1524,7 +1556,8 @@ if (length(all_ids_signif) > 0) {
     gp = grid::gpar(fontsize = 14, fontface = "bold")
   )
   note2 <- grid::textGrob(
-    "Range = max(predicted) \u2013 min(predicted) on original scale; Sig = p < .05",
+    paste0("Range = max(predicted) \u2013 min(predicted) on original scale; Sig = p < .05; ",
+           "% Sig and % \u22651.5 use GAM-valid N = ", n_gam_valid, " as denominator"),
     gp = grid::gpar(fontsize = 9, fontface = "italic")
   )
   desc_tbl <- gridExtra::tableGrob(display_desc, rows = NULL, theme = desc_theme)
@@ -1584,7 +1617,7 @@ if (length(all_ids_signif) > 0) {
     ggplot2::geom_histogram(binwidth = 1, fill = "#0072B2", color = "white", alpha = 0.8) +
     ggplot2::labs(
       title = "Number of Outcomes with Range \u2265 1.5 per Participant",
-      subtitle = paste0("N = ", n_sample, " participants; ",
+      subtitle = paste0("GAM-valid N = ", n_gam_valid, " participants; ",
                         sprintf("%.1f%%", pct_any_range15),
                         " have at least one outcome with range \u2265 1.5"),
       x = "Number of outcomes with range \u2265 1.5",
@@ -1600,9 +1633,12 @@ if (length(all_ids_signif) > 0) {
                                    ggplot2::aes(x = reorder(label, median_range),
                                                 y = median_range)) +
     ggplot2::geom_col(fill = "#0072B2", alpha = 0.8) +
+    ggplot2::geom_text(ggplot2::aes(label = sprintf("%.2f", median_range)),
+                       hjust = -0.15, size = 2.8) +
     ggplot2::geom_hline(yintercept = 1.5, color = "red", linetype = "dashed",
                         linewidth = 0.6) +
     ggplot2::coord_flip() +
+    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
     ggplot2::labs(
       title = "Median GAM Range by Outcome",
       subtitle = "Red dashed line = range \u2265 1.5 threshold",
@@ -1626,18 +1662,26 @@ if (length(all_ids_signif) > 0) {
         metric == "pct_sig"     ~ "% Significant (p < .05)",
         metric == "pct_range15" ~ "% Range \u2265 1.5",
         TRUE ~ metric
-      )
+      ),
+      pct_label = sprintf("%.1f%%", pct)
     )
 
   p_pct_bars <- ggplot2::ggplot(pct_data,
                                  ggplot2::aes(x = label,
                                               y = pct, fill = metric)) +
     ggplot2::geom_col(position = "dodge", alpha = 0.8) +
+    ggplot2::geom_text(
+      ggplot2::aes(label = pct_label),
+      position = ggplot2::position_dodge(width = 0.9),
+      hjust = -0.1, size = 2.5
+    ) +
     ggplot2::coord_flip() +
+    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
     ggplot2::scale_fill_manual(values = c("% Significant (p < .05)" = "#0072B2",
                                           "% Range \u2265 1.5" = "#D55E00")) +
     ggplot2::labs(
-      title = "Percentage of Sample: Significant and Range \u2265 1.5 by Outcome",
+      title = "Percentage of GAM-Valid Sample: Significant and Range \u2265 1.5 by Outcome",
+      subtitle = paste0("Denominator: GAM-valid N = ", n_gam_valid),
       x = NULL,
       y = "Percentage",
       fill = NULL
