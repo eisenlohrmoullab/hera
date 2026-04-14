@@ -670,22 +670,23 @@ for (current_id in ids_to_run) {
 
     # Shared helper: count observations in each cycle-phase half and label
     # them as luteal vs follicular, accounting for time-variable orientation.
-    #   non-"ov" vars: -1=Ov, 0=Menses, 1=Ov  → [-1,0]=luteal, [0,1]=follicular
-    #   "ov" vars:     -1=Men, 0=Ov,    1=Men  → [-1,0]=follicular, [0,1]=luteal
+    # Uses the same non-overlapping split as fit_outcome(): tv < 0 vs tv >= 0.
+    #   non-"ov" vars: -1=Ov, 0=Menses, 1=Ov  → tv<0 is luteal, tv>=0 is follicular
+    #   "ov" vars:     -1=Men, 0=Ov,    1=Men  → tv<0 is follicular, tv>=0 is luteal
     count_phase_halves <- function(tv_vals, meta) {
-      # n_lo counts the "low" half (values in [-1, 0]) PLUS the opposite boundary at 1,
-      # because 1 and -1 are the same cyclic landmark (ovulation or menses).
-      # n_hi counts the "high" half (values in [0, 1]) PLUS the opposite boundary at -1.
-      # This intentionally allows boundary values (-1, 0, 1) to count toward both halves,
-      # as they are cycle-phase landmarks that border both halves of the cycle.
-      n_lo <- sum(tv_vals <= 0 | tv_vals == 1)
-      n_hi <- sum(tv_vals >= 0 | tv_vals == -1)
+      n_lo <- sum(tv_vals < 0)
+      n_hi <- sum(tv_vals >= 0)
       is_ov_centered <- identical(meta$ov, 0)
       if (is_ov_centered) {
         list(n_luteal = n_hi, n_follicular = n_lo)
       } else {
         list(n_luteal = n_lo, n_follicular = n_hi)
       }
+    }
+
+    # Returns TRUE when either half of the cycle has fewer than min_obs_per_half observations.
+    is_half_sparse <- function(halves) {
+      halves$n_luteal < min_obs_per_half || halves$n_follicular < min_obs_per_half
     }
 
     make_raw_panel <- function(dat, tv, meta, var, y_lab, color) {
@@ -734,17 +735,16 @@ for (current_id in ids_to_run) {
 
     tv0_vals <- datSX_id[[tv0]]
     tv0_vals <- tv0_vals[!is.na(tv0_vals)]
-    gate_halves       <- count_phase_halves(tv0_vals, meta0)
-    n_half_luteal     <- gate_halves$n_luteal
-    n_half_follicular <- gate_halves$n_follicular
-    insufficient_coverage <- (n_half_luteal < min_obs_per_half) || (n_half_follicular < min_obs_per_half)
+    tv0_halves <- count_phase_halves(tv0_vals, meta0)
+    tv0_sparse <- is_half_sparse(tv0_halves)
 
+    # Subtitle is informational only; the skip decision is made per time variable.
     coverage_subtitle <- paste0("Time variable: ", tv0)
-    if (insufficient_coverage) {
+    if (tv0_sparse) {
       coverage_subtitle <- paste0(
         coverage_subtitle,
         "\n\u26A0 Fewer than ", min_obs_per_half,
-        " observations in one or both cycle-halves — GAMs not run for this participant"
+        " observations in one or both cycle-halves for ", tv0
       )
     }
 
@@ -755,17 +755,13 @@ for (current_id in ids_to_run) {
         theme    = ggplot2::theme(
           plot.title    = ggplot2::element_text(face = "bold", size = 12),
           plot.subtitle = ggplot2::element_text(
-            size = if (insufficient_coverage) 10 else 9,
-            color = if (insufficient_coverage) "red" else "grey30"
+            size = if (tv0_sparse) 10 else 9,
+            color = if (tv0_sparse) "red" else "grey30"
           )
         )
       )
     print(p_cover)
   } else {
-    insufficient_coverage <- TRUE
-    n_half_luteal     <- 0L
-    n_half_follicular <- 0L
-
     grid::grid.newpage()
     grid::grid.text(
       label = paste0(
@@ -776,22 +772,28 @@ for (current_id in ids_to_run) {
       x = 0.5, y = 0.55,
       gp = grid::gpar(fontsize = 12, fontface = "bold")
     )
+    grDevices::dev.off()
+    next
   } # end Page 0
 
-  # ---- Gate: skip GAMs if cycle-half coverage is too sparse ----
-  if (insufficient_coverage) {
-    grDevices::dev.off()
-    message(sprintf("    -> Insufficient cycle-half coverage (n_luteal=%d, n_follicular=%d, min=%d); saved coverage-only report: %s",
-                    n_half_luteal, n_half_follicular, min_obs_per_half, pdf_filename))
-    next
-  }
-
-  # ---- Pass 1: fit & collect ----
+  # ---- Pass 1: fit & collect (coverage gate applied per time variable) ----
   preds_by_tv <- list()
   sig_by_tv   <- list()
 
   for (tv in time_vars) {
     message(sprintf("  ... time variable: %s", tv))
+
+    # Per-tv coverage gate — consistent with fit_outcome(): tv < 0 vs tv >= 0.
+    tv_vals_all <- datSX_id[[tv]]
+    tv_vals_all <- tv_vals_all[!is.na(tv_vals_all)]
+    tv_meta     <- axis_meta[[tv]]
+    tv_halves   <- count_phase_halves(tv_vals_all, tv_meta)
+    if (is_half_sparse(tv_halves)) {
+      message(sprintf("    -> Skipping tv=%s: insufficient cycle-half coverage (luteal=%d, follicular=%d, min=%d)",
+                      tv, tv_halves$n_luteal, tv_halves$n_follicular, min_obs_per_half))
+      next
+    }
+
     all_preds <- list()
     sig_list  <- list()
 
