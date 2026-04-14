@@ -176,13 +176,13 @@ if (length(missing_colors) > 0) {
 # y_axis_mode "data"  uses data-driven limits; no fixed reference line.
 outcome_plot_settings <- tribble(
   ~variable,          ~y_axis_mode, ~y_min, ~y_max, ~ref_line,
-  # DRSP composite outcomes — scale composites, no fixed 1-6 range
-  "drsp_NA",          "data",        NA,     NA,     NA,
-  "drsp_distress",    "data",        NA,     NA,     NA,
-  "drsp_labilsocsx",  "data",        NA,     NA,     NA,
-  "drsp_breastpain",  "data",        NA,     NA,     NA,
-  "drsp_eatsx",       "data",        NA,     NA,     NA,
-  "drsp_lowarousal",  "data",        NA,     NA,     NA,
+  # DRSP composite outcomes — default 1-4 scale; expands to 5 or 6 if predictions exceed 4
+  "drsp_NA",          "fixed",       1,      4,     NA,
+  "drsp_distress",    "fixed",       1,      4,     NA,
+  "drsp_labilsocsx",  "fixed",       1,      4,     NA,
+  "drsp_breastpain",  "fixed",       1,      4,     NA,
+  "drsp_eatsx",       "fixed",       1,      4,     NA,
+  "drsp_lowarousal",  "fixed",       1,      4,     NA,
   # DRSP individual items — fixed 1-6 Likert scale
   "drsp_1",           "fixed",       1,      6,      4,
   "drsp_2",           "fixed",       1,      6,      4,
@@ -501,6 +501,17 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
     # data mode: leave y_limits = NULL → ggplot auto-scales
   }
 
+  # Dynamic expansion for composite outcomes: expand y_max to 5 or 6 if predictions exceed it
+  is_composite <- !grepl(DRSP_VAR_PATTERN, outcome_var)
+  if (is_composite && !is.null(y_limits) && any(is.finite(plot_df$estimate))) {
+    max_pred <- max(plot_df$estimate, na.rm = TRUE)
+    expanded_ymax <- expand_composite_ymax(y_limits[2], max_pred)
+    if (expanded_ymax > y_limits[2]) {
+      y_limits[2] <- expanded_ymax
+      y_fix_max <- expanded_ymax
+    }
+  }
+
   cpass_flag <- !is.null(rng) && is.finite(rng) && rng >= 1.5
   stars <- dplyr::case_when(
     is.finite(p_val) & p_val < 0.001 ~ "***",
@@ -626,6 +637,15 @@ make_shared_id_y_limits <- function(plot_df, shared_total_range, lower_bound = 1
   y_high <- min(y_high, upper_bound)
 
   c(y_low, y_high)
+}
+
+# --- Dynamic Y-axis expansion for composite outcomes ---
+# Composites default to y_max = 4 but expand to 5 or 6 if predicted values exceed 4.
+expand_composite_ymax <- function(y_max_current, max_predicted, absolute_max = 6) {
+  if (is.na(max_predicted) || !is.finite(max_predicted) || max_predicted <= y_max_current) {
+    return(y_max_current)
+  }
+  min(ceiling(max_predicted), absolute_max)
 }
 ```
 
@@ -1133,8 +1153,15 @@ for (current_id in ids_to_run) {
       show_range_in_labels = TRUE
     )
 
-    # (2) DRSP composite outcomes: sig only, data-driven Y scale
+    # (2) DRSP composite outcomes: sig only, 1-4 Y scale (expands to 5 or 6 if needed)
     composite_vars <- names(outcomes)[!grepl(DRSP_VAR_PATTERN, names(outcomes))]
+    # Compute dynamic Y-max for composites: default 4, expand if predictions exceed
+    composite_pred <- preds_by_tv[[tv]] %>% dplyr::filter(outcome_var %in% composite_vars)
+    composite_ymax <- 4
+    if (nrow(composite_pred) > 0 && any(is.finite(composite_pred$estimate))) {
+      max_est <- max(composite_pred$estimate, na.rm = TRUE)
+      composite_ymax <- expand_composite_ymax(4, max_est)
+    }
     plot_overlay_page(
       sig_tv = sig_by_tv[[tv]], pred_tv = preds_by_tv[[tv]],
       tv = tv, meta = axis_meta[[tv]],
@@ -1142,7 +1169,7 @@ for (current_id in ids_to_run) {
       range_thresh   = Inf,
       title_prefix   = "Overlaid GAM Curves (DRSP Composites)",
       subtitle_label = "DRSP composite outcomes",
-      ylim_strategy  = "data",
+      ylim_strategy  = "fixed", fixed_ylim = c(1, composite_ymax),
       show_hline = FALSE,
       legend_ncol = 3,
       show_range_in_labels = TRUE
@@ -1229,11 +1256,15 @@ for (current_id in ids_to_run) {
       ) %>%
       dplyr::mutate(
         y_axis_mode = dplyr::coalesce(y_axis_mode, "fixed"),
+        is_composite = !grepl(DRSP_VAR_PATTERN, outcome_var),
         lower_bound = dplyr::if_else(
           y_axis_mode == "fixed", dplyr::coalesce(y_min, 1), ymin - 0.5
         ),
+        # For composites (y_max=4), expand upper_bound to 5 or 6 if predictions exceed 4
         upper_bound = dplyr::if_else(
-          y_axis_mode == "fixed", dplyr::coalesce(y_max, 6), ymax + 0.5
+          y_axis_mode == "fixed",
+          pmax(dplyr::coalesce(y_max, 6), pmin(ceiling(ymax), 6)),
+          ymax + 0.5
         )
       )
 
@@ -1305,7 +1336,7 @@ for (current_id in ids_to_run) {
           "\u2014 ID:", current_id, "| Time Variable:", tv
         )
         page_subtitle_shared <- paste0(
-          "Shared y-range per scale group (fixed=Likert [1-6]; data=data-driven). ",
+          "Shared y-range per scale group (items=Likert [1-6]; composites=[1-4, expands if needed]). ",
           "Time variable: ", tv
         )
 
@@ -1376,25 +1407,41 @@ if (length(all_ids_signif) > 0) {
     )
 
   all_ids <- unique(gam_summary_all$id)
-  n_sample <- length(all_ids)
+  n_gam_valid <- length(all_ids)
+  n_total_sample <- length(unique(df$id))
 
-  # --- KEY METRIC 1: % of sample with at least one symptom/composite range >= 1.5 ---
+  # --- KEY METRIC 1: % of GAM-valid sample with at least one symptom/composite range >= 1.5 ---
   ids_any_range15 <- id_outcome_summary %>%
     dplyr::filter(is.finite(best_range) & best_range >= 1.5) %>%
     dplyr::distinct(id) %>%
     dplyr::pull(id)
-  pct_any_range15 <- length(ids_any_range15) / n_sample * 100
+  pct_any_range15 <- length(ids_any_range15) / n_gam_valid * 100
 
-  # --- KEY METRIC 2: % of sample with at least one affective symptom/composite range >= 1.5 ---
+  # --- KEY METRIC 2: % of GAM-valid sample with at least one affective symptom/composite range >= 1.5 ---
   ids_affective_range15 <- id_outcome_summary %>%
     dplyr::filter(variable %in% all_affective_outcomes,
                   is.finite(best_range) & best_range >= 1.5) %>%
     dplyr::distinct(id) %>%
     dplyr::pull(id)
-  pct_affective_range15 <- length(ids_affective_range15) / n_sample * 100
+  pct_affective_range15 <- length(ids_affective_range15) / n_gam_valid * 100
+
+  # --- KEY METRIC 3: % of GAM-valid sample with at least one significant GAM (any outcome) ---
+  ids_any_sig <- id_outcome_summary %>%
+    dplyr::filter(sig) %>%
+    dplyr::distinct(id) %>%
+    dplyr::pull(id)
+  pct_any_sig <- length(ids_any_sig) / n_gam_valid * 100
+
+  # --- KEY METRIC 4: % of GAM-valid sample with at least one significant affective GAM ---
+  ids_affective_sig <- id_outcome_summary %>%
+    dplyr::filter(variable %in% all_affective_outcomes, sig) %>%
+    dplyr::distinct(id) %>%
+    dplyr::pull(id)
+  pct_affective_sig <- length(ids_affective_sig) / n_gam_valid * 100
 
   # ---- PAGE 1: Overall Descriptive Summary ----
   # Per-outcome descriptive statistics across all participants
+  # Percentages use n_gam_valid (participants with valid GAM data) as denominator
   outcome_desc <- id_outcome_summary %>%
     dplyr::group_by(variable) %>%
     dplyr::summarise(
@@ -1407,9 +1454,9 @@ if (length(all_ids_signif) > 0) {
       min_range   = min(best_range, na.rm = TRUE),
       max_range   = max(best_range, na.rm = TRUE),
       n_sig       = sum(sig, na.rm = TRUE),
-      pct_sig     = mean(sig, na.rm = TRUE) * 100,
+      pct_sig     = sum(sig, na.rm = TRUE) / n_gam_valid * 100,
       n_range15   = sum(is.finite(best_range) & best_range >= 1.5, na.rm = TRUE),
-      pct_range15 = sum(is.finite(best_range) & best_range >= 1.5, na.rm = TRUE) / dplyr::n() * 100,
+      pct_range15 = sum(is.finite(best_range) & best_range >= 1.5, na.rm = TRUE) / n_gam_valid * 100,
       .groups     = "drop"
     ) %>%
     dplyr::left_join(
@@ -1422,14 +1469,28 @@ if (length(all_ids_signif) > 0) {
   # Key metrics summary table
   key_metrics <- data.frame(
     Metric = c(
-      "Total Participants in Sample",
+      "Total Participants in Data",
+      "Participants with Valid GAM Data",
+      "",
+      "N with \u2265 1 significant GAM (any outcome)",
+      "% with \u2265 1 significant GAM (any outcome)",
+      "N with \u2265 1 significant affective GAM",
+      "% with \u2265 1 significant affective GAM",
+      "",
       "N with \u2265 1 symptom/composite range \u2265 1.5",
       "% with \u2265 1 symptom/composite range \u2265 1.5",
       "N with \u2265 1 affective symptom/composite range \u2265 1.5",
       "% with \u2265 1 affective symptom/composite range \u2265 1.5"
     ),
     Value = c(
-      as.character(n_sample),
+      as.character(n_total_sample),
+      as.character(n_gam_valid),
+      "",
+      as.character(length(ids_any_sig)),
+      sprintf("%.1f%%", pct_any_sig),
+      as.character(length(ids_affective_sig)),
+      sprintf("%.1f%%", pct_affective_sig),
+      "",
       as.character(length(ids_any_range15)),
       sprintf("%.1f%%", pct_any_range15),
       as.character(length(ids_affective_range15)),
@@ -1449,13 +1510,15 @@ if (length(all_ids_signif) > 0) {
     gp = grid::gpar(fontsize = 18, fontface = "bold")
   )
   subtitle_grob <- grid::textGrob(
-    paste0("Based on GAM results across ", n_sample, " participants"),
-    gp = grid::gpar(fontsize = 12, fontface = "italic")
+    paste0("N = ", n_total_sample, " total | N = ", n_gam_valid,
+           " with valid GAM data (percentages use GAM-valid N as denominator)"),
+    gp = grid::gpar(fontsize = 11, fontface = "italic")
   )
   key_tbl <- gridExtra::tableGrob(key_metrics, rows = NULL, theme = key_theme)
   note_grob <- grid::textGrob(
     paste0("Affective outcomes include: raw DRSP emotional/affective items (excl. physical) ",
-           "and composites (Neg. Affect, Distress, Social/Affect Lability, Low Arousal)"),
+           "and composites (Neg. Affect, Distress, Social/Affect Lability, Low Arousal). ",
+           "All percentages use GAM-valid N = ", n_gam_valid, " as denominator."),
     gp = grid::gpar(fontsize = 8, fontface = "italic")
   )
 
@@ -1493,7 +1556,8 @@ if (length(all_ids_signif) > 0) {
     gp = grid::gpar(fontsize = 14, fontface = "bold")
   )
   note2 <- grid::textGrob(
-    "Range = max(predicted) \u2013 min(predicted) on original scale; Sig = p < .05",
+    paste0("Range = max(predicted) \u2013 min(predicted) on original scale; Sig = p < .05; ",
+           "% Sig and % \u22651.5 use GAM-valid N = ", n_gam_valid, " as denominator"),
     gp = grid::gpar(fontsize = 9, fontface = "italic")
   )
   desc_tbl <- gridExtra::tableGrob(display_desc, rows = NULL, theme = desc_theme)
@@ -1553,7 +1617,7 @@ if (length(all_ids_signif) > 0) {
     ggplot2::geom_histogram(binwidth = 1, fill = "#0072B2", color = "white", alpha = 0.8) +
     ggplot2::labs(
       title = "Number of Outcomes with Range \u2265 1.5 per Participant",
-      subtitle = paste0("N = ", n_sample, " participants; ",
+      subtitle = paste0("GAM-valid N = ", n_gam_valid, " participants; ",
                         sprintf("%.1f%%", pct_any_range15),
                         " have at least one outcome with range \u2265 1.5"),
       x = "Number of outcomes with range \u2265 1.5",
@@ -1569,9 +1633,12 @@ if (length(all_ids_signif) > 0) {
                                    ggplot2::aes(x = reorder(label, median_range),
                                                 y = median_range)) +
     ggplot2::geom_col(fill = "#0072B2", alpha = 0.8) +
+    ggplot2::geom_text(ggplot2::aes(label = sprintf("%.2f", median_range)),
+                       hjust = -0.15, size = 3.0) +
     ggplot2::geom_hline(yintercept = 1.5, color = "red", linetype = "dashed",
                         linewidth = 0.6) +
     ggplot2::coord_flip() +
+    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
     ggplot2::labs(
       title = "Median GAM Range by Outcome",
       subtitle = "Red dashed line = range \u2265 1.5 threshold",
@@ -1595,18 +1662,26 @@ if (length(all_ids_signif) > 0) {
         metric == "pct_sig"     ~ "% Significant (p < .05)",
         metric == "pct_range15" ~ "% Range \u2265 1.5",
         TRUE ~ metric
-      )
+      ),
+      pct_label = sprintf("%.1f%%", pct)
     )
 
   p_pct_bars <- ggplot2::ggplot(pct_data,
                                  ggplot2::aes(x = label,
                                               y = pct, fill = metric)) +
     ggplot2::geom_col(position = "dodge", alpha = 0.8) +
+    ggplot2::geom_text(
+      ggplot2::aes(label = pct_label),
+      position = ggplot2::position_dodge(width = 0.9),
+      hjust = -0.1, size = 3.0
+    ) +
     ggplot2::coord_flip() +
+    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
     ggplot2::scale_fill_manual(values = c("% Significant (p < .05)" = "#0072B2",
                                           "% Range \u2265 1.5" = "#D55E00")) +
     ggplot2::labs(
-      title = "Percentage of Sample: Significant and Range \u2265 1.5 by Outcome",
+      title = "Percentage of GAM-Valid Sample: Significant and Range \u2265 1.5 by Outcome",
+      subtitle = paste0("Denominator: GAM-valid N = ", n_gam_valid),
       x = NULL,
       y = "Percentage",
       fill = NULL
@@ -1881,7 +1956,8 @@ get_drsp_variables <- function(df) {
 # outcome_label: display label for the outcome
 # title_prefix: e.g., "Significant GAMs" or "Non-Significant GAMs"
 plot_overlay_gam <- function(fit_results_list, ids, tv, axis_meta_list,
-                             outcome_label, title_prefix) {
+                             outcome_label, title_prefix,
+                             outcome_var = NULL) {
   meta <- axis_meta_list[[tv]]
 
   overlay_data <- do.call(rbind, lapply(ids, function(qid) {
@@ -1919,6 +1995,17 @@ plot_overlay_gam <- function(fit_results_list, ids, tv, axis_meta_list,
       plot.title    = ggplot2::element_text(size = 16, face = "bold"),
       plot.subtitle = ggplot2::element_text(size = 12)
     )
+
+  # Apply composite-specific Y-axis limits (1-4, expanding to 5 or 6 if needed)
+  if (!is.null(outcome_var) && !grepl(DRSP_VAR_PATTERN, outcome_var)) {
+    estimate_vals <- overlay_data$estimate
+    finite_estimate_vals <- estimate_vals[is.finite(estimate_vals)]
+    max_pred <- if (length(finite_estimate_vals) > 0) max(finite_estimate_vals) else NA_real_
+    comp_ymax <- expand_composite_ymax(4, max_pred)
+    p <- p +
+      ggplot2::scale_y_continuous(breaks = seq(1, comp_ymax, by = 1)) +
+      ggplot2::coord_cartesian(ylim = c(1, comp_ymax))
+  }
 
   p
 }
@@ -2199,7 +2286,8 @@ if (length(all_ids_signif) > 0) {
         tv               = tv,
         axis_meta_list   = axis_meta,
         outcome_label    = outcome_label,
-        title_prefix     = "Significant GAMs (p < .05)"
+        title_prefix     = "Significant GAMs (p < .05)",
+        outcome_var      = target_var
       )
       if (!is.null(p_sig_overlay)) print(p_sig_overlay)
     }
@@ -2212,7 +2300,8 @@ if (length(all_ids_signif) > 0) {
         tv               = tv,
         axis_meta_list   = axis_meta,
         outcome_label    = outcome_label,
-        title_prefix     = "Non-Significant GAMs (p \u2265 .05)"
+        title_prefix     = "Non-Significant GAMs (p \u2265 .05)",
+        outcome_var      = target_var
       )
       if (!is.null(p_nonsig_overlay)) print(p_nonsig_overlay)
     }
