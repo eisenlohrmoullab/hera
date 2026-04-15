@@ -1617,7 +1617,7 @@ if (length(all_ids_signif) > 0) {
   )
   draw_page_number()
 
-  # ---- PAGE 2 (p.3): Per-Outcome Range Descriptives Table (color-coded) ----
+  # ---- PAGE 3 (p.3): Per-Outcome Range Descriptives Table (color-coded) ----
   display_desc <- outcome_desc %>%
     dplyr::transmute(
       Outcome       = label,
@@ -2944,10 +2944,17 @@ if (length(all_ids_signif) > 0) {
         datSX_qid <- subset(df, as.character(id) == qid)
         # Use per-ID global ymax (computed in Section 5) so that each ID's
         # y-axis reflects its overall data range; different IDs may differ.
+        fallback_ymax <- 4.5
+        if (!is.null(res$pred$estimate)) {
+          pred_estimates <- res$pred$estimate[is.finite(res$pred$estimate)]
+          if (length(pred_estimates) > 0) {
+            fallback_ymax <- max(pred_estimates)
+          }
+        }
         qid_ymax <- if (as.character(qid) %in% names(id_global_ymax_map)) {
           id_global_ymax_map[as.character(qid)]
         } else {
-          4.5
+          expand_ymax(4.5, fallback_ymax)
         }
         p <- create_annotated_plot(res$pred, tv, axis_meta,
                                    y_limits = c(1, qid_ymax), raw_data = datSX_qid)
