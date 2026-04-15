@@ -2082,13 +2082,13 @@ if (length(all_ids_signif) > 0) {
   draw_page_number()
 
   # ---- PAGE 5: Affective vs. Physical Symptom Comparison ----
-  # Uses raw DRSP items only (excludes composites) for a clean comparison.
+  # Uses all outcomes (individual DRSP items + composites) classified by domain.
 
   comparison_data <- id_outcome_summary %>%
     dplyr::mutate(
       domain = dplyr::case_when(
-        variable %in% affective_raw_drsp ~ "Affective",
-        variable %in% physical_symptoms  ~ "Physical",
+        variable %in% all_affective_outcomes ~ "Affective",
+        variable %in% all_physical_outcomes  ~ "Physical",
         TRUE ~ NA_character_
       )
     ) %>%
@@ -2139,7 +2139,7 @@ if (length(all_ids_signif) > 0) {
     ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
     ggplot2::labs(
       title = "Affective vs. Physical Symptom Cyclicity",
-      subtitle = "Comparing cyclicity rates across individual DRSP items (excl. composites)",
+      subtitle = "Comparing cyclicity rates across all DRSP outcomes (individual items + composites)",
       x = NULL,
       y = "Percentage"
     ) +
@@ -2152,8 +2152,8 @@ if (length(all_ids_signif) > 0) {
   # Caption grob for the layout
   domain_caption <- grid::textGrob(
     paste0(
-      "Affective = individual mood/emotional DRSP items (excl. composites). ",
-      "Physical = individual somatic DRSP items (excl. composites).\n",
+      "Affective = mood/emotional DRSP items + composites (Neg. Affect, Distress, Lability, Low Arousal). ",
+      "Physical = somatic DRSP items + composites (Breast Sx, Eating Sx).\n",
       "% of outcome \u00d7 participant pairs meeting each criterion. ",
       "Benchmark = person-specific 30% of DRSP scale range (C-PASS-equivalent change benchmark)."
     ),
