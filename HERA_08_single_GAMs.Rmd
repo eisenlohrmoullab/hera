@@ -459,19 +459,30 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
     if (nrow(raw_pts) == 0) raw_pts <- NULL
   }
 
-  # Dynamic expansion for all outcomes: expand y_max to 5 or 6 if predictions or raw points exceed
-  # default 4.5.  Only expand when y_limits were computed internally (not passed by a shared-y caller).
-  if (!y_limits_from_caller && !is.null(y_limits)) {
+  # Dynamic expansion for all outcomes: expand y_max to 5 or 6 if values exceed 4.5.
+  # When y_limits were computed internally (no caller-provided limits), expand based
+  # on both GAM predictions and raw data.
+  # When y_limits were passed by the caller (GAM-based global ymax), still expand
+  # this outcome's y-axis further if raw data points exceed the caller-supplied limit.
+  # This ensures raw-data expansion is always per-outcome, while GAM-driven expansion
+  # is applied globally (by the caller).
+  if (!is.null(y_limits)) {
     raw_max <- if (!is.null(raw_pts) && nrow(raw_pts) > 0 && outcome_var %in% names(raw_pts)) {
       vals <- raw_pts[[outcome_var]]
       if (any(is.finite(vals))) max(vals[is.finite(vals)]) else NA_real_
     } else {
       NA_real_
     }
-    pred_max <- if (any(is.finite(plot_df$estimate))) max(plot_df$estimate, na.rm = TRUE) else NA_real_
-    max_pred <- if (!is.na(raw_max) && !is.na(pred_max)) max(raw_max, pred_max) else
-                if (!is.na(raw_max)) raw_max else pred_max
-    expanded_ymax <- expand_ymax(y_limits[2], max_pred)
+    if (y_limits_from_caller) {
+      # Caller already applied GAM-based global expansion; only expand further for raw data
+      expanded_ymax <- expand_ymax(y_limits[2], raw_max)
+    } else {
+      # No caller limits: expand for both predictions and raw data
+      pred_max <- if (any(is.finite(plot_df$estimate))) max(plot_df$estimate, na.rm = TRUE) else NA_real_
+      max_val <- if (!is.na(raw_max) && !is.na(pred_max)) max(raw_max, pred_max) else
+                  if (!is.na(raw_max)) raw_max else pred_max
+      expanded_ymax <- expand_ymax(y_limits[2], max_val)
+    }
     if (!is.na(expanded_ymax) && expanded_ymax > y_limits[2]) {
       y_limits[2] <- expanded_ymax
       y_fix_max <- expanded_ymax
@@ -582,7 +593,9 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
 }
 
 # --- Dynamic Y-axis expansion for all fixed-scale outcomes ---
-# All fixed-scale outcomes default to y_max = 4.5 but expand to 5 or 6 if predicted or raw values exceed it.
+# All fixed-scale outcomes default to y_max = 4.5 but expand to 5 or 6 if observed values exceed it.
+# GAM predictions exceeding 4.5 drive global (all-outcome) expansion for the person.
+# Raw data points exceeding 4.5 drive per-outcome expansion only.
 expand_ymax <- function(y_max_current, max_observed, absolute_max = 6) {
   if (is.na(max_observed) || !is.finite(max_observed) || max_observed <= y_max_current) {
     return(y_max_current)
@@ -770,28 +783,16 @@ for (current_id in ids_to_run) {
   }
 
   # ---- Compute global ymax for this ID across ALL outcomes and time vars ----
-  # If any outcome/time-var combination needs the expanded 5 or 6 scale,
-  # ALL graphs for this person use that same expanded ymax (with pink shading).
+  # Only GAM predictions drive the global expansion: if any outcome's predicted
+  # curve exceeds 4.5, ALL plots for this person expand to the same ymax (5 or 6).
+  # Raw data points above 4.5 expand only the individual outcome plot where they
+  # occur (handled inside create_annotated_plot).
   global_max_val <- 4.5
-  # Check GAM predictions
+  # Check GAM predictions only (raw-data expansion is per-outcome, not global)
   for (tv_name in names(preds_by_tv)) {
     est_vals <- preds_by_tv[[tv_name]]$estimate
     finite_est <- est_vals[is.finite(est_vals)]
     if (length(finite_est) > 0) global_max_val <- max(global_max_val, max(finite_est))
-  }
-  # Check raw data (matching the inclusion criteria used by create_annotated_plot)
-  for (outcome_var in names(outcomes)) {
-    log_out <- paste0(outcome_var, "_Log")
-    if (!(outcome_var %in% names(datSX_id) && log_out %in% names(datSX_id))) next
-    for (tv_name in names(preds_by_tv)) {
-      if (!(tv_name %in% names(datSX_id))) next
-      raw_idx <- complete.cases(datSX_id[, c(log_out, tv_name)])
-      if (any(raw_idx)) {
-        vals <- datSX_id[[outcome_var]][raw_idx]
-        finite_vals <- vals[is.finite(vals)]
-        if (length(finite_vals) > 0) global_max_val <- max(global_max_val, max(finite_vals))
-      }
-    }
   }
   id_global_ymax <- expand_ymax(4.5, global_max_val)
   id_global_ylimits <- c(1, id_global_ymax)
