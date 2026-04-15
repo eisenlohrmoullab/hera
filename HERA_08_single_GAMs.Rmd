@@ -1396,7 +1396,7 @@ if (length(all_ids_signif) > 0) {
 
   # --- Page numbering helper ---
   # NOTE: Update total_report_pages if pages are added/removed from this report.
-  total_report_pages <- 9L
+  total_report_pages <- 10L
   page_counter <- 0L
   draw_page_number <- function() {
     page_counter <<- page_counter + 1L
@@ -1448,14 +1448,15 @@ if (length(all_ids_signif) > 0) {
     paste0(
       "REPORT CONTENTS\n\n",
       "  Page  1 \u2014 How to Read This Report (this page)\n",
-      "  Page  2 \u2014 Key Metrics Summary\n",
-      "  Page  3 \u2014 Per-Outcome Descriptives Table (color-coded)\n",
-      "  Page  4 \u2014 Distribution of Ranges by Outcome (histograms)\n",
-      "  Page  5 \u2014 Significance & Range Rates by Outcome (grouped bars)\n",
-      "  Page  6 \u2014 Per-Person Range Distributions (dot + box plot)\n",
-      "  Page  7 \u2014 Significance/Range Heatmap (Outcome \u00d7 Participant)\n",
-      "  Page  8 \u2014 Affective vs. Physical Symptom Comparison\n",
-      "  Page  9 \u2014 Symptom Co-Occurrence Matrix"
+      "  Page  2 \u2014 Quarter-Based Data Coverage by Participant\n",
+      "  Page  3 \u2014 Key Metrics Summary\n",
+      "  Page  4 \u2014 Per-Outcome Descriptives Table (color-coded)\n",
+      "  Page  5 \u2014 Distribution of Ranges by Outcome (histograms)\n",
+      "  Page  6 \u2014 Significance & Range Rates by Outcome (grouped bars)\n",
+      "  Page  7 \u2014 Per-Person Range Distributions (dot + box plot)\n",
+      "  Page  8 \u2014 Significance/Range Heatmap (Outcome \u00d7 Participant)\n",
+      "  Page  9 \u2014 Affective vs. Physical Symptom Comparison\n",
+      "  Page 10 \u2014 Symptom Co-Occurrence Matrix"
     ),
     gp = grid::gpar(fontsize = 9.5, lineheight = 1.15), just = "left", x = 0.05
   )
@@ -1465,6 +1466,107 @@ if (length(all_ids_signif) > 0) {
     heights = grid::unit(c(0.07, 0.10, 0.52, 0.26), "npc"),
     padding = grid::unit(1, "lines")
   )
+  draw_page_number()
+
+  # ---- PAGE 2: Quarter-Based Data Coverage by Participant ----
+  # Compute per-ID quarter counts using the first available time variable.
+  # Classify each ID as GAM-included vs excluded based on the quarter coverage rule.
+  cov_tv <- time_vars[1]
+  all_sample_ids <- unique(df$id)
+  cov_rows <- lapply(all_sample_ids, function(pid) {
+    pid_vals <- df[[cov_tv]][df$id == pid]
+    pid_vals <- pid_vals[!is.na(pid_vals)]
+    qc <- quarter_bin_counts(pid_vals)
+    n_empty  <- sum(qc == 0)
+    n_sparse <- sum(qc > 0 & qc < sparse_quarter_cutoff)
+    passes   <- n_empty == 0 && n_sparse <= 1
+    data.frame(
+      id = pid,
+      Q1 = qc["Q1"], Q2 = qc["Q2"], Q3 = qc["Q3"], Q4 = qc["Q4"],
+      total_obs = sum(qc),
+      included = passes,
+      stringsAsFactors = FALSE
+    )
+  })
+  cov_df <- dplyr::bind_rows(cov_rows)
+
+  n_included <- sum(cov_df$included)
+  n_excluded <- sum(!cov_df$included)
+
+  # Pivot to long format for tile plot
+  cov_long <- cov_df %>%
+    tidyr::pivot_longer(cols = c("Q1", "Q2", "Q3", "Q4"),
+                        names_to = "quarter", values_to = "obs_count") %>%
+    dplyr::mutate(
+      status = ifelse(included, "Included", "Excluded"),
+      id_label = as.character(id)
+    )
+
+  # Order IDs: included first (sorted by total obs descending), then excluded
+  id_order_incl <- cov_df %>%
+    dplyr::filter(included) %>%
+    dplyr::arrange(dplyr::desc(total_obs), id) %>%
+    dplyr::pull(id) %>%
+    as.character()
+  id_order_excl <- cov_df %>%
+    dplyr::filter(!included) %>%
+    dplyr::arrange(dplyr::desc(total_obs), id) %>%
+    dplyr::pull(id) %>%
+    as.character()
+  cov_long$id_label <- factor(cov_long$id_label, levels = c(id_order_excl, id_order_incl))
+  cov_long$status <- factor(cov_long$status, levels = c("Excluded", "Included"))
+
+  # Quarter labels corresponding to the cycle phase
+  quarter_labels <- c("Q1\n[-1, -0.5)", "Q2\n[-0.5, 0)", "Q3\n[0, 0.5)", "Q4\n[0.5, 1]")
+  cov_long$quarter <- factor(cov_long$quarter, levels = c("Q1", "Q2", "Q3", "Q4"),
+                              labels = quarter_labels)
+
+  # Cap color scale for readability
+  max_obs_display <- min(max(cov_long$obs_count, na.rm = TRUE), 30)
+  cov_long$obs_capped <- pmin(cov_long$obs_count, max_obs_display)
+
+  p_cov <- ggplot2::ggplot(cov_long,
+             ggplot2::aes(x = quarter, y = id_label, fill = obs_capped)) +
+    ggplot2::geom_tile(color = "white", linewidth = 0.15) +
+    ggplot2::geom_text(ggplot2::aes(label = obs_count), size = 1.6, color = "grey20") +
+    ggplot2::facet_grid(status ~ ., scales = "free_y", space = "free_y",
+                        switch = "y") +
+    ggplot2::scale_fill_gradient(
+      low = "#FFF3E0", high = "#E65100", na.value = "grey90",
+      name = "Observations",
+      limits = c(0, max_obs_display),
+      breaks = pretty(c(0, max_obs_display), n = 4)
+    ) +
+    ggplot2::labs(
+      title = "Quarter-Based Data Coverage Across the Cycle by Participant",
+      subtitle = paste0(
+        "Time variable: ", cov_tv,
+        "  |  Included (GAM-valid): N = ", n_included,
+        "  |  Excluded: N = ", n_excluded,
+        "  |  Total: N = ", length(all_sample_ids)
+      ),
+      caption = paste0(
+        "Inclusion rule: all 4 quarters must have \u22651 observation, and at most 1 quarter may have <",
+        sparse_quarter_cutoff, " observations.\n",
+        "IDs sorted by total observations within each group (descending). ",
+        "Numbers in cells = observation count per quarter."
+      ),
+      x = "Cycle Quarter",
+      y = NULL
+    ) +
+    ggplot2::theme_minimal(base_size = 8) +
+    ggplot2::theme(
+      plot.title    = ggplot2::element_text(face = "bold", size = 12),
+      plot.subtitle = ggplot2::element_text(size = 9),
+      plot.caption  = ggplot2::element_text(size = 7, hjust = 0, face = "italic"),
+      axis.text.y   = ggplot2::element_text(size = 4),
+      axis.text.x   = ggplot2::element_text(size = 7),
+      strip.text.y.left = ggplot2::element_text(face = "bold", size = 9, angle = 0),
+      strip.placement = "outside",
+      panel.grid     = ggplot2::element_blank(),
+      legend.position = "right"
+    )
+  print(p_cov)
   draw_page_number()
 
   # --- Classify outcomes for affective calculations ---
@@ -2726,20 +2828,40 @@ if (length(all_ids_signif) > 0) {
     n_total <- result$descriptives_overall$n_participants
     pct_cpass <- if (n_total > 0) n_cpass / n_total * 100 else NA_real_
 
+    # N and % meeting EITHER criterion: significant OR range >= 1.5
+    n_either <- sum(
+      result$data$significant_num == 1 |
+        (is.finite(result$data$range) & result$data$range >= 1.5),
+      na.rm = TRUE
+    )
+    pct_either <- if (n_total > 0) n_either / n_total * 100 else NA_real_
+
+    # N with range >= 1.5 regardless of significance
+    n_range15 <- sum(is.finite(result$data$range) & result$data$range >= 1.5, na.rm = TRUE)
+    pct_range15 <- if (n_total > 0) n_range15 / n_total * 100 else NA_real_
+
     desc_df <- data.frame(
       Metric = c("Total Participants",
                  "N Significant (p < .05)",
                  "Proportion Significant",
-                 "N Range \u22651.5 (p < .05 & range \u2265 1.5)",
+                 "N Range \u22651.5",
                  "% Range \u22651.5 (of total sample)",
+                 "N Sig AND Range \u22651.5",
+                 "% Sig AND Range \u22651.5 (of total sample)",
+                 "N Sig OR Range \u22651.5",
+                 "% Sig OR Range \u22651.5 (of total sample)",
                  "Median Range",
                  "Mean Observations per ID"),
       Value = c(
         as.character(n_total),
         as.character(result$descriptives_overall$n_significant),
         sprintf("%.1f%%", result$descriptives_overall$prop_significant * 100),
+        as.character(n_range15),
+        ifelse(is.na(pct_range15), "N/A", sprintf("%.1f%%", pct_range15)),
         as.character(n_cpass),
         ifelse(is.na(pct_cpass), "N/A", sprintf("%.1f%%", pct_cpass)),
+        as.character(n_either),
+        ifelse(is.na(pct_either), "N/A", sprintf("%.1f%%", pct_either)),
         sprintf("%.2f", median(result$data$range, na.rm = TRUE)),
         sprintf("%.1f", mean(result$data$n, na.rm = TRUE))
       ),
@@ -2814,13 +2936,13 @@ if (length(all_ids_signif) > 0) {
         title_grob, subtitle_grob, composite_note_grob,
         desc_tbl, thresh_header, thresh_tbl, note_grob,
         ncol = 1,
-        heights = grid::unit(c(0.07, 0.03, 0.03, 0.30, 0.06, 0.36, 0.06), "npc")
+        heights = grid::unit(c(0.06, 0.03, 0.03, 0.36, 0.05, 0.32, 0.05), "npc")
       )
     } else {
       gridExtra::grid.arrange(
         title_grob, subtitle_grob, desc_tbl, thresh_header, thresh_tbl, note_grob,
         ncol = 1,
-        heights = grid::unit(c(0.08, 0.04, 0.32, 0.06, 0.36, 0.06), "npc")
+        heights = grid::unit(c(0.07, 0.03, 0.38, 0.05, 0.32, 0.05), "npc")
       )
     }
 
