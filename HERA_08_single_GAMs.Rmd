@@ -228,7 +228,7 @@ drsp_color_map <- c(
   "drsp_17" = "#117733",  # dark green 2
   # DRSP physical items
   "drsp_18" = "#44AA99",  # teal
-  "drsp_19" = "#88CCEE",  # light blue
+  "drsp_19" = "#882255",  # wine
   "drsp_20" = "#DDCC77",  # sand
   "drsp_21" = "#CC6677",  # rose
   # DRSP composite outcomes (Okabe-Ito colorblind-friendly palette)
@@ -882,10 +882,13 @@ for (current_id in ids_to_run) {
       for (cname in names(composite_specs)) {
         spec <- composite_specs[[cname]]
         if (spec$domain != domain) next
+        items_str <- paste(spec$components, collapse = ", ")
+        wrapped <- strwrap(paste0("= mean of: ", items_str),
+                           width = 90, indent = 5, exdent = 17)
         comp_lines <- paste0(
           comp_lines,
           " \u25B6  ", spec$label, " (", cname, ")\n",
-          "     = mean of: ", paste(spec$components, collapse = ", "), "\n\n"
+          paste(wrapped, collapse = "\n"), "\n\n"
         )
       }
     }
