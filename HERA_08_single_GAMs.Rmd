@@ -1247,7 +1247,8 @@ if (length(all_ids_signif) > 0) {
   # ---- COVER PAGE (p.1): How to Read This Report ----
   cover_title <- grid::textGrob(
     "How to Read This Report",
-    gp = grid::gpar(fontsize = 22, fontface = "bold")
+    gp = grid::gpar(fontsize = 24, fontface = "bold"),
+    vp = grid::viewport(y = 0.5)
   )
   cover_purpose <- grid::textGrob(
     paste0(
@@ -1256,25 +1257,29 @@ if (length(all_ids_signif) > 0) {
       "were modeled using Generalized Additive Models (GAMs) to capture smooth,\n",
       "non-linear patterns of change across the cycle."
     ),
-    gp = grid::gpar(fontsize = 11), just = "left", x = 0.05
+    gp = grid::gpar(fontsize = 11, lineheight = 1.3), just = "left", x = 0.05
   )
   cover_defs <- grid::textGrob(
     paste0(
       "KEY DEFINITIONS\n\n",
-      "\u2022 Range: The difference between the highest and lowest predicted values from each\n",
-      "  person\u2019s GAM curve \u2014 measures how much a symptom fluctuates across the cycle.\n\n",
-      "\u2022 Significant GAM (p < .05): The cyclical pattern is statistically distinguishable\n",
-      "  from a flat line \u2014 evidence that symptoms truly vary across the cycle.\n\n",
-      "\u2022 Range \u2265 1.5: A swing of 1.5+ points on the 1\u20136 DRSP scale, equivalent to the\n",
-      "  C-PASS 30% change criterion used to benchmark PMDD cyclical change.\n\n",
-      "\u2022 Affective outcomes: Mood/emotional symptoms (depression, anxiety, irritability,\n",
-      "  etc.) and related composites (Negative Affect, Distress, Lability, Low Arousal).\n\n",
-      "\u2022 Physical outcomes: Somatic symptoms (breast tenderness, headache, overeating,\n",
-      "  insomnia, etc.) and related composites (Breast Sx, Eating Sx).\n\n",
-      "\u2022 GAM-valid: Participants with enough data coverage across the menstrual cycle\n",
-      "  (\u22652 observations per quarter of the cycle) to fit a reliable model."
+      "\u2022 Range: The difference between the highest and lowest predicted values from\n",
+      "  each person\u2019s GAM curve \u2014 how much a symptom fluctuates across the cycle.\n\n",
+      "\u2022 Significant GAM (p < .05): The cyclical pattern is statistically\n",
+      "  distinguishable from a flat line \u2014 evidence symptoms truly vary across\n",
+      "  the cycle.\n\n",
+      "\u2022 Range \u2265 1.5: A swing of 1.5+ points on the 1\u20136 DRSP scale, equivalent to\n",
+      "  the C-PASS 30% change criterion used to benchmark PMDD cyclical change.\n",
+      "  This is a reference value for comparison with the existing C-PASS standard,\n",
+      "  not a validated clinical cutpoint.\n\n",
+      "\u2022 Affective outcomes: Mood/emotional symptoms (depression, anxiety,\n",
+      "  irritability, etc.) and composites (Neg. Affect, Distress, Lability,\n",
+      "  Low Arousal).\n\n",
+      "\u2022 Physical outcomes: Somatic symptoms (breast tenderness, headache,\n",
+      "  overeating, insomnia, etc.) and composites (Breast Sx, Eating Sx).\n\n",
+      "\u2022 GAM-valid: Participants with enough data coverage across the menstrual\n",
+      "  cycle (\u22652 obs per quarter) to fit a reliable model."
     ),
-    gp = grid::gpar(fontsize = 10), just = "left", x = 0.05
+    gp = grid::gpar(fontsize = 10, lineheight = 1.2), just = "left", x = 0.05
   )
   cover_toc <- grid::textGrob(
     paste0(
@@ -1289,12 +1294,13 @@ if (length(all_ids_signif) > 0) {
       "  Page  8 \u2014 Affective vs. Physical Symptom Comparison\n",
       "  Page  9 \u2014 Symptom Co-Occurrence Matrix"
     ),
-    gp = grid::gpar(fontsize = 10), just = "left", x = 0.05
+    gp = grid::gpar(fontsize = 10, lineheight = 1.2), just = "left", x = 0.05
   )
   gridExtra::grid.arrange(
     cover_title, cover_purpose, cover_defs, cover_toc,
     ncol = 1,
-    heights = grid::unit(c(0.08, 0.13, 0.52, 0.27), "npc")
+    heights = grid::unit(c(0.06, 0.12, 0.55, 0.27), "npc"),
+    padding = grid::unit(0.5, "lines")
   )
   draw_page_number()
 
@@ -1581,7 +1587,7 @@ if (length(all_ids_signif) > 0) {
   print(p_range_dist)
   draw_page_number()
 
-  # ---- PAGE 4 (was 6): % Significant and % Range >= 1.5 by outcome (side-by-side bars) ----
+  # ---- PAGE 4 (was 6): % Significant and % Range >= 1.5 by outcome (faceted bars) ----
   # Precompute ordering by % Range >= 1.5 before pivoting so all metrics
   # share a consistent outcome order (rather than ordering by the mean of both).
   pct_data <- outcome_desc %>%
@@ -1599,39 +1605,45 @@ if (length(all_ids_signif) > 0) {
       metric = factor(metric, levels = c("% Significant (p < .05)",
                                           "% Range \u2265 1.5",
                                           "% Sig OR Range \u2265 1.5")),
-      pct_label = sprintf("%.1f%%", pct)
+      fill_color = dplyr::case_when(
+        metric == "% Significant (p < .05)" ~ "#0072B2",
+        metric == "% Range \u2265 1.5"            ~ "#D55E00",
+        metric == "% Sig OR Range \u2265 1.5"      ~ "#009E73"
+      ),
+      pct_label = sprintf("%.0f%%", pct)
     )
 
   p_pct_bars <- ggplot2::ggplot(pct_data,
-                                 ggplot2::aes(x = label,
-                                              y = pct, fill = metric)) +
-    ggplot2::geom_col(position = "dodge", alpha = 0.8) +
+                                 ggplot2::aes(x = label, y = pct, fill = metric)) +
+    ggplot2::geom_col(alpha = 0.85, width = 0.7) +
     ggplot2::geom_text(
       ggplot2::aes(label = pct_label),
-      position = ggplot2::position_dodge(width = 0.9),
-      hjust = -0.1, size = 3.0
+      hjust = -0.1, size = 2.5
     ) +
     ggplot2::coord_flip() +
-    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
+    ggplot2::facet_wrap(~ metric, ncol = 3) +
+    ggplot2::scale_y_continuous(limits = c(0, 105),
+                                expand = ggplot2::expansion(mult = c(0, 0.05))) +
     ggplot2::scale_fill_manual(values = c("% Significant (p < .05)" = "#0072B2",
                                           "% Range \u2265 1.5" = "#D55E00",
                                           "% Sig OR Range \u2265 1.5" = "#009E73")) +
     ggplot2::labs(
-      title = "Percentage of GAM-Valid Sample: Significant, Range \u2265 1.5, or Either by Outcome",
+      title = "Percentage of GAM-Valid Sample by Outcome",
       subtitle = paste0("Denominator: GAM-valid N = ", n_gam_valid),
       x = NULL,
       y = "Percentage",
-      fill = NULL,
       caption = paste0(
         "Blue = statistically significant cyclicity (p < .05); orange = range meeting C-PASS benchmark (\u22651.5);\n",
-        "green = either criterion met. Outcomes near the top have the highest rates of cyclical change."
+        "green = either criterion met. Outcomes ordered by % Range \u2265 1.5 (bottom to top)."
       )
     ) +
-    ggplot2::theme_minimal(base_size = 10) +
+    ggplot2::theme_minimal(base_size = 9) +
     ggplot2::theme(
       plot.title = ggplot2::element_text(face = "bold", size = 13),
-      plot.caption = ggplot2::element_text(size = 9, hjust = 0, face = "italic"),
-      legend.position = "bottom"
+      plot.caption = ggplot2::element_text(size = 8, hjust = 0, face = "italic"),
+      legend.position = "none",
+      strip.text = ggplot2::element_text(face = "bold", size = 9),
+      panel.spacing = grid::unit(1, "lines")
     )
   print(p_pct_bars)
   draw_page_number()
@@ -1695,12 +1707,26 @@ if (length(all_ids_signif) > 0) {
                                               "Range \u2265 1.5 Only", "Sig + Range \u2265 1.5"))
     )
 
-  # Order outcomes by % meeting either criterion
-  outcome_order <- heatmap_data %>%
-    dplyr::group_by(label) %>%
+  # Order outcomes: physical on bottom, affective on top, within each group
+  # sorted by % meeting either criterion (ascending so top = highest %)
+  outcome_order_df <- heatmap_data %>%
+    dplyr::group_by(label, variable) %>%
     dplyr::summarise(pct_either = mean(category != "Neither", na.rm = TRUE), .groups = "drop") %>%
-    dplyr::arrange(pct_either) %>%
-    dplyr::pull(label)
+    dplyr::mutate(
+      domain = dplyr::case_when(
+        variable %in% all_affective_outcomes ~ "Affective",
+        variable %in% all_physical_outcomes  ~ "Physical",
+        TRUE ~ "Other"
+      ),
+      # Physical at bottom (1), then Affective on top (2)
+      domain_rank = dplyr::case_when(
+        domain == "Physical"  ~ 1L,
+        domain == "Affective" ~ 2L,
+        TRUE                  ~ 0L
+      )
+    ) %>%
+    dplyr::arrange(domain_rank, pct_either)
+  outcome_order <- outcome_order_df$label
 
   # Order participants by total number of outcomes meeting either criterion
   id_order <- heatmap_data %>%
@@ -1728,7 +1754,7 @@ if (length(all_ids_signif) > 0) {
     ggplot2::labs(
       title = "Cyclical Symptom Patterns: Outcome \u00d7 Participant Heatmap",
       subtitle = paste0("Participants (columns) ordered by total outcomes affected; ",
-                        "outcomes (rows) ordered by % affected"),
+                        "outcomes (rows) grouped by domain: affective (top), physical (bottom)"),
       caption = paste0(
         "Each cell shows one participant\u2019s result for one outcome.\n",
         "Dark orange = both statistically significant AND range meeting C-PASS benchmark; ",
@@ -1819,39 +1845,19 @@ if (length(all_ids_signif) > 0) {
       legend.position = "bottom"
     )
 
-  # Median range comparison
-  p_domain_range <- ggplot2::ggplot(domain_summary,
-                                     ggplot2::aes(x = domain, y = median_range, fill = domain)) +
-    ggplot2::geom_col(alpha = 0.85, width = 0.5) +
-    ggplot2::geom_text(ggplot2::aes(label = sprintf("%.2f", median_range)),
-                       vjust = -0.3, size = 4.5) +
-    ggplot2::geom_hline(yintercept = 1.5, color = "red", linetype = "dashed", linewidth = 0.6) +
-    ggplot2::scale_fill_manual(values = c("Affective" = "#0072B2", "Physical" = "#D55E00")) +
-    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
-    ggplot2::labs(
-      title = "Median Range",
-      x = NULL,
-      y = "Median Range"
-    ) +
-    ggplot2::theme_minimal(base_size = 12) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 13),
-      legend.position = "none"
-    )
-
-  # Caption grob for the combined layout
+  # Caption grob for the layout
   domain_caption <- grid::textGrob(
     paste0(
       "Affective = mood/emotional symptoms and composites (Neg. Affect, Distress, Lability, Low Arousal). ",
       "Physical = somatic symptoms and composites (Breast Sx, Eating Sx).\n",
-      "Left panel: % of outcome \u00d7 participant pairs meeting each criterion. ",
-      "Right panel: median cyclical range (red line = 1.5 clinical threshold)."
+      "% of outcome \u00d7 participant pairs meeting each criterion. ",
+      "Range \u2265 1.5 reference line corresponds to the C-PASS 30% change benchmark."
     ),
     gp = grid::gpar(fontsize = 9, fontface = "italic"),
     just = "left", x = 0.02
   )
   gridExtra::grid.arrange(
-    gridExtra::arrangeGrob(p_domain, p_domain_range, ncol = 2, widths = c(2, 1)),
+    p_domain,
     domain_caption,
     ncol = 1,
     heights = grid::unit(c(0.88, 0.12), "npc")
