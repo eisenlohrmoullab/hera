@@ -459,13 +459,14 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
     if (nrow(raw_pts) == 0) raw_pts <- NULL
   }
 
-  # Dynamic expansion for all outcomes: expand y_max to 5 or 6 if values exceed 4.5.
-  # When y_limits were computed internally (no caller-provided limits), expand based
-  # on both GAM predictions and raw data.
-  # When y_limits were passed by the caller (GAM-based global ymax), still expand
-  # this outcome's y-axis further if raw data points exceed the caller-supplied limit.
-  # This ensures raw-data expansion is always per-outcome, while GAM-driven expansion
-  # is applied globally (by the caller).
+  # Dynamic Y-axis expansion for fixed-scale outcomes (where y_limits is non-NULL).
+  # Data-mode outcomes leave y_limits = NULL and rely on ggplot auto-scaling instead.
+  #
+  # Two expansion paths:
+  #   1. Caller-provided y_limits (GAM-based global ymax for this ID):
+  #      Only expand further if raw data points for THIS outcome exceed the limit.
+  #   2. Internally-computed y_limits (no caller override):
+  #      Expand based on both GAM predictions and raw data.
   if (!is.null(y_limits)) {
     raw_max <- if (!is.null(raw_pts) && nrow(raw_pts) > 0 && outcome_var %in% names(raw_pts)) {
       vals <- raw_pts[[outcome_var]]
