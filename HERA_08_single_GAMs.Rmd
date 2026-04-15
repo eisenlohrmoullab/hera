@@ -1247,8 +1247,7 @@ if (length(all_ids_signif) > 0) {
   # ---- COVER PAGE (p.1): How to Read This Report ----
   cover_title <- grid::textGrob(
     "How to Read This Report",
-    gp = grid::gpar(fontsize = 24, fontface = "bold"),
-    vp = grid::viewport(y = 0.5)
+    gp = grid::gpar(fontsize = 24, fontface = "bold")
   )
   cover_purpose <- grid::textGrob(
     paste0(
@@ -1614,7 +1613,7 @@ if (length(all_ids_signif) > 0) {
         metric == "% Range \u2265 1.5"            ~ "#D55E00",
         metric == "% Sig OR Range \u2265 1.5"      ~ "#009E73"
       ),
-      pct_label = sprintf("%.0f%%", pct)
+      pct_label = sprintf("%.1f%%", pct)
     )
 
   p_pct_bars <- ggplot2::ggplot(pct_data,
