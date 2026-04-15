@@ -1232,7 +1232,7 @@ if (length(all_ids_signif) > 0) {
 
   # --- Page numbering helper ---
   # NOTE: Update total_report_pages if pages are added/removed from this report.
-  total_report_pages <- 11L
+  total_report_pages <- 9L
   page_counter <- 0L
   draw_page_number <- function() {
     page_counter <<- page_counter + 1L
@@ -1247,7 +1247,7 @@ if (length(all_ids_signif) > 0) {
   # ---- COVER PAGE (p.1): How to Read This Report ----
   cover_title <- grid::textGrob(
     "How to Read This Report",
-    gp = grid::gpar(fontsize = 22, fontface = "bold")
+    gp = grid::gpar(fontsize = 24, fontface = "bold")
   )
   cover_purpose <- grid::textGrob(
     paste0(
@@ -1256,25 +1256,29 @@ if (length(all_ids_signif) > 0) {
       "were modeled using Generalized Additive Models (GAMs) to capture smooth,\n",
       "non-linear patterns of change across the cycle."
     ),
-    gp = grid::gpar(fontsize = 11), just = "left", x = 0.05
+    gp = grid::gpar(fontsize = 11, lineheight = 1.3), just = "left", x = 0.05
   )
   cover_defs <- grid::textGrob(
     paste0(
       "KEY DEFINITIONS\n\n",
-      "\u2022 Range: The difference between the highest and lowest predicted values from each\n",
-      "  person\u2019s GAM curve \u2014 measures how much a symptom fluctuates across the cycle.\n\n",
-      "\u2022 Significant GAM (p < .05): The cyclical pattern is statistically distinguishable\n",
-      "  from a flat line \u2014 evidence that symptoms truly vary across the cycle.\n\n",
-      "\u2022 Range \u2265 1.5: A clinically meaningful swing of 1.5+ points on the 1\u20136 DRSP\n",
-      "  scale, representing roughly one full severity level.\n\n",
-      "\u2022 Affective outcomes: Mood/emotional symptoms (depression, anxiety, irritability,\n",
-      "  etc.) and related composites (Negative Affect, Distress, Lability, Low Arousal).\n\n",
-      "\u2022 Physical outcomes: Somatic symptoms (breast tenderness, headache, overeating,\n",
-      "  insomnia, etc.) and related composites (Breast Sx, Eating Sx).\n\n",
-      "\u2022 GAM-valid: Participants with enough data coverage across the menstrual cycle\n",
-      "  (\u22652 observations per quarter of the cycle) to fit a reliable model."
+      "\u2022 Range: The difference between the highest and lowest predicted values from\n",
+      "  each person\u2019s GAM curve \u2014 how much a symptom fluctuates across the cycle.\n\n",
+      "\u2022 Significant GAM (p < .05): The cyclical pattern is statistically\n",
+      "  distinguishable from a flat line \u2014 evidence symptoms truly vary across\n",
+      "  the cycle.\n\n",
+      "\u2022 Range \u2265 1.5: A swing of 1.5+ points on the 1\u20136 DRSP scale, equivalent to\n",
+      "  the C-PASS 30% change criterion used to benchmark PMDD cyclical change.\n",
+      "  This is a reference value for comparison with the existing C-PASS standard,\n",
+      "  not a validated clinical cutpoint.\n\n",
+      "\u2022 Affective outcomes: Mood/emotional symptoms (depression, anxiety,\n",
+      "  irritability, etc.) and composites (Neg. Affect, Distress, Lability,\n",
+      "  Low Arousal).\n\n",
+      "\u2022 Physical outcomes: Somatic symptoms (breast tenderness, headache,\n",
+      "  overeating, insomnia, etc.) and composites (Breast Sx, Eating Sx).\n\n",
+      "\u2022 GAM-valid: Participants with enough data coverage across the menstrual\n",
+      "  cycle (\u22652 obs per quarter) to fit a reliable model."
     ),
-    gp = grid::gpar(fontsize = 10), just = "left", x = 0.05
+    gp = grid::gpar(fontsize = 10, lineheight = 1.2), just = "left", x = 0.05
   )
   cover_toc <- grid::textGrob(
     paste0(
@@ -1283,20 +1287,19 @@ if (length(all_ids_signif) > 0) {
       "  Page  2 \u2014 Key Metrics Summary with Interpretation Guide\n",
       "  Page  3 \u2014 Per-Outcome Descriptives Table (color-coded)\n",
       "  Page  4 \u2014 Distribution of Ranges by Outcome (histograms)\n",
-      "  Page  5 \u2014 Number of High-Range Outcomes per Participant\n",
-      "  Page  6 \u2014 Median Range by Outcome (bar chart)\n",
-      "  Page  7 \u2014 Significance & Range Rates by Outcome (grouped bars)\n",
-      "  Page  8 \u2014 Per-Person Range Distributions (dot + box plot)\n",
-      "  Page  9 \u2014 Significance/Range Heatmap (Outcome \u00d7 Participant)\n",
-      "  Page 10 \u2014 Affective vs. Physical Symptom Comparison\n",
-      "  Page 11 \u2014 Symptom Co-Occurrence Matrix"
+      "  Page  5 \u2014 Significance & Range Rates by Outcome (grouped bars)\n",
+      "  Page  6 \u2014 Per-Person Range Distributions (dot + box plot)\n",
+      "  Page  7 \u2014 Significance/Range Heatmap (Outcome \u00d7 Participant)\n",
+      "  Page  8 \u2014 Affective vs. Physical Symptom Comparison\n",
+      "  Page  9 \u2014 Symptom Co-Occurrence Matrix"
     ),
-    gp = grid::gpar(fontsize = 10), just = "left", x = 0.05
+    gp = grid::gpar(fontsize = 10, lineheight = 1.2), just = "left", x = 0.05
   )
   gridExtra::grid.arrange(
     cover_title, cover_purpose, cover_defs, cover_toc,
     ncol = 1,
-    heights = grid::unit(c(0.08, 0.13, 0.52, 0.27), "npc")
+    heights = grid::unit(c(0.06, 0.12, 0.55, 0.27), "npc"),
+    padding = grid::unit(0.5, "lines")
   )
   draw_page_number()
 
@@ -1309,6 +1312,10 @@ if (length(all_ids_signif) > 0) {
 
   # All affective outcomes (raw + composite)
   all_affective_outcomes <- c(affective_raw_drsp, affective_composites)
+
+  # Physical composites and all physical outcomes
+  phys_composites <- c("drsp_breastpain", "drsp_eatsx")
+  all_physical_outcomes <- c(physical_symptoms, phys_composites)
 
   # --- Per-ID summary: best result per outcome (one row per id × variable) ---
   # Use finite-safe aggregation to avoid Inf/-Inf when all values are NA.
@@ -1448,7 +1455,7 @@ if (length(all_ids_signif) > 0) {
         "\u2022 Significant GAM: The person\u2019s symptom shows a reliable pattern of change across the\n",
         "  menstrual cycle (p < .05). Higher % = more people show cyclical symptoms.\n\n",
         "\u2022 Range \u2265 1.5: The symptom swings by at least 1.5 points on the 1\u20136 DRSP scale across\n",
-        "  the cycle \u2014 a clinically meaningful change (~one severity level). Higher % = more\n",
+        "  the cycle \u2014 equivalent to the C-PASS 30% change criterion for PMDD. Higher % = more\n",
         "  people with large cyclical swings.\n\n",
         "\u2022 Affective vs. Any: Affective metrics focus on mood/emotional symptoms only (excluding\n",
         "  physical symptoms). This shows whether cyclicity is primarily mood-driven.\n\n",
@@ -1529,7 +1536,7 @@ if (length(all_ids_signif) > 0) {
       "COLUMN GUIDE: N = participants with valid GAM data for this outcome; ",
       "Median Range = typical amount of cyclical variation;\n",
       "% Sig = % with statistically significant cyclicity (p < .05); ",
-      "% \u22651.5 = % with clinically meaningful variation (\u22651.5-point swing);\n",
+      "% \u22651.5 = % with range meeting C-PASS benchmark (\u22651.5-point swing);\n",
       "% Either = % meeting either criterion. ",
       "Shading: blue = high % Sig; orange = high Median Range or % \u22651.5; green = high % Either."
     ),
@@ -1570,7 +1577,7 @@ if (length(all_ids_signif) > 0) {
       y = "Count",
       caption = paste0(
         "Each panel shows one outcome. Blue bars = significant cyclicity (p < .05); grey = not significant.\n",
-        "Outcomes where most bars fall right of the red line have widespread clinically meaningful variation."
+        "Outcomes where most bars fall right of the red line have widespread variation meeting the C-PASS benchmark."
       )
     ) +
     ggplot2::theme_minimal(base_size = 8) +
@@ -1583,72 +1590,7 @@ if (length(all_ids_signif) > 0) {
   print(p_range_dist)
   draw_page_number()
 
-  # ---- PAGE 4: Per-person count of outcomes meeting range >= 1.5 ----
-  ids_range15_count <- id_outcome_summary %>%
-    dplyr::filter(is.finite(best_range) & best_range >= 1.5) %>%
-    dplyr::group_by(id) %>%
-    dplyr::summarise(n_outcomes_range15 = dplyr::n(), .groups = "drop")
-
-  # Include IDs with zero qualifying outcomes
-  ids_range15_all <- tibble::tibble(id = all_ids) %>%
-    dplyr::left_join(ids_range15_count, by = "id") %>%
-    dplyr::mutate(n_outcomes_range15 = dplyr::coalesce(n_outcomes_range15, 0L))
-
-  p_count_hist <- ggplot2::ggplot(ids_range15_all,
-                                   ggplot2::aes(x = n_outcomes_range15)) +
-    ggplot2::geom_histogram(binwidth = 1, fill = "#0072B2", color = "white", alpha = 0.8) +
-    ggplot2::labs(
-      title = "Number of Outcomes with Range \u2265 1.5 per Participant",
-      subtitle = paste0("GAM-valid N = ", n_gam_valid, " participants; ",
-                        sprintf("%.1f%%", pct_any_range15),
-                        " have at least one outcome with range \u2265 1.5"),
-      x = "Number of outcomes with range \u2265 1.5",
-      y = "Number of participants",
-      caption = paste0(
-        "Each bar shows how many participants have that many outcomes with range \u2265 1.5.\n",
-        "A person at 0 has no outcomes with clinically meaningful cyclical variation;\n",
-        "higher counts suggest more pervasive cyclicity across multiple symptoms."
-      )
-    ) +
-    ggplot2::scale_x_continuous(breaks = seq(0, max(c(0, ids_range15_all$n_outcomes_range15), na.rm = TRUE))) +
-    ggplot2::theme_minimal(base_size = 12) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 14),
-      plot.caption = ggplot2::element_text(size = 9, hjust = 0, face = "italic")
-    )
-  print(p_count_hist)
-  draw_page_number()
-
-  # ---- PAGE 5: Median range by outcome (bar chart) ----
-  p_median_bar <- ggplot2::ggplot(outcome_desc,
-                                   ggplot2::aes(x = reorder(label, median_range),
-                                                y = median_range)) +
-    ggplot2::geom_col(fill = "#0072B2", alpha = 0.8) +
-    ggplot2::geom_text(ggplot2::aes(label = sprintf("%.2f", median_range)),
-                       hjust = -0.15, size = 3.0) +
-    ggplot2::geom_hline(yintercept = 1.5, color = "red", linetype = "dashed",
-                        linewidth = 0.6) +
-    ggplot2::coord_flip() +
-    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
-    ggplot2::labs(
-      title = "Median GAM Range by Outcome",
-      subtitle = "Red dashed line = range \u2265 1.5 threshold",
-      x = NULL,
-      y = "Median Range",
-      caption = paste0(
-        "Outcomes above the red dashed line have a typical cyclical swing of \u22651.5 points.\n",
-        "These represent symptoms where the average participant shows clinically meaningful variation."
-      )
-    ) +
-    ggplot2::theme_minimal(base_size = 10) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 14),
-      plot.caption = ggplot2::element_text(size = 9, hjust = 0, face = "italic")
-    )
-  print(p_median_bar)
-  draw_page_number()
-
-  # ---- PAGE 6: % Significant and % Range >= 1.5 by outcome (side-by-side bars) ----
+  # ---- PAGE 4 (was 6): % Significant and % Range >= 1.5 by outcome (faceted bars) ----
   # Precompute ordering by % Range >= 1.5 before pivoting so all metrics
   # share a consistent outcome order (rather than ordering by the mean of both).
   pct_data <- outcome_desc %>%
@@ -1670,40 +1612,41 @@ if (length(all_ids_signif) > 0) {
     )
 
   p_pct_bars <- ggplot2::ggplot(pct_data,
-                                 ggplot2::aes(x = label,
-                                              y = pct, fill = metric)) +
-    ggplot2::geom_col(position = "dodge", alpha = 0.8) +
+                                 ggplot2::aes(x = label, y = pct, fill = metric)) +
+    ggplot2::geom_col(alpha = 0.85, width = 0.7) +
     ggplot2::geom_text(
       ggplot2::aes(label = pct_label),
-      position = ggplot2::position_dodge(width = 0.9),
-      hjust = -0.1, size = 3.0
+      hjust = -0.1, size = 2.5
     ) +
     ggplot2::coord_flip() +
-    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
+    ggplot2::facet_wrap(~ metric, ncol = 3) +
+    ggplot2::scale_y_continuous(limits = c(0, 105),
+                                expand = ggplot2::expansion(mult = c(0, 0.05))) +
     ggplot2::scale_fill_manual(values = c("% Significant (p < .05)" = "#0072B2",
                                           "% Range \u2265 1.5" = "#D55E00",
                                           "% Sig OR Range \u2265 1.5" = "#009E73")) +
     ggplot2::labs(
-      title = "Percentage of GAM-Valid Sample: Significant, Range \u2265 1.5, or Either by Outcome",
+      title = "Percentage of GAM-Valid Sample by Outcome",
       subtitle = paste0("Denominator: GAM-valid N = ", n_gam_valid),
       x = NULL,
       y = "Percentage",
-      fill = NULL,
       caption = paste0(
-        "Blue = statistically significant cyclicity (p < .05); orange = clinically meaningful range (\u22651.5);\n",
-        "green = either criterion met. Outcomes near the top have the highest rates of cyclical change."
+        "Blue = statistically significant cyclicity (p < .05); orange = range meeting C-PASS benchmark (\u22651.5);\n",
+        "green = either criterion met. Outcomes ordered by % Range \u2265 1.5 (bottom to top)."
       )
     ) +
-    ggplot2::theme_minimal(base_size = 10) +
+    ggplot2::theme_minimal(base_size = 9) +
     ggplot2::theme(
       plot.title = ggplot2::element_text(face = "bold", size = 13),
-      plot.caption = ggplot2::element_text(size = 9, hjust = 0, face = "italic"),
-      legend.position = "bottom"
+      plot.caption = ggplot2::element_text(size = 8, hjust = 0, face = "italic"),
+      legend.position = "none",
+      strip.text = ggplot2::element_text(face = "bold", size = 9),
+      panel.spacing = grid::unit(1, "lines")
     )
   print(p_pct_bars)
   draw_page_number()
 
-  # ---- PAGE 8: Dot/Strip Plot with Box-and-Whisker ----
+  # ---- PAGE 5 (was 8): Dot/Strip Plot with Box-and-Whisker ----
   p_dot_strip <- ggplot2::ggplot(
     range_plot_data,
     ggplot2::aes(x = reorder(label, best_range, FUN = median, na.rm = TRUE),
@@ -1744,7 +1687,7 @@ if (length(all_ids_signif) > 0) {
   print(p_dot_strip)
   draw_page_number()
 
-  # ---- PAGE 9: Significance/Range Heatmap (Outcome x Participant) ----
+  # ---- PAGE 6 (was 9): Significance/Range Heatmap (Outcome x Participant) ----
   heatmap_data <- id_outcome_summary %>%
     dplyr::left_join(
       tibble::enframe(outcomes, name = "variable", value = "label"),
@@ -1762,12 +1705,26 @@ if (length(all_ids_signif) > 0) {
                                               "Range \u2265 1.5 Only", "Sig + Range \u2265 1.5"))
     )
 
-  # Order outcomes by % meeting either criterion
-  outcome_order <- heatmap_data %>%
-    dplyr::group_by(label) %>%
+  # Order outcomes: physical on bottom, affective on top, within each group
+  # sorted by % meeting either criterion (ascending so top = highest %)
+  outcome_order_df <- heatmap_data %>%
+    dplyr::group_by(label, variable) %>%
     dplyr::summarise(pct_either = mean(category != "Neither", na.rm = TRUE), .groups = "drop") %>%
-    dplyr::arrange(pct_either) %>%
-    dplyr::pull(label)
+    dplyr::mutate(
+      domain = dplyr::case_when(
+        variable %in% all_affective_outcomes ~ "Affective",
+        variable %in% all_physical_outcomes  ~ "Physical",
+        TRUE ~ "Other"
+      ),
+      # Physical at bottom (1), then Affective on top (2)
+      domain_rank = dplyr::case_when(
+        domain == "Physical"  ~ 1L,
+        domain == "Affective" ~ 2L,
+        TRUE                  ~ 0L
+      )
+    ) %>%
+    dplyr::arrange(domain_rank, pct_either)
+  outcome_order <- outcome_order_df$label
 
   # Order participants by total number of outcomes meeting either criterion
   id_order <- heatmap_data %>%
@@ -1795,12 +1752,12 @@ if (length(all_ids_signif) > 0) {
     ggplot2::labs(
       title = "Cyclical Symptom Patterns: Outcome \u00d7 Participant Heatmap",
       subtitle = paste0("Participants (columns) ordered by total outcomes affected; ",
-                        "outcomes (rows) ordered by % affected"),
+                        "outcomes (rows) grouped by domain: affective (top), physical (bottom)"),
       caption = paste0(
         "Each cell shows one participant\u2019s result for one outcome.\n",
-        "Dark orange = both statistically significant AND clinically meaningful range; ",
+        "Dark orange = both statistically significant AND range meeting C-PASS benchmark; ",
         "blue = significant only;\n",
-        "light orange = clinically meaningful range but not significant; grey = neither."
+        "light orange = range meeting C-PASS benchmark but not significant; grey = neither."
       ),
       x = "Participants",
       y = NULL
@@ -1817,9 +1774,7 @@ if (length(all_ids_signif) > 0) {
   print(p_heatmap)
   draw_page_number()
 
-  # ---- PAGE 10: Affective vs. Physical Symptom Comparison ----
-  phys_composites <- c("drsp_breastpain", "drsp_eatsx")
-  all_physical_outcomes <- c(physical_symptoms, phys_composites)
+  # ---- PAGE 7 (was 10): Affective vs. Physical Symptom Comparison ----
 
   comparison_data <- id_outcome_summary %>%
     dplyr::mutate(
@@ -1886,46 +1841,26 @@ if (length(all_ids_signif) > 0) {
       legend.position = "bottom"
     )
 
-  # Median range comparison
-  p_domain_range <- ggplot2::ggplot(domain_summary,
-                                     ggplot2::aes(x = domain, y = median_range, fill = domain)) +
-    ggplot2::geom_col(alpha = 0.85, width = 0.5) +
-    ggplot2::geom_text(ggplot2::aes(label = sprintf("%.2f", median_range)),
-                       vjust = -0.3, size = 4.5) +
-    ggplot2::geom_hline(yintercept = 1.5, color = "red", linetype = "dashed", linewidth = 0.6) +
-    ggplot2::scale_fill_manual(values = c("Affective" = "#0072B2", "Physical" = "#D55E00")) +
-    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
-    ggplot2::labs(
-      title = "Median Range",
-      x = NULL,
-      y = "Median Range"
-    ) +
-    ggplot2::theme_minimal(base_size = 12) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 13),
-      legend.position = "none"
-    )
-
-  # Caption grob for the combined layout
+  # Caption grob for the layout
   domain_caption <- grid::textGrob(
     paste0(
       "Affective = mood/emotional symptoms and composites (Neg. Affect, Distress, Lability, Low Arousal). ",
       "Physical = somatic symptoms and composites (Breast Sx, Eating Sx).\n",
-      "Left panel: % of outcome \u00d7 participant pairs meeting each criterion. ",
-      "Right panel: median cyclical range (red line = 1.5 clinical threshold)."
+      "% of outcome \u00d7 participant pairs meeting each criterion. ",
+      "Range \u2265 1.5 reference line corresponds to the C-PASS 30% change benchmark."
     ),
     gp = grid::gpar(fontsize = 9, fontface = "italic"),
     just = "left", x = 0.02
   )
   gridExtra::grid.arrange(
-    gridExtra::arrangeGrob(p_domain, p_domain_range, ncol = 2, widths = c(2, 1)),
+    p_domain,
     domain_caption,
     ncol = 1,
     heights = grid::unit(c(0.88, 0.12), "npc")
   )
   draw_page_number()
 
-  # ---- PAGE 11: Symptom Co-Occurrence Matrix ----
+  # ---- PAGE 8 (was 11): Symptom Co-Occurrence Matrix ----
   # For each pair of outcomes, what % of GAM-valid participants meet
   # "sig OR range >= 1.5" in both outcomes?
   cooccur_data <- id_outcome_summary %>%
@@ -2126,12 +2061,13 @@ make_prediction_df <- function(df_outcome, model_range, model_range_n = NULL,
               length.out = 300)
   pred1 <- tibble::tibble(range = xseq) %>%
     dplyr::mutate(pred_prob = predict(model_range, newdata = ., type = "response"),
-                  model     = "Range only")
+                  model     = "Range Only (no covariates)")
   if (!is.null(model_range_n)) {
     if (is.null(n_value)) n_value <- median(df_outcome$n, na.rm = TRUE)
     pred2 <- tibble::tibble(range = xseq, n = n_value) %>%
       dplyr::mutate(pred_prob = predict(model_range_n, newdata = ., type = "response"),
-                    model     = paste0("Range + n (n fixed at ", round(n_value, 1), ")")) %>%
+                    model     = paste0("Range + Obs. Count (n held at median = ",
+                                       round(n_value, 0), ")")) %>%
       dplyr::select(range, pred_prob, model)
     dplyr::bind_rows(pred1, pred2)
   } else {
@@ -2166,11 +2102,24 @@ plot_significance_probability <- function(df_outcome, pred_df,
                                 labels = scales::percent_format(accuracy = 1)) +
     ggplot2::labs(
       title = paste0("Probability of Significant Cyclicity: ", unique(df_outcome$variable)),
+      subtitle = paste0(
+        "Each dot = one participant (jittered vertically). ",
+        "Lines = logistic model-predicted probability of significance."
+      ),
       x = "Cyclical range",
       y = "Predicted probability of significant GAM",
-      color = NULL, linetype = NULL
+      color = NULL, linetype = NULL,
+      caption = paste0(
+        "'Range Only (no covariates)' = logistic model predicting significance from cyclical range alone.\n",
+        "'Range + Obs. Count (n held at median)' = model also adjusting for number of observations.\n",
+        "Dashed vertical lines mark range thresholds."
+      )
     ) +
-    ggplot2::theme_minimal(base_size = 16)
+    ggplot2::theme_minimal(base_size = 14) +
+    ggplot2::theme(
+      plot.caption = ggplot2::element_text(size = 8, hjust = 0, face = "italic"),
+      plot.subtitle = ggplot2::element_text(size = 10)
+    )
 }
 
 # --- Binned empirical proportions ---
@@ -2201,12 +2150,25 @@ plot_empirical_and_model <- function(df_outcome, pred_df, empirical_df,
                                 labels = scales::percent_format(accuracy = 1)) +
     ggplot2::labs(
       title    = paste0("Empirical and Modeled Probability: ", unique(df_outcome$variable)),
+      subtitle = paste0(
+        "Dots = observed proportion significant in each range bin (size = bin count).\n",
+        "Lines = logistic model predictions. Dashed verticals = range thresholds."
+      ),
       x        = "Cyclical range",
       y        = "Probability of significant GAM",
       size     = "Bin n",
-      linetype = NULL
+      linetype = NULL,
+      caption  = paste0(
+        "This plot shows how the probability of achieving a significant GAM increases with cyclical range.\n",
+        "Each dot represents a bin of participants grouped by similar range values; larger dots = more participants.\n",
+        "The lines show logistic regression model predictions of significance probability as a function of range."
+      )
     ) +
-    ggplot2::theme_minimal(base_size = 16)
+    ggplot2::theme_minimal(base_size = 14) +
+    ggplot2::theme(
+      plot.caption = ggplot2::element_text(size = 8, hjust = 0, face = "italic"),
+      plot.subtitle = ggplot2::element_text(size = 10)
+    )
 }
 
 # --- All-in-one analysis wrapper for one outcome variable ---
@@ -2412,7 +2374,7 @@ plot_overlay_gam_twogroup <- function(fit_results_list, group1_ids, group2_ids,
   p
 }
 
-# --- Peak and trough timing distribution plot for significant participants ---
+# --- Peak and trough timing distribution plot for qualifying participants ---
 plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
   meta <- axis_meta_list[[tv]]
 
@@ -2452,7 +2414,8 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
                                 labels = abs) +
     ggplot2::labs(
       title = paste("Peak & Trough Timing:", outcome_label),
-      subtitle = paste0("Among participants with significant GAMs (p < .05); N = ",
+      subtitle = paste0("Among participants with significant GAMs (p < .05) ",
+                        "or range \u2265 1.5; N = ",
                         nrow(df_sig)),
       x = "Cycle Phase",
       y = "Peaks \u2191 / Troughs \u2193 (normalized density)",
@@ -2474,13 +2437,13 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
 # =========================================================
 # For each DRSP outcome, generates a landscape PDF containing:
 #   1. Summary page: descriptive stats + threshold table + peak/trough timing
-#   2. Combined overlay GAM plot (significant participants only)
-#   3. Combined overlay GAM plot (non-significant participants only)
+#   2. All GAM curves colored by significance
+#   3. All GAM curves colored by sig. or range >= 1.5
 #   4. Significance probability plot (logistic curve)
 #   5. Histogram of range by significance
 #   6. Empirical + modeled probability plot
 #   Per time variable:
-#   7. Peak & trough timing density (significant participants)
+#   7. Peak & trough timing density (significant or range >= 1.5 participants)
 #   8+. Individual GAM trajectory pages (all IDs, sorted by descending range)
 # =========================================================
 
@@ -2626,7 +2589,10 @@ if (length(all_ids_signif) > 0) {
     )
 
     sig_peak_data <- result$data %>%
-      dplyr::filter(significant_num == 1, !is.na(peak_time), !is.na(trough_time))
+      dplyr::filter(
+        (significant_num == 1) | (is.finite(range) & range >= 1.5),
+        !is.na(peak_time), !is.na(trough_time)
+      )
 
     if (nrow(sig_peak_data) > 0) {
       timing_by_tv <- sig_peak_data %>%
@@ -2634,18 +2600,18 @@ if (length(all_ids_signif) > 0) {
         dplyr::summarise(
           med_peak   = median(peak_time, na.rm = TRUE),
           med_trough = median(trough_time, na.rm = TRUE),
-          n_sig      = dplyr::n(),
+          n_qual     = dplyr::n(),
           .groups    = "drop"
         )
       for (i in seq_len(nrow(timing_by_tv))) {
         tv_label <- timing_by_tv$best_time_var[i]
         suffix <- if (nrow(timing_by_tv) > 1) paste0(" [", tv_label, "]") else ""
         desc_df <- rbind(desc_df, data.frame(
-          Metric = c(paste0("Median Peak Time (sig.)", suffix),
-                      paste0("Median Trough Time (sig.)", suffix)),
+          Metric = c(paste0("Median Peak Time (sig. or range\u22651.5)", suffix),
+                      paste0("Median Trough Time (sig. or range\u22651.5)", suffix)),
           Value = c(
-            sprintf("%.2f (N=%d)", timing_by_tv$med_peak[i], timing_by_tv$n_sig[i]),
-            sprintf("%.2f (N=%d)", timing_by_tv$med_trough[i], timing_by_tv$n_sig[i])
+            sprintf("%.2f (N=%d)", timing_by_tv$med_peak[i], timing_by_tv$n_qual[i]),
+            sprintf("%.2f (N=%d)", timing_by_tv$med_trough[i], timing_by_tv$n_qual[i])
           ),
           stringsAsFactors = FALSE
         ))
@@ -2691,33 +2657,7 @@ if (length(all_ids_signif) > 0) {
       heights = grid::unit(c(0.10, 0.05, 0.25, 0.08, 0.38, 0.08), "npc")
     )
 
-    # ---- PAGE 2: Combined Overlay GAM - Significant Participants ----
-    for (tv in time_vars) {
-      p_sig_overlay <- plot_overlay_gam(
-        fit_results_list = all_fit_results_by_tv[[tv]],
-        ids              = sig_ids,
-        tv               = tv,
-        axis_meta_list   = axis_meta,
-        outcome_label    = outcome_label,
-        title_prefix     = "Significant GAMs (p < .05)"
-      )
-      if (!is.null(p_sig_overlay)) print(p_sig_overlay)
-    }
-
-    # ---- PAGE 3: Combined Overlay GAM - Non-Significant Participants ----
-    for (tv in time_vars) {
-      p_nonsig_overlay <- plot_overlay_gam(
-        fit_results_list = all_fit_results_by_tv[[tv]],
-        ids              = nonsig_ids,
-        tv               = tv,
-        axis_meta_list   = axis_meta,
-        outcome_label    = outcome_label,
-        title_prefix     = "Non-Significant GAMs (p \u2265 .05)"
-      )
-      if (!is.null(p_nonsig_overlay)) print(p_nonsig_overlay)
-    }
-
-    # ---- PAGE 3A: All curves — significant (vermillion) vs. non-significant (sky blue) ----
+    # ---- PAGE 2: All curves — significant (vermillion) vs. non-significant (sky blue) ----
     for (tv in time_vars) {
       p_twocol_sig <- plot_overlay_gam_twogroup(
         fit_results_list = all_fit_results_by_tv[[tv]],
@@ -2735,7 +2675,7 @@ if (length(all_ids_signif) > 0) {
       if (!is.null(p_twocol_sig)) print(p_twocol_sig)
     }
 
-    # ---- PAGE 3B: All curves — significant OR range >= 1.5 (reddish purple) vs. neither (bluish green) ----
+    # ---- PAGE 3: All curves — significant OR range >= 1.5 (reddish purple) vs. neither (bluish green) ----
     for (tv in time_vars) {
       p_twocol_range <- plot_overlay_gam_twogroup(
         fit_results_list = all_fit_results_by_tv[[tv]],
@@ -2764,12 +2704,15 @@ if (length(all_ids_signif) > 0) {
 
     # ---- PAGE 7+: Peak & Trough Timing Summary (per time variable) ----
     for (tv in time_vars) {
-      sig_timing_data <- result$data %>%
-        dplyr::filter(significant_num == 1, best_time_var == tv,
-                      !is.na(peak_time), !is.na(trough_time))
+      timing_data <- result$data %>%
+        dplyr::filter(
+          (significant_num == 1) | (is.finite(range) & range >= 1.5),
+          best_time_var == tv,
+          !is.na(peak_time), !is.na(trough_time)
+        )
 
-      if (nrow(sig_timing_data) > 0) {
-        p_timing <- plot_peak_trough_timing(sig_timing_data, tv, axis_meta,
+      if (nrow(timing_data) > 0) {
+        p_timing <- plot_peak_trough_timing(timing_data, tv, axis_meta,
                                             outcome_label)
         if (!is.null(p_timing)) print(p_timing)
       }
@@ -2788,20 +2731,26 @@ if (length(all_ids_signif) > 0) {
         if (is.null(res)) next
 
         datSX_qid <- subset(df, as.character(id) == qid)
-        # Use per-ID global ymax (computed in Section 5) so that each ID's
-        # y-axis reflects its overall data range; different IDs may differ.
-        fallback_ymax <- 4.5
+        # For outcome-specific reports, compute y-axis from this outcome's
+        # data only — do NOT use the per-ID global ymax from person reports.
+        # Only expand above 4.5 if this outcome's predictions or raw data
+        # for this participant actually exceed 4.5.
+        outcome_max <- 4.5
         if (!is.null(res$pred$estimate)) {
           pred_estimates <- res$pred$estimate[is.finite(res$pred$estimate)]
           if (length(pred_estimates) > 0) {
-            fallback_ymax <- max(pred_estimates)
+            outcome_max <- max(outcome_max, max(pred_estimates))
           }
         }
-        qid_ymax <- if (as.character(qid) %in% names(id_global_ymax_map)) {
-          id_global_ymax_map[as.character(qid)]
-        } else {
-          expand_ymax(4.5, fallback_ymax)
+        # Also check raw data points for this specific outcome
+        if (nrow(datSX_qid) > 0 && target_var %in% names(datSX_qid)) {
+          raw_vals <- datSX_qid[[target_var]]
+          raw_vals <- raw_vals[is.finite(raw_vals)]
+          if (length(raw_vals) > 0) {
+            outcome_max <- max(outcome_max, max(raw_vals))
+          }
         }
+        qid_ymax <- expand_ymax(4.5, outcome_max)
         p <- create_annotated_plot(res$pred, tv, axis_meta,
                                    y_limits = c(1, qid_ymax), raw_data = datSX_qid)
         if (!is.null(p)) {
