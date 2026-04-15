@@ -656,7 +656,12 @@ make_shared_id_y_limits <- function(plot_df, shared_total_range, lower_bound = 1
 }
 
 # --- Dynamic Y-axis expansion ---
-# Default y_max is 4.5 for all outcomes; expand to 5 or 6 if predicted values exceed it.
+# Expands the y-axis maximum from its current value to 5 or 6 when predicted
+# values exceed it.  Returns y_max_current unchanged when no expansion is needed.
+# @param y_max_current  current y-axis upper limit (typically 4.5)
+# @param max_predicted  maximum predicted (or observed) value on the plot
+# @param absolute_max   hard ceiling for expansion (default 6)
+# @return               expanded y_max (one of y_max_current, 5, or 6)
 expand_ymax <- function(y_max_current, max_predicted, absolute_max = 6) {
   if (is.na(max_predicted) || !is.finite(max_predicted) || max_predicted <= y_max_current) {
     return(y_max_current)
@@ -665,7 +670,8 @@ expand_ymax <- function(y_max_current, max_predicted, absolute_max = 6) {
   min(ceiling(max_predicted), absolute_max)
 }
 
-# Pink-shading constant: the base y_max below which no shading is added
+# Base y-axis maximum: plots whose final y_max exceeds this get a pink
+# shading band to visually flag the expanded region.
 YMAX_PINK_THRESHOLD <- 4.5
 ```
 
