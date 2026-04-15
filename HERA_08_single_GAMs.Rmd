@@ -2418,7 +2418,7 @@ if (length(all_ids_signif) > 0) {
       if (!is.null(p_nonsig_overlay)) print(p_nonsig_overlay)
     }
 
-    # ---- PAGE 3A: All curves — significant (red) vs. non-significant (light blue) ----
+    # ---- PAGE 3A: All curves — significant (vermillion) vs. non-significant (sky blue) ----
     for (tv in time_vars) {
       p_twocol_sig <- plot_overlay_gam_twogroup(
         fit_results_list = all_fit_results_by_tv[[tv]],
@@ -2436,7 +2436,7 @@ if (length(all_ids_signif) > 0) {
       if (!is.null(p_twocol_sig)) print(p_twocol_sig)
     }
 
-    # ---- PAGE 3B: All curves — significant OR range >= 1.5 (vermillion) vs. neither (sky blue) ----
+    # ---- PAGE 3B: All curves — significant OR range >= 1.5 (reddish purple) vs. neither (bluish green) ----
     for (tv in time_vars) {
       p_twocol_range <- plot_overlay_gam_twogroup(
         fit_results_list = all_fit_results_by_tv[[tv]],
