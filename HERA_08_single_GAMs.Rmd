@@ -2158,7 +2158,10 @@ if (length(all_ids_signif) > 0) {
   # ---- PAGE 8 (was 11): Symptom Co-Occurrence Matrix ----
   # For each pair of outcomes, what % of GAM-valid participants meet
   # "sig OR meets benchmark" in both outcomes?
+  # Exclude composites — show only individual DRSP items
+  composite_vars <- names(composite_specs)
   cooccur_data <- id_outcome_summary %>%
+    dplyr::filter(!variable %in% composite_vars) %>%
     dplyr::mutate(meets = sig | meets_benchmark) %>%
     dplyr::left_join(
       tibble::enframe(outcomes, name = "variable", value = "label"),
@@ -2209,8 +2212,8 @@ if (length(all_ids_signif) > 0) {
       name = "% of Sample"
     ) +
     ggplot2::labs(
-      title = "Symptom Co-Occurrence: % of Sample Meeting Criterion for Both Outcomes",
-      subtitle = "Criterion: significant (p < .05) OR meets person-specific benchmark",
+      title = "Symptom Co-Occurrence: % of Sample Meeting Criterion for Both Symptoms",
+      subtitle = "Individual DRSP items only (excl. composites) | Criterion: significant (p < .05) OR meets person-specific benchmark",
       caption = paste0(
         "Each cell shows the % of GAM-valid participants (N = ", n_gam_valid,
         ") who meet the criterion for BOTH outcomes.\n",
