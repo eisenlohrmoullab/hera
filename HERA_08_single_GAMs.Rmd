@@ -1549,7 +1549,15 @@ if (length(all_ids_signif) > 0) {
   )
 
   overall_pdf <- file.path(output_folder, paste0("Overall_Sample_Summary_", current_date, ".pdf"))
-  grDevices::cairo_pdf(overall_pdf, width = 11, height = 8.5)
+  if (isTRUE(capabilities("cairo"))) {
+    grDevices::cairo_pdf(overall_pdf, width = 11, height = 8.5)
+  } else {
+    warning(
+      "Cairo support is not available on this R build; falling back to grDevices::pdf() ",
+      "for the overall sample summary report. Some ggtext/rich-text rendering may be limited."
+    )
+    grDevices::pdf(overall_pdf, width = 11, height = 8.5)
+  }
 
   # --- Page numbering helper ---
   # NOTE: Update total_report_pages if pages are added/removed from this report.
@@ -2100,9 +2108,6 @@ if (length(all_ids_signif) > 0) {
   domain_summary <- comparison_data %>%
     dplyr::group_by(domain) %>%
     dplyr::summarise(
-      n_pairs      = dplyr::n(),
-      mean_range   = mean(best_range, na.rm = TRUE),
-      median_range = median(best_range, na.rm = TRUE),
       pct_sig       = length(unique(id[sig])) / n_gam_valid * 100,
       pct_benchmark = length(unique(id[meets_benchmark])) / n_gam_valid * 100,
       pct_either    = length(unique(id[sig | meets_benchmark])) / n_gam_valid * 100,
