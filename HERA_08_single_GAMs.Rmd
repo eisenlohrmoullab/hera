@@ -62,11 +62,13 @@ table_cols_per_page <- 6
 plots_per_col <- 3
 plots_per_row <- 3
 
-# --- Minimum observations per cycle-quarter to run GAMs ---
+# --- Sparse-quarter cutoff for GAM inclusion ---
 # The cycle is divided into 4 equal quarters over [-1, 1].
-# If any quarter has fewer than this many observations, the GAM is skipped
-# for that specific outcome × time-var combination.
-min_obs_per_quarter <- 2
+# Inclusion rule: ALL 4 quarters must have at least 1 observation, AND at least
+# 3 of 4 quarters must have >= sparse_quarter_cutoff observations. One quarter
+# with exactly 1 obs is tolerated; any quarter with 0 observations causes exclusion.
+# This value is the threshold below which a non-empty quarter is considered sparse.
+sparse_quarter_cutoff <- 2
 ```
 
 # Section 2: Create output folders & check time vars
@@ -116,6 +118,69 @@ outcomes <- c(
   "drsp_20"          = "Headache",
   "drsp_21"          = "Joint/Muscle Pain"
 )
+
+# --- Centralized composite definitions (sourced from HERA_01_data_prep.Rmd) ---
+# Single source of truth for both per-ID (Page 0c) and per-outcome exploration PDFs.
+composite_specs <- list(
+  drsp_NA = list(
+    label = "Negative Affect Mean",
+    domain = "AFFECTIVE",
+    components = c(
+      "Depression (1)", "Hopelessness (2)", "Worthlessness (3)",
+      "Anxiety (4)", "Mood Swings (5)", "Rejection Sensitivity (6)",
+      "Anger/Irritability (7)", "Interpersonal Conflicts (8)",
+      "Loss of Interest (9)", "Feeling Overwhelmed (16)",
+      "Feeling Out of Control (17)"
+    )
+  ),
+  drsp_distress = list(
+    label = "Distress",
+    domain = "AFFECTIVE",
+    components = c(
+      "Depression (1)", "Hopelessness (2)", "Worthlessness (3)",
+      "Anxiety (4)", "Feeling Overwhelmed (16)",
+      "Feeling Out of Control (17)"
+    )
+  ),
+  drsp_labilsocsx = list(
+    label = "Social/Affect Lability",
+    domain = "AFFECTIVE",
+    components = c(
+      "Mood Swings (5)", "Rejection Sensitivity (6)",
+      "Anger/Irritability (7)", "Interpersonal Conflicts (8)"
+    )
+  ),
+  drsp_lowarousal = list(
+    label = "Low Arousal",
+    domain = "AFFECTIVE",
+    components = c(
+      "Loss of Interest (9)", "Difficulty Concentrating (10)",
+      "Fatigue/Lethargy (11)", "Hypersomnia (14)", "Insomnia (15)"
+    )
+  ),
+  drsp_breastpain = list(
+    label = "Breast Sx",
+    domain = "PHYSICAL",
+    components = c(
+      "Breast Tenderness (18)", "Breast Swelling (19)"
+    )
+  ),
+  drsp_eatsx = list(
+    label = "Eating Sx",
+    domain = "PHYSICAL",
+    components = c(
+      "Overeating (12)", "Specific Food Cravings (13)"
+    )
+  )
+)
+
+# Helper: render a one-line composite definition string from a spec entry.
+render_composite_definition <- function(spec) {
+  paste0("rowMeans of: ", paste(spec$components, collapse = ", "))
+}
+
+# Named list of one-liner definitions for each composite (used in exploration PDFs).
+composite_definitions <- lapply(composite_specs, render_composite_definition)
 
 # --- Physical vs Affect symptom classification (raw DRSP items only) ---
 physical_symptoms <- c("drsp_12", "drsp_13", "drsp_14", "drsp_15",
@@ -317,14 +382,19 @@ quarter_bin_counts <- function(vals) {
 
 # --- Check cycle-quarter coverage for a given time variable ---
 # Wrapper around quarter_bin_counts() that extracts the cycle column from a
-# data frame and returns a list with quarter_counts, min_per_quarter, and
-# passes (TRUE when every quarter has >= min_obs_per_quarter observations).
+# data frame and returns a list with quarter_counts, n_empty (quarters with 0 obs),
+# n_sparse (non-empty quarters with < sparse_quarter_cutoff obs), and
+# passes (TRUE when all 4 quarters have ≥1 obs AND at most 1 quarter is sparse).
 check_quarter_coverage <- function(data, cycle_var) {
   counts <- quarter_bin_counts(data[[cycle_var]])
+  n_empty  <- sum(counts == 0)
+  n_sparse <- sum(counts > 0 & counts < sparse_quarter_cutoff)
   list(
     quarter_counts  = counts,
     min_per_quarter = min(counts),
-    passes          = all(counts >= min_obs_per_quarter)
+    n_empty         = n_empty,
+    n_sparse        = n_sparse,
+    passes          = n_empty == 0 && n_sparse <= 1
   )
 }
 
@@ -342,13 +412,15 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map) {
   message(glue::glue(
     "[{outcome_var}] N={nrow(dat)}, Quarter counts: ",
     "{paste(names(qcov$quarter_counts), qcov$quarter_counts, sep='=', collapse=', ')}, ",
-    "Min per quarter: {qcov$min_per_quarter}, Passes: {qcov$passes}"
+    "Min per quarter: {qcov$min_per_quarter}, Empty: {qcov$n_empty}, ",
+    "Sparse (>0 & <{sparse_quarter_cutoff}): {qcov$n_sparse}, Passes: {qcov$passes}"
   ))
 
   if (!qcov$passes) {
     message(glue::glue(
       "Skipping GAM for {outcome_var}: quarter coverage requirement not met ",
-      "(need >={min_obs_per_quarter} per quarter, min={qcov$min_per_quarter})"
+      "(need 4/4 quarters with \u22651 obs & \u22653/4 with \u2265{sparse_quarter_cutoff} obs; ",
+      "empty={qcov$n_empty}, sparse={qcov$n_sparse})"
     ))
     return(NULL)
   }
@@ -650,9 +722,12 @@ for (current_id in ids_to_run) {
     tv0 <- time_vars[1]
     meta0 <- axis_meta[[tv0]]
 
-    # Returns TRUE when any quarter has fewer than min_obs_per_quarter observations.
+    # Returns TRUE when coverage is insufficient: any quarter has 0 obs, or
+    # more than 1 non-empty quarter has fewer than sparse_quarter_cutoff observations.
     is_quarter_sparse <- function(qcounts) {
-      any(qcounts < min_obs_per_quarter)
+      n_empty  <- sum(qcounts == 0)
+      n_sparse <- sum(qcounts > 0 & qcounts < sparse_quarter_cutoff)
+      n_empty > 0 || n_sparse > 1
     }
 
     make_raw_panel <- function(dat, tv, meta, var, y_lab, color) {
@@ -676,6 +751,8 @@ for (current_id in ids_to_run) {
         ", Q3: ", qcounts["Q3"], ", Q4: ", qcounts["Q4"], ")"
       )
       p <- ggplot2::ggplot(dat, ggplot2::aes(x = .data[[tv]], y = .data[[var]])) +
+        ggplot2::geom_vline(xintercept = c(-0.5, 0, 0.5), color = "black",
+                            linewidth = 0.4, linetype = "solid") +
         ggplot2::geom_vline(xintercept = meta$menses, color = "red",
                             linewidth = 0.6, linetype = "dashed") +
         ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen",
@@ -696,9 +773,11 @@ for (current_id in ids_to_run) {
     }
 
     p_joint  <- make_raw_panel(datSX_id, tv0, meta0, "drsp_21",
-                               "Joint/Muscle Pain (DRSP 21)", "#CC6677")
+                               "Joint/Muscle Pain (DRSP 21)", "#CC6677") +
+      ggplot2::coord_cartesian(ylim = c(1, 6))
     p_drsp_na <- make_raw_panel(datSX_id, tv0, meta0, "drsp_NA",
-                                "DRSP Negative Affect Mean", "#D55E00")
+                                "DRSP Negative Affect Mean", "#D55E00") +
+      ggplot2::coord_cartesian(ylim = c(1, 6))
 
     tv0_vals <- datSX_id[[tv0]]
     tv0_vals <- tv0_vals[!is.na(tv0_vals)]
@@ -708,10 +787,17 @@ for (current_id in ids_to_run) {
     # Subtitle is informational only; the skip decision is made per time variable.
     coverage_subtitle <- paste0("Time variable: ", tv0)
     if (tv0_sparse) {
+      n_empty_q  <- sum(tv0_qcounts == 0)
+      n_sparse_q <- sum(tv0_qcounts > 0 & tv0_qcounts < sparse_quarter_cutoff)
+      if (n_empty_q > 0) {
+        warn_detail <- paste0(n_empty_q, " quarter(s) with 0 observations")
+      } else {
+        warn_detail <- paste0(n_sparse_q, " quarter(s) with <", sparse_quarter_cutoff,
+                              " observations (max 1 allowed)")
+      }
       coverage_subtitle <- paste0(
         coverage_subtitle,
-        "\n\u26A0 Fewer than ", min_obs_per_quarter,
-        " observations in one or more cycle quarters for ", tv0
+        "\n\u26A0 Insufficient coverage for ", tv0, ": ", warn_detail
       )
     }
 
@@ -728,6 +814,72 @@ for (current_id in ids_to_run) {
         )
       )
     print(p_cover)
+
+    # ---- Page 0b: Interpretation Key (border colors & pink shading) ----
+    grid::grid.newpage()
+    key_title <- grid::textGrob(
+      paste0("How to Read This Report \u2014 ID: ", current_id),
+      gp = grid::gpar(fontsize = 16, fontface = "bold")
+    )
+    key_body <- grid::textGrob(
+      paste0(
+        "PLOT BORDER COLORS (individual DRSP item plots)\n\n",
+        " \u25B6  Red border:     GAM range \u2265 1.5 \u2014 equivalent to the C-PASS 30% change criterion\n",
+        "                     used to benchmark PMDD cyclical change\n\n",
+        " \u25B6  Salmon border:  GAM range \u2265 1.0 but < 1.5 \u2014 moderate cyclical fluctuation\n\n",
+        " \u25B6  Pink border:    GAM range \u2265 0.5 but < 1.0 \u2014 mild cyclical fluctuation\n\n",
+        " \u25B6  No border:      GAM range < 0.5 \u2014 minimal cyclical change\n\n\n",
+        "OTHER VISUAL ELEMENTS\n\n",
+        " \u25B6  Pink shaded region: Area above 4.5 on the y-axis, shown when the axis expands\n",
+        "     beyond the default 1\u20134.5 range. Indicates values in the upper extreme of the\n",
+        "     1\u20136 DRSP scale.\n\n",
+        " \u25B6  Red dashed line:   Menses onset (cycle day 1)\n\n",
+        " \u25B6  Green dashed line: Estimated ovulation\n\n",
+        " \u25B6  Red horizontal line (at y = 4): Reference line for DRSP individual items\n\n",
+        " \u25B6  Dots on GAM curve: Peak (highest) and trough (lowest) predicted values\n\n",
+        " \u25B6  Faded points:     Raw daily data behind the GAM curve\n\n",
+        " \u25B6  Annotation text:  Stars (*) indicate significance (p < .05); Range = max \u2212 min\n",
+        "                     of predicted values; EDF = effective degrees of freedom"
+      ),
+      gp = grid::gpar(fontsize = 10, lineheight = 1.15, fontfamily = "mono"),
+      just = "left", x = 0.05
+    )
+    gridExtra::grid.arrange(
+      key_title, key_body,
+      ncol = 1,
+      heights = grid::unit(c(0.08, 0.92), "npc")
+    )
+
+    # ---- Page 0c: Composite Outcome Definitions ----
+    grid::grid.newpage()
+    comp_title <- grid::textGrob(
+      paste0("Composite Outcome Definitions \u2014 ID: ", current_id),
+      gp = grid::gpar(fontsize = 16, fontface = "bold")
+    )
+    # Build page body dynamically from composite_specs (single source of truth).
+    comp_lines <- "The following composite scores are computed in HERA_01_data_prep.Rmd as the\nrow-wise mean (rowMeans, na.rm = TRUE) of their component DRSP items.\n\n"
+    for (domain in c("AFFECTIVE", "PHYSICAL")) {
+      comp_lines <- paste0(comp_lines, "\n", domain, " COMPOSITES\n\n")
+      for (cname in names(composite_specs)) {
+        spec <- composite_specs[[cname]]
+        if (spec$domain != domain) next
+        comp_lines <- paste0(
+          comp_lines,
+          " \u25B6  ", spec$label, " (", cname, ")\n",
+          "     = mean of: ", paste(spec$components, collapse = ", "), "\n\n"
+        )
+      }
+    }
+    comp_body <- grid::textGrob(
+      comp_lines,
+      gp = grid::gpar(fontsize = 10, lineheight = 1.15, fontfamily = "mono"),
+      just = "left", x = 0.05
+    )
+    gridExtra::grid.arrange(
+      comp_title, comp_body,
+      ncol = 1,
+      heights = grid::unit(c(0.08, 0.92), "npc")
+    )
   } else {
     grid::grid.newpage()
     grid::grid.text(
@@ -750,14 +902,16 @@ for (current_id in ids_to_run) {
   for (tv in time_vars) {
     message(sprintf("  ... time variable: %s", tv))
 
-    # Per-tv coverage gate — require ≥min_obs_per_quarter in each cycle quarter.
+    # Per-tv coverage gate — require 4/4 quarters with ≥1 obs, ≥3/4 with ≥2 obs.
     tv_vals_all <- datSX_id[[tv]]
     tv_vals_all <- tv_vals_all[!is.na(tv_vals_all)]
     tv_qcounts  <- quarter_bin_counts(tv_vals_all)
     if (is_quarter_sparse(tv_qcounts)) {
-      message(sprintf("    -> Skipping tv=%s: insufficient quarter coverage (Q1=%d, Q2=%d, Q3=%d, Q4=%d, min=%d)",
+      n_empty_tv  <- sum(tv_qcounts == 0)
+      n_sparse_tv <- sum(tv_qcounts > 0 & tv_qcounts < sparse_quarter_cutoff)
+      message(sprintf("    -> Skipping tv=%s: insufficient quarter coverage (Q1=%d, Q2=%d, Q3=%d, Q4=%d; empty=%d, sparse=%d)",
                       tv, tv_qcounts["Q1"], tv_qcounts["Q2"], tv_qcounts["Q3"], tv_qcounts["Q4"],
-                      min_obs_per_quarter))
+                      n_empty_tv, n_sparse_tv))
       next
     }
 
@@ -1247,7 +1401,8 @@ if (length(all_ids_signif) > 0) {
   # ---- COVER PAGE (p.1): How to Read This Report ----
   cover_title <- grid::textGrob(
     "How to Read This Report",
-    gp = grid::gpar(fontsize = 24, fontface = "bold")
+    gp = grid::gpar(fontsize = 22, fontface = "bold"),
+    vjust = 0.5
   )
   cover_purpose <- grid::textGrob(
     paste0(
@@ -1261,30 +1416,29 @@ if (length(all_ids_signif) > 0) {
   cover_defs <- grid::textGrob(
     paste0(
       "KEY DEFINITIONS\n\n",
-      "\u2022 Range: The difference between the highest and lowest predicted values from\n",
-      "  each person\u2019s GAM curve \u2014 how much a symptom fluctuates across the cycle.\n\n",
-      "\u2022 Significant GAM (p < .05): The cyclical pattern is statistically\n",
-      "  distinguishable from a flat line \u2014 evidence symptoms truly vary across\n",
-      "  the cycle.\n\n",
-      "\u2022 Range \u2265 1.5: A swing of 1.5+ points on the 1\u20136 DRSP scale, equivalent to\n",
-      "  the C-PASS 30% change criterion used to benchmark PMDD cyclical change.\n",
-      "  This is a reference value for comparison with the existing C-PASS standard,\n",
-      "  not a validated clinical cutpoint.\n\n",
-      "\u2022 Affective outcomes: Mood/emotional symptoms (depression, anxiety,\n",
-      "  irritability, etc.) and composites (Neg. Affect, Distress, Lability,\n",
-      "  Low Arousal).\n\n",
-      "\u2022 Physical outcomes: Somatic symptoms (breast tenderness, headache,\n",
-      "  overeating, insomnia, etc.) and composites (Breast Sx, Eating Sx).\n\n",
-      "\u2022 GAM-valid: Participants with enough data coverage across the menstrual\n",
-      "  cycle (\u22652 obs per quarter) to fit a reliable model."
+      " \u25B6  Range: The difference between the highest and lowest predicted values from\n",
+      "     each person\u2019s GAM curve \u2014 how much a symptom fluctuates across the cycle.\n\n",
+      " \u25B6  Significant GAM (p < .05): The cyclical pattern is statistically\n",
+      "     distinguishable from a flat line \u2014 evidence symptoms truly vary across the cycle.\n",
+      "     Higher % = more people show cyclical symptoms.\n\n",
+      " \u25B6  Range \u2265 1.5: A swing of 1.5+ points on the 1\u20136 DRSP scale, equivalent to\n",
+      "     the C-PASS 30% change criterion used to benchmark PMDD cyclical change.\n",
+      "     This is a reference benchmark, not a validated clinical cutpoint.\n\n",
+      " \u25B6  Affective outcomes: Mood/emotional symptoms (depression, anxiety,\n",
+      "     irritability, etc.) and composites (Neg. Affect, Distress, Lability, Low Arousal).\n\n",
+      " \u25B6  Physical outcomes: Somatic symptoms (breast tenderness, headache,\n",
+      "     overeating, insomnia, etc.) and composites (Breast Sx, Eating Sx).\n\n",
+      " \u25B6  GAM-valid: Participants with data in all 4 cycle quarters (\u22651 obs in each)\n",
+      "     and with at most one quarter having fewer than 2 observations. All percentages\n",
+      "     in this report use GAM-valid N as the denominator."
     ),
-    gp = grid::gpar(fontsize = 10, lineheight = 1.2), just = "left", x = 0.05
+    gp = grid::gpar(fontsize = 10, lineheight = 1.15), just = "left", x = 0.05
   )
   cover_toc <- grid::textGrob(
     paste0(
       "REPORT CONTENTS\n\n",
       "  Page  1 \u2014 How to Read This Report (this page)\n",
-      "  Page  2 \u2014 Key Metrics Summary with Interpretation Guide\n",
+      "  Page  2 \u2014 Key Metrics Summary\n",
       "  Page  3 \u2014 Per-Outcome Descriptives Table (color-coded)\n",
       "  Page  4 \u2014 Distribution of Ranges by Outcome (histograms)\n",
       "  Page  5 \u2014 Significance & Range Rates by Outcome (grouped bars)\n",
@@ -1298,8 +1452,8 @@ if (length(all_ids_signif) > 0) {
   gridExtra::grid.arrange(
     cover_title, cover_purpose, cover_defs, cover_toc,
     ncol = 1,
-    heights = grid::unit(c(0.06, 0.12, 0.55, 0.27), "npc"),
-    padding = grid::unit(0.5, "lines")
+    heights = grid::unit(c(0.07, 0.10, 0.55, 0.28), "npc"),
+    padding = grid::unit(1, "lines")
   )
   draw_page_number()
 
@@ -1432,12 +1586,14 @@ if (length(all_ids_signif) > 0) {
 
   title_grob <- grid::textGrob(
     "Overall Sample Summary \u2014 Cyclical Symptom Change",
-    gp = grid::gpar(fontsize = 18, fontface = "bold")
+    gp = grid::gpar(fontsize = 18, fontface = "bold"),
+    vjust = 0.5
   )
   subtitle_grob <- grid::textGrob(
     paste0("N = ", n_total_sample, " total | N = ", n_gam_valid,
            " with valid GAM data (percentages use GAM-valid N as denominator)"),
-    gp = grid::gpar(fontsize = 11, fontface = "italic")
+    gp = grid::gpar(fontsize = 11, fontface = "italic"),
+    vjust = 0.5
   )
   key_tbl <- gridExtra::tableGrob(key_metrics, rows = NULL, theme = key_theme)
   note_grob <- grid::textGrob(
@@ -1448,25 +1604,9 @@ if (length(all_ids_signif) > 0) {
   )
 
   gridExtra::grid.arrange(
-    title_grob, subtitle_grob, key_tbl,
-    grid::textGrob(
-      paste0(
-        "INTERPRETING THESE METRICS\n\n",
-        "\u2022 Significant GAM: The person\u2019s symptom shows a reliable pattern of change across the\n",
-        "  menstrual cycle (p < .05). Higher % = more people show cyclical symptoms.\n\n",
-        "\u2022 Range \u2265 1.5: The symptom swings by at least 1.5 points on the 1\u20136 DRSP scale across\n",
-        "  the cycle \u2014 equivalent to the C-PASS 30% change criterion for PMDD. Higher % = more\n",
-        "  people with large cyclical swings.\n\n",
-        "\u2022 Affective vs. Any: Affective metrics focus on mood/emotional symptoms only (excluding\n",
-        "  physical symptoms). This shows whether cyclicity is primarily mood-driven.\n\n",
-        "\u2022 Denominator: All percentages use GAM-valid N (participants with enough data to model)\n",
-        "  rather than total N, giving a more accurate picture of cyclicity rates."
-      ),
-      gp = grid::gpar(fontsize = 9), just = "left", x = 0.05
-    ),
-    note_grob,
+    title_grob, subtitle_grob, key_tbl, note_grob,
     ncol = 1,
-    heights = grid::unit(c(0.07, 0.04, 0.45, 0.37, 0.04), "npc")
+    heights = grid::unit(c(0.08, 0.05, 0.55, 0.04), "npc")
   )
   draw_page_number()
 
@@ -1591,10 +1731,10 @@ if (length(all_ids_signif) > 0) {
   draw_page_number()
 
   # ---- PAGE 4 (was 6): % Significant and % Range >= 1.5 by outcome (faceted bars) ----
-  # Precompute ordering by % Range >= 1.5 before pivoting so all metrics
-  # share a consistent outcome order (rather than ordering by the mean of both).
+  # Precompute ordering by % Sig OR Range >= 1.5 (descending) before pivoting so all metrics
+  # share a consistent outcome order.
   pct_data <- outcome_desc %>%
-    dplyr::mutate(label = factor(label, levels = label[order(pct_range15)])) %>%
+    dplyr::mutate(label = factor(label, levels = label[order(pct_sig_or_range15)])) %>%
     dplyr::select(label, pct_sig, pct_range15, pct_sig_or_range15) %>%
     tidyr::pivot_longer(cols = c(pct_sig, pct_range15, pct_sig_or_range15),
                         names_to = "metric", values_to = "pct") %>%
@@ -1632,7 +1772,7 @@ if (length(all_ids_signif) > 0) {
       y = "Percentage",
       caption = paste0(
         "Blue = statistically significant cyclicity (p < .05); orange = range meeting C-PASS benchmark (\u22651.5);\n",
-        "green = either criterion met. Outcomes ordered by % Range \u2265 1.5 (bottom to top)."
+        "green = either criterion met. Outcomes ordered by % Sig OR Range \u2265 1.5 (bottom to top)."
       )
     ) +
     ggplot2::theme_minimal(base_size = 9) +
@@ -1775,12 +1915,13 @@ if (length(all_ids_signif) > 0) {
   draw_page_number()
 
   # ---- PAGE 7 (was 10): Affective vs. Physical Symptom Comparison ----
+  # Uses raw DRSP items only (excludes composites) for a clean comparison.
 
   comparison_data <- id_outcome_summary %>%
     dplyr::mutate(
       domain = dplyr::case_when(
-        variable %in% all_affective_outcomes ~ "Affective",
-        variable %in% all_physical_outcomes  ~ "Physical",
+        variable %in% affective_raw_drsp ~ "Affective",
+        variable %in% physical_symptoms  ~ "Physical",
         TRUE ~ NA_character_
       )
     ) %>%
@@ -1831,7 +1972,7 @@ if (length(all_ids_signif) > 0) {
     ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
     ggplot2::labs(
       title = "Affective vs. Physical Symptom Cyclicity",
-      subtitle = "Comparing cyclicity rates across outcome \u00d7 participant pairs",
+      subtitle = "Comparing cyclicity rates across individual DRSP items (excl. composites)",
       x = NULL,
       y = "Percentage"
     ) +
@@ -1844,8 +1985,8 @@ if (length(all_ids_signif) > 0) {
   # Caption grob for the layout
   domain_caption <- grid::textGrob(
     paste0(
-      "Affective = mood/emotional symptoms and composites (Neg. Affect, Distress, Lability, Low Arousal). ",
-      "Physical = somatic symptoms and composites (Breast Sx, Eating Sx).\n",
+      "Affective = individual mood/emotional DRSP items (excl. composites). ",
+      "Physical = individual somatic DRSP items (excl. composites).\n",
       "% of outcome \u00d7 participant pairs meeting each criterion. ",
       "Range \u2265 1.5 reference line corresponds to the C-PASS 30% change benchmark."
     ),
@@ -2135,13 +2276,10 @@ make_empirical_bins <- function(df_outcome, n_bins = 10) {
     )
 }
 
-# --- Empirical bins + model overlay ---
-plot_empirical_and_model <- function(df_outcome, pred_df, empirical_df,
+# --- Model probability curves (logistic predictions only) ---
+plot_empirical_and_model <- function(df_outcome, pred_df,
                                      thresholds = c(0.25, 0.36, 0.50)) {
   ggplot2::ggplot() +
-    ggplot2::geom_point(data = empirical_df,
-                        ggplot2::aes(x = mean_range, y = prop_significant, size = n),
-                        alpha = 0.8) +
     ggplot2::geom_line(data = pred_df,
                        ggplot2::aes(x = range, y = pred_prob, linetype = model),
                        linewidth = 1.2) +
@@ -2149,19 +2287,17 @@ plot_empirical_and_model <- function(df_outcome, pred_df, empirical_df,
     ggplot2::scale_y_continuous(limits = c(0, 1),
                                 labels = scales::percent_format(accuracy = 1)) +
     ggplot2::labs(
-      title    = paste0("Empirical and Modeled Probability: ", unique(df_outcome$variable)),
+      title    = paste0("Modeled Probability of Significance: ", unique(df_outcome$variable)),
       subtitle = paste0(
-        "Dots = observed proportion significant in each range bin (size = bin count).\n",
         "Lines = logistic model predictions. Dashed verticals = range thresholds."
       ),
       x        = "Cyclical range",
       y        = "Probability of significant GAM",
-      size     = "Bin n",
       linetype = NULL,
       caption  = paste0(
-        "This plot shows how the probability of achieving a significant GAM increases with cyclical range.\n",
-        "Each dot represents a bin of participants grouped by similar range values; larger dots = more participants.\n",
-        "The lines show logistic regression model predictions of significance probability as a function of range."
+        "The lines show logistic regression model predictions of significance probability as a function of range.\n",
+        "'Range Only (no covariates)' = logistic model predicting significance from cyclical range alone.\n",
+        "'Range + Obs. Count (n held at median = \u2026)' = model also adjusting for number of observations."
       )
     ) +
     ggplot2::theme_minimal(base_size = 14) +
@@ -2189,7 +2325,7 @@ analyze_one_outcome <- function(df, target_var,
 
   p_hist <- plot_range_histogram(df_outcome)
   p_prob <- plot_significance_probability(df_outcome, pred_df, thresholds = thresholds)
-  p_emp  <- plot_empirical_and_model(df_outcome, pred_df, emp_df, thresholds = thresholds)
+  p_emp  <- plot_empirical_and_model(df_outcome, pred_df, thresholds = thresholds)
 
   list(
     data                        = df_outcome,
@@ -2478,6 +2614,8 @@ if (length(all_ids_signif) > 0) {
     colhead = list(fg_params = list(hjust = 0.5, x = 0.5, fontface = "bold"))
   )
 
+  # composite_definitions is computed from composite_specs in Section 3 (single source of truth).
+
   for (target_var in all_outcome_vars) {
     cat(sprintf("\n=== Processing: %s ===\n", target_var))
 
@@ -2560,6 +2698,16 @@ if (length(all_ids_signif) > 0) {
       paste("Variable:", target_var),
       gp = grid::gpar(fontsize = 12, fontface = "italic")
     )
+
+    # Add composite definition if this is a composite variable
+    composite_note_grob <- NULL
+    if (target_var %in% names(composite_definitions)) {
+      composite_note_grob <- grid::textGrob(
+        paste0("Composite: ", composite_definitions[[target_var]]),
+        gp = grid::gpar(fontsize = 9, fontface = "italic", col = "grey30"),
+        just = "left", x = 0.03
+      )
+    }
 
     n_cpass <- sum(result$data$significant_num == 1 &
                     is.finite(result$data$range) &
@@ -2651,11 +2799,20 @@ if (length(all_ids_signif) > 0) {
       )
     }
 
-    gridExtra::grid.arrange(
-      title_grob, subtitle_grob, desc_tbl, thresh_header, thresh_tbl, note_grob,
-      ncol = 1,
-      heights = grid::unit(c(0.10, 0.05, 0.25, 0.08, 0.38, 0.08), "npc")
-    )
+    if (!is.null(composite_note_grob)) {
+      gridExtra::grid.arrange(
+        title_grob, subtitle_grob, composite_note_grob,
+        desc_tbl, thresh_header, thresh_tbl, note_grob,
+        ncol = 1,
+        heights = grid::unit(c(0.08, 0.04, 0.04, 0.24, 0.07, 0.38, 0.07), "npc")
+      )
+    } else {
+      gridExtra::grid.arrange(
+        title_grob, subtitle_grob, desc_tbl, thresh_header, thresh_tbl, note_grob,
+        ncol = 1,
+        heights = grid::unit(c(0.10, 0.05, 0.25, 0.08, 0.38, 0.08), "npc")
+      )
+    }
 
     # ---- PAGE 2: All curves — significant (vermillion) vs. non-significant (sky blue) ----
     for (tv in time_vars) {
