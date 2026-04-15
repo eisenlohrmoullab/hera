@@ -195,6 +195,10 @@ composite_definitions <- lapply(composite_specs, render_composite_definition)
 physical_symptoms <- c("drsp_12", "drsp_13", "drsp_14", "drsp_15",
                        "drsp_18", "drsp_19", "drsp_20", "drsp_21")
 
+# --- Domain color constants (colorblind-safe, used for axis labels and fill) ---
+DOMAIN_COL_AFFECTIVE <- "#0072B2"  # blue
+DOMAIN_COL_PHYSICAL  <- "#D55E00"  # orange/vermillion
+
 # --- Pattern constants for variable matching ---
 DRSP_VAR_PATTERN <- "^drsp_\\d+$"
 
@@ -416,7 +420,11 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map) {
   keep <- c(log_out, tv)
   if (!all(keep %in% names(dat))) return(NULL)
   dat <- dat[complete.cases(dat[, keep]), keep, drop = FALSE]
-  if (nrow(dat) < 10 || var(dat[[log_out]], na.rm = TRUE) < 1e-6) return(NULL)
+  if (nrow(dat) < 10) return(NULL)
+
+  # --- Check for no variability in the log-transformed outcome ---
+  out_variance <- var(dat[[log_out]], na.rm = TRUE)
+  no_variability <- !is.finite(out_variance) || out_variance < 1e-6
 
   # --- Quarter-based coverage check ---
   qcov <- check_quarter_coverage(data = dat, cycle_var = tv)
@@ -425,7 +433,8 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map) {
     "[{outcome_var}] N={nrow(dat)}, Quarter counts: ",
     "{paste(names(qcov$quarter_counts), qcov$quarter_counts, sep='=', collapse=', ')}, ",
     "Min per quarter: {qcov$min_per_quarter}, Empty: {qcov$n_empty}, ",
-    "Sparse (>0 & <{sparse_quarter_cutoff}): {qcov$n_sparse}, Passes: {qcov$passes}"
+    "Sparse (>0 & <{sparse_quarter_cutoff}): {qcov$n_sparse}, Passes: {qcov$passes}",
+    "{if (no_variability) ', No variability (raw data only)' else ''}"
   ))
 
   if (!qcov$passes) {
@@ -435,6 +444,52 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map) {
       "empty={qcov$n_empty}, sparse={qcov$n_sparse})"
     ))
     return(NULL)
+  }
+
+  # Count observations in each positional half for reporting.
+  n_neg    <- sum(dat[[tv]] <  0, na.rm = TRUE)
+  n_nonneg <- sum(dat[[tv]] >= 0, na.rm = TRUE)
+
+  # --- No variability: return flat result (raw data only, no GAM) ---
+  if (no_variability) {
+    message(glue::glue(
+      "[{outcome_var}] No variability in log outcome (var = {sprintf('%.2e', ",
+      "ifelse(is.finite(out_variance), out_variance, 0))}); ",
+      "returning flat result (raw data only, no GAM fitted)"
+    ))
+    mean_log <- mean(dat[[log_out]], na.rm = TRUE)
+    flat_est <- exp(mean_log) - 1
+
+    pg <- pred_grid_list[[tv]]
+    pred <- cbind(pg,
+                  estimate  = rep(flat_est, nrow(pg)),
+                  conf.low  = rep(flat_est, nrow(pg)),
+                  conf.high = rep(flat_est, nrow(pg)))
+    pred$outcome_var   <- outcome_var
+    pred$outcome_label <- outcomes_map[[outcome_var]]
+    pred$p.value   <- NA_real_
+    pred$raw_range <- 0
+    pred$n         <- nrow(dat)
+    pred$edf       <- NA_real_
+
+    return(list(
+      pred = pred,
+      sig  = tibble::tibble(
+        variable       = outcome_var,
+        outcome_label  = outcomes_map[[outcome_var]],
+        time_var       = tv,
+        p.value        = NA_real_,
+        edf            = NA_real_,
+        F              = NA_real_,
+        n              = nrow(dat),
+        n_neg          = n_neg,
+        n_nonneg       = n_nonneg,
+        range          = 0,
+        peak_time      = NA_real_,
+        trough_time    = NA_real_,
+        coverage_mode  = "no_variability"
+      )
+    ))
   }
 
   k <- min(6L, nrow(dat) - 1L)
@@ -463,10 +518,6 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map) {
   # Record cycle time at peak (max) and trough (min) of predicted curve
   peak_time   <- pg[[tv]][which.max(est)]
   trough_time <- pg[[tv]][which.min(est)]
-
-  # Count observations in each positional half for reporting.
-  n_neg    <- sum(dat[[tv]] <  0, na.rm = TRUE)
-  n_nonneg <- sum(dat[[tv]] >= 0, na.rm = TRUE)
 
   pred <- cbind(pg, estimate = est, conf.low = conf.low, conf.high = conf.high)
   pred$outcome_var   <- outcome_var
@@ -903,6 +954,60 @@ for (current_id in ids_to_run) {
       ncol = 1,
       heights = grid::unit(c(0.08, 0.92), "npc")
     )
+
+    # ---- Page 0d: Score Distribution by Item (boxplots) ----
+    # Shows boxplots of raw daily scores for each DRSP item and composite so the
+    # reader can see the spread and central tendency of this person's ratings.
+    box_vars <- names(outcomes)[names(outcomes) %in% names(datSX_id)]
+    if (length(box_vars) > 0) {
+      box_data <- tidyr::pivot_longer(
+        datSX_id[, c("id", box_vars), drop = FALSE],
+        cols      = dplyr::all_of(box_vars),
+        names_to  = "variable",
+        values_to = "score"
+      ) %>%
+        dplyr::filter(!is.na(score)) %>%
+        dplyr::mutate(
+          label  = outcomes[variable],
+          domain = ifelse(variable %in% physical_symptoms, "Physical", "Affective")
+        )
+
+      if (nrow(box_data) > 0) {
+        # Order by median score (ascending, so highest medians appear at top after coord_flip)
+        label_order <- box_data %>%
+          dplyr::group_by(label) %>%
+          dplyr::summarise(med = median(score, na.rm = TRUE), .groups = "drop") %>%
+          dplyr::arrange(med) %>%
+          dplyr::pull(label)
+        box_data$label <- factor(box_data$label, levels = label_order)
+
+        p_box <- ggplot2::ggplot(box_data,
+                                  ggplot2::aes(x = label, y = score, fill = domain)) +
+          ggplot2::geom_boxplot(width = 0.6, outlier.size = 1, alpha = 0.7) +
+          ggplot2::coord_flip() +
+          ggplot2::scale_fill_manual(
+            values = c("Affective" = DOMAIN_COL_AFFECTIVE,
+                       "Physical"  = DOMAIN_COL_PHYSICAL),
+            name = NULL
+          ) +
+          ggplot2::scale_y_continuous(breaks = 1:6, limits = c(1, 6)) +
+          ggplot2::labs(
+            title    = paste0("Score Distribution by Item \u2014 ID: ", current_id),
+            subtitle = "Boxplots of raw daily scores (1\u20136 DRSP scale); ordered by median score",
+            x        = NULL,
+            y        = "Daily Score",
+            caption  = "Blue = affective/emotional items; orange = physical/somatic items. Composites are row-means of component items."
+          ) +
+          ggplot2::theme_minimal(base_size = 10) +
+          ggplot2::theme(
+            plot.title   = ggplot2::element_text(face = "bold", size = 13),
+            plot.caption = ggplot2::element_text(size = 8, hjust = 0, face = "italic"),
+            legend.position = "bottom"
+          )
+        print(p_box)
+      }
+    }
+
   } else {
     grid::grid.newpage()
     grid::grid.text(
@@ -1618,8 +1723,10 @@ if (length(all_ids_signif) > 0) {
 
   # ---- PAGE 3: GAM Exclusion Reasons ----
   # For each participant, check each outcome to determine why GAMs cannot be run.
-  # Exclusion reasons: insufficient data (N<10), no variability, quarter coverage failure,
+  # Exclusion reasons: insufficient data (N<10), quarter coverage failure,
   # insufficient knots (N<4), missing columns.
+  # NOTE: "No variability" is NOT an exclusion — those outcomes are included with
+  # range = 0 and raw data plotted (no GAM curve).
   excl_rows <- list()
   for (pid in all_sample_ids) {
     datSX_excl <- df[df$id == pid, , drop = FALSE]
@@ -1663,16 +1770,6 @@ if (length(all_ids_signif) > 0) {
             id = pid, time_var = tv, outcome = outcome_var,
             reason = "Insufficient data (N < 10)",
             detail = sprintf("N = %d", n_obs),
-            stringsAsFactors = FALSE
-          )
-          next
-        }
-        out_var <- var(outcome_dat[[log_out]], na.rm = TRUE)
-        if (!is.finite(out_var) || out_var < 1e-6) {
-          excl_rows[[length(excl_rows) + 1]] <- data.frame(
-            id = pid, time_var = tv, outcome = outcome_var,
-            reason = "No variability",
-            detail = sprintf("Var(log outcome) = %.2e", ifelse(is.finite(out_var), out_var, 0)),
             stringsAsFactors = FALSE
           )
           next
@@ -1753,8 +1850,9 @@ if (length(all_ids_signif) > 0) {
     excl_caption <- grid::textGrob(
       paste0(
         "Exclusion reasons are checked in order: (1) quarter coverage at participant-level, ",
-        "(2) missing columns, (3) insufficient data (N < 10), (4) no variability in log-transformed outcome, ",
-        "(5) outcome-level quarter coverage. ",
+        "(2) missing columns, (3) insufficient data (N < 10), ",
+        "(4) outcome-level quarter coverage. ",
+        "Outcomes with no variability are not excluded; they are included with range = 0 (raw data only). ",
         "A participant may appear under multiple reasons for different outcomes. ",
         "Participant-level exclusions (e.g., quarter coverage) count once per time variable, not per outcome."
       ),
@@ -1794,9 +1892,6 @@ if (length(all_ids_signif) > 0) {
   phys_composites <- c("drsp_breastpain", "drsp_eatsx")
   all_physical_outcomes <- c(physical_symptoms, phys_composites)
 
-  # Domain display colors for outcome labels (consistent throughout report)
-  DOMAIN_COL_AFFECTIVE <- "#0072B2"  # blue
-  DOMAIN_COL_PHYSICAL  <- "#D55E00"  # orange/vermillion
   # Map a vector of outcome labels to domain colors
   label_domain_colors <- function(labels) {
     vars <- names(outcomes)[match(labels, outcomes)]
@@ -1860,6 +1955,13 @@ if (length(all_ids_signif) > 0) {
     dplyr::pull(id)
   pct_affective_sig <- length(ids_affective_sig) / n_gam_valid * 100
 
+  # --- KEY METRIC 5: % of GAM-valid sample with at least one affective outcome meeting EITHER criterion ---
+  ids_affective_either <- id_outcome_summary %>%
+    dplyr::filter(variable %in% all_affective_outcomes, sig | meets_benchmark) %>%
+    dplyr::distinct(id) %>%
+    dplyr::pull(id)
+  pct_affective_either <- length(ids_affective_either) / n_gam_valid * 100
+
   # ---- PAGE 1: Overall Descriptive Summary ----
   # Per-outcome descriptive statistics across all participants
   # Percentages use n_gam_valid (participants with valid GAM data) as denominator
@@ -1903,7 +2005,10 @@ if (length(all_ids_signif) > 0) {
       "N with \u2265 1 outcome meeting person-specific benchmark (any)",
       "% with \u2265 1 outcome meeting person-specific benchmark (any)",
       "N with \u2265 1 outcome meeting person-specific benchmark (affective only)",
-      "% with \u2265 1 outcome meeting person-specific benchmark (affective only)"
+      "% with \u2265 1 outcome meeting person-specific benchmark (affective only)",
+      "",
+      "N with \u2265 1 affective outcome meeting EITHER criterion (sig OR benchmark)",
+      "% with \u2265 1 affective outcome meeting EITHER criterion (sig OR benchmark)"
     ),
     Value = c(
       as.character(n_total_sample),
@@ -1917,7 +2022,10 @@ if (length(all_ids_signif) > 0) {
       as.character(length(ids_any_benchmark)),
       sprintf("%.1f%%", pct_any_benchmark),
       as.character(length(ids_affective_benchmark)),
-      sprintf("%.1f%%", pct_affective_benchmark)
+      sprintf("%.1f%%", pct_affective_benchmark),
+      "",
+      as.character(length(ids_affective_either)),
+      sprintf("%.1f%%", pct_affective_either)
     ),
     stringsAsFactors = FALSE
   )

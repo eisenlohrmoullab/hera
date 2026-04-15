@@ -78,7 +78,8 @@ pacman::p_load(
   menstrualcycleR, # Menstrual cycle visualization functions
   
   # -- Visualization Extensions --
-  ragg,          # High-quality rendering 
+  ragg,          # High-quality rendering
+  ggtext,          # Markdown/HTML text rendering in ggplot2 (element_markdown)
   patchwork,       # Arranging plots
   ggdist,          # Uncertainty viz
   ggrepel,         # Non-overlapping labels
