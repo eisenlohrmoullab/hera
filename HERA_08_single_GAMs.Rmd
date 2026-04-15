@@ -730,6 +730,41 @@ for (current_id in ids_to_run) {
         )
       )
     print(p_cover)
+
+    # ---- Page 0b: Interpretation Key (border colors & pink shading) ----
+    grid::grid.newpage()
+    key_title <- grid::textGrob(
+      paste0("How to Read This Report \u2014 ID: ", current_id),
+      gp = grid::gpar(fontsize = 16, fontface = "bold")
+    )
+    key_body <- grid::textGrob(
+      paste0(
+        "PLOT BORDER COLORS (individual DRSP item plots)\n\n",
+        "\u2022 Red border:     GAM range \u2265 1.5 \u2014 equivalent to the C-PASS 30% change criterion\n",
+        "                   used to benchmark PMDD cyclical change\n\n",
+        "\u2022 Salmon border:  GAM range \u2265 1.0 but < 1.5 \u2014 moderate cyclical fluctuation\n\n",
+        "\u2022 Pink border:    GAM range \u2265 0.5 but < 1.0 \u2014 mild cyclical fluctuation\n\n",
+        "\u2022 No border:      GAM range < 0.5 \u2014 minimal cyclical change\n\n\n",
+        "OTHER VISUAL ELEMENTS\n\n",
+        "\u2022 Pink shaded region: Area above 4.5 on the y-axis, shown when the axis expands\n",
+        "  beyond the default 1\u20134.5 range. Indicates values in the upper extreme of the\n",
+        "  1\u20136 DRSP scale.\n\n",
+        "\u2022 Red dashed line:   Menses onset (cycle day 1)\n\n",
+        "\u2022 Green dashed line: Estimated ovulation\n\n",
+        "\u2022 Red horizontal line (at y = 4): Reference line for DRSP individual items\n\n",
+        "\u2022 Dots on GAM curve: Peak (highest) and trough (lowest) predicted values\n\n",
+        "\u2022 Faded points:     Raw daily data behind the GAM curve\n\n",
+        "\u2022 Annotation text:  Stars (*) indicate significance (p < .05); Range = max \u2212 min\n",
+        "                   of predicted values; EDF = effective degrees of freedom"
+      ),
+      gp = grid::gpar(fontsize = 10, lineheight = 1.15, fontfamily = "mono"),
+      just = "left", x = 0.05
+    )
+    gridExtra::grid.arrange(
+      key_title, key_body,
+      ncol = 1,
+      heights = grid::unit(c(0.08, 0.92), "npc")
+    )
   } else {
     grid::grid.newpage()
     grid::grid.text(
@@ -1249,7 +1284,8 @@ if (length(all_ids_signif) > 0) {
   # ---- COVER PAGE (p.1): How to Read This Report ----
   cover_title <- grid::textGrob(
     "How to Read This Report",
-    gp = grid::gpar(fontsize = 24, fontface = "bold")
+    gp = grid::gpar(fontsize = 22, fontface = "bold"),
+    vjust = 0.5
   )
   cover_purpose <- grid::textGrob(
     paste0(
@@ -1300,8 +1336,8 @@ if (length(all_ids_signif) > 0) {
   gridExtra::grid.arrange(
     cover_title, cover_purpose, cover_defs, cover_toc,
     ncol = 1,
-    heights = grid::unit(c(0.06, 0.12, 0.55, 0.27), "npc"),
-    padding = grid::unit(0.5, "lines")
+    heights = grid::unit(c(0.08, 0.12, 0.52, 0.28), "npc"),
+    padding = grid::unit(1, "lines")
   )
   draw_page_number()
 
@@ -1434,12 +1470,14 @@ if (length(all_ids_signif) > 0) {
 
   title_grob <- grid::textGrob(
     "Overall Sample Summary \u2014 Cyclical Symptom Change",
-    gp = grid::gpar(fontsize = 18, fontface = "bold")
+    gp = grid::gpar(fontsize = 18, fontface = "bold"),
+    vjust = 0.5
   )
   subtitle_grob <- grid::textGrob(
     paste0("N = ", n_total_sample, " total | N = ", n_gam_valid,
            " with valid GAM data (percentages use GAM-valid N as denominator)"),
-    gp = grid::gpar(fontsize = 11, fontface = "italic")
+    gp = grid::gpar(fontsize = 11, fontface = "italic"),
+    vjust = 0.5
   )
   key_tbl <- gridExtra::tableGrob(key_metrics, rows = NULL, theme = key_theme)
   note_grob <- grid::textGrob(
@@ -1468,7 +1506,7 @@ if (length(all_ids_signif) > 0) {
     ),
     note_grob,
     ncol = 1,
-    heights = grid::unit(c(0.07, 0.04, 0.45, 0.37, 0.04), "npc")
+    heights = grid::unit(c(0.08, 0.05, 0.42, 0.38, 0.04), "npc")
   )
   draw_page_number()
 
