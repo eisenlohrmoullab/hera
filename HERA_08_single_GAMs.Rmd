@@ -1927,8 +1927,10 @@ if (length(all_ids_signif) > 0) {
   }
 
   # Wrap a label in an HTML <span> with the appropriate domain color.
-  # Returns a character vector of HTML-colored labels for use with
-  # ggtext::element_markdown() axis text.
+  # NOTE: element_markdown() has known rendering issues in PDF devices
+  # (labels appear as "" on some systems due to ggtext/gridtext + PDF
+  # incompatibility).  Kept for reference; pages 8-12 now use plain-text
+  # labels with element_text() instead.
   domain_color_label <- function(labels) {
     cols <- label_domain_colors(labels)
     paste0("<span style='color:", cols, "'>", labels, "</span>")
@@ -2312,8 +2314,8 @@ if (length(all_ids_signif) > 0) {
   # top of the coord_flip-ed plot) before pivoting so all metrics share a consistent outcome order.
   pct_data <- outcome_desc %>%
     dplyr::mutate(
-      # Create HTML-colored labels for domain color-coding via ggtext
-      color_label = domain_color_label(as.character(label)),
+      # Plain-text labels (ggtext element_markdown() renders as "" in PDF devices)
+      color_label = as.character(label),
       color_label = factor(color_label,
                            levels = color_label[order(pct_sig_or_benchmark)])
     ) %>%
@@ -2364,15 +2366,15 @@ if (length(all_ids_signif) > 0) {
       legend.position = "none",
       strip.text = ggplot2::element_text(face = "bold", size = 9),
       panel.spacing = grid::unit(1, "lines"),
-      axis.text.y = ggtext::element_markdown()
+      axis.text.y = ggplot2::element_text()
     )
   print(p_pct_bars)
   draw_page_number()
 
   # ---- PAGE 9: Dot/Strip Plot with Box-and-Whisker ----
-  # Create HTML-colored labels for domain color-coding via ggtext
+  # Plain-text labels (ggtext element_markdown() renders as "" in PDF devices)
   range_plot_data <- range_plot_data %>%
-    dplyr::mutate(color_label = domain_color_label(as.character(label)))
+    dplyr::mutate(color_label = as.character(label))
   p_dot_strip <- ggplot2::ggplot(
     range_plot_data,
     ggplot2::aes(x = reorder(color_label, best_range, FUN = median, na.rm = TRUE),
@@ -2408,7 +2410,7 @@ if (length(all_ids_signif) > 0) {
       plot.title = ggplot2::element_text(face = "bold", size = 13),
       plot.caption = ggplot2::element_text(size = 8, hjust = 0, face = "italic"),
       legend.position = "bottom",
-      axis.text.y = ggtext::element_markdown()
+      axis.text.y = ggplot2::element_text()
     )
   print(p_dot_strip)
   draw_page_number()
@@ -2459,7 +2461,7 @@ if (length(all_ids_signif) > 0) {
       dplyr::summarise(pct_either = mean(category != "Neither", na.rm = TRUE), .groups = "drop") %>%
       dplyr::arrange(pct_either) %>%
       dplyr::pull(label)
-    oo_colored <- domain_color_label(as.character(oo))
+    oo_ordered <- as.character(oo)
 
     # Order participants by total outcomes meeting either criterion within this domain
     io <- domain_data %>%
@@ -2470,8 +2472,8 @@ if (length(all_ids_signif) > 0) {
 
     domain_data <- domain_data %>%
       dplyr::mutate(
-        label = domain_color_label(as.character(label)),
-        label = factor(label, levels = oo_colored),
+        label = as.character(label),
+        label = factor(label, levels = oo_ordered),
         id = factor(id, levels = io)
       )
 
@@ -2495,7 +2497,7 @@ if (length(all_ids_signif) > 0) {
         axis.ticks.x = ggplot2::element_blank(),
         legend.position = "bottom",
         panel.grid = ggplot2::element_blank(),
-        axis.text.y = ggtext::element_markdown()
+        axis.text.y = ggplot2::element_text()
       )
   }
 
@@ -2555,15 +2557,15 @@ if (length(all_ids_signif) > 0) {
     dplyr::arrange(pct) %>%
     dplyr::pull(label)
 
-  # Create HTML-colored versions of outcome labels for domain color-coding
-  outcome_pct_order_colored <- domain_color_label(as.character(outcome_pct_order))
+  # Plain-text label ordering (ggtext element_markdown() renders as "" in PDF devices)
+  outcome_pct_order_plain <- as.character(outcome_pct_order)
 
   cooccur_df <- cooccur_df %>%
     dplyr::mutate(
-      Outcome1 = domain_color_label(as.character(Outcome1)),
-      Outcome2 = domain_color_label(as.character(Outcome2)),
-      Outcome1 = factor(Outcome1, levels = outcome_pct_order_colored),
-      Outcome2 = factor(Outcome2, levels = rev(outcome_pct_order_colored))
+      Outcome1 = as.character(Outcome1),
+      Outcome2 = as.character(Outcome2),
+      Outcome1 = factor(Outcome1, levels = outcome_pct_order_plain),
+      Outcome2 = factor(Outcome2, levels = rev(outcome_pct_order_plain))
     )
 
   p_cooccur <- ggplot2::ggplot(cooccur_df,
@@ -2593,8 +2595,8 @@ if (length(all_ids_signif) > 0) {
     ggplot2::theme(
       plot.title = ggplot2::element_text(face = "bold", size = 12),
       plot.caption = ggplot2::element_text(size = 8, hjust = 0, face = "italic"),
-      axis.text.x = ggtext::element_markdown(angle = 45, hjust = 1, size = 6),
-      axis.text.y = ggtext::element_markdown(size = 6),
+      axis.text.x = ggplot2::element_text(angle = 45, hjust = 1, size = 6),
+      axis.text.y = ggplot2::element_text(size = 6),
       panel.grid = ggplot2::element_blank(),
       legend.position = "right"
     )
