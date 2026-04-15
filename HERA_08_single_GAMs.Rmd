@@ -1788,7 +1788,9 @@ if (length(all_ids_signif) > 0) {
   n_desc_cols <- ncol(display_desc)
   fill_matrix <- matrix("white", nrow = n_desc_rows, ncol = n_desc_cols)
   # Median Range (col 3): orange shading for high values
-  median_benchmark <- median(id_benchmark_map, na.rm = TRUE)
+  # Use only GAM-valid IDs for the median benchmark
+  gam_valid_benchmarks <- id_benchmark_map[names(id_benchmark_map) %in% as.character(all_ids)]
+  median_benchmark <- median(gam_valid_benchmarks, na.rm = TRUE)
   fill_matrix[, 3] <- ifelse(outcome_desc$median_range >= median_benchmark, HIGHLIGHT_ORG_MED,
                               ifelse(outcome_desc$median_range >= median_benchmark * 0.67, HIGHLIGHT_ORG_LIGHT, "white"))
   # % Sig (col 9): blue shading for high rates
