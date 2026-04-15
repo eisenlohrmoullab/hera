@@ -1265,8 +1265,8 @@ if (length(all_ids_signif) > 0) {
       "  person\u2019s GAM curve \u2014 measures how much a symptom fluctuates across the cycle.\n\n",
       "\u2022 Significant GAM (p < .05): The cyclical pattern is statistically distinguishable\n",
       "  from a flat line \u2014 evidence that symptoms truly vary across the cycle.\n\n",
-      "\u2022 Range \u2265 1.5: A clinically meaningful swing of 1.5+ points on the 1\u20136 DRSP\n",
-      "  scale, representing roughly one full severity level.\n\n",
+      "\u2022 Range \u2265 1.5: A swing of 1.5+ points on the 1\u20136 DRSP scale, equivalent to the\n",
+      "  C-PASS 30% change criterion used to benchmark PMDD cyclical change.\n\n",
       "\u2022 Affective outcomes: Mood/emotional symptoms (depression, anxiety, irritability,\n",
       "  etc.) and related composites (Negative Affect, Distress, Lability, Low Arousal).\n\n",
       "\u2022 Physical outcomes: Somatic symptoms (breast tenderness, headache, overeating,\n",
@@ -1446,7 +1446,7 @@ if (length(all_ids_signif) > 0) {
         "\u2022 Significant GAM: The person\u2019s symptom shows a reliable pattern of change across the\n",
         "  menstrual cycle (p < .05). Higher % = more people show cyclical symptoms.\n\n",
         "\u2022 Range \u2265 1.5: The symptom swings by at least 1.5 points on the 1\u20136 DRSP scale across\n",
-        "  the cycle \u2014 a clinically meaningful change (~one severity level). Higher % = more\n",
+        "  the cycle \u2014 equivalent to the C-PASS 30% change criterion for PMDD. Higher % = more\n",
         "  people with large cyclical swings.\n\n",
         "\u2022 Affective vs. Any: Affective metrics focus on mood/emotional symptoms only (excluding\n",
         "  physical symptoms). This shows whether cyclicity is primarily mood-driven.\n\n",
@@ -1527,7 +1527,7 @@ if (length(all_ids_signif) > 0) {
       "COLUMN GUIDE: N = participants with valid GAM data for this outcome; ",
       "Median Range = typical amount of cyclical variation;\n",
       "% Sig = % with statistically significant cyclicity (p < .05); ",
-      "% \u22651.5 = % with clinically meaningful variation (\u22651.5-point swing);\n",
+      "% \u22651.5 = % with range meeting C-PASS benchmark (\u22651.5-point swing);\n",
       "% Either = % meeting either criterion. ",
       "Shading: blue = high % Sig; orange = high Median Range or % \u22651.5; green = high % Either."
     ),
@@ -1568,7 +1568,7 @@ if (length(all_ids_signif) > 0) {
       y = "Count",
       caption = paste0(
         "Each panel shows one outcome. Blue bars = significant cyclicity (p < .05); grey = not significant.\n",
-        "Outcomes where most bars fall right of the red line have widespread clinically meaningful variation."
+        "Outcomes where most bars fall right of the red line have widespread variation meeting the C-PASS benchmark."
       )
     ) +
     ggplot2::theme_minimal(base_size = 8) +
@@ -1623,7 +1623,7 @@ if (length(all_ids_signif) > 0) {
       y = "Percentage",
       fill = NULL,
       caption = paste0(
-        "Blue = statistically significant cyclicity (p < .05); orange = clinically meaningful range (\u22651.5);\n",
+        "Blue = statistically significant cyclicity (p < .05); orange = range meeting C-PASS benchmark (\u22651.5);\n",
         "green = either criterion met. Outcomes near the top have the highest rates of cyclical change."
       )
     ) +
@@ -1731,9 +1731,9 @@ if (length(all_ids_signif) > 0) {
                         "outcomes (rows) ordered by % affected"),
       caption = paste0(
         "Each cell shows one participant\u2019s result for one outcome.\n",
-        "Dark orange = both statistically significant AND clinically meaningful range; ",
+        "Dark orange = both statistically significant AND range meeting C-PASS benchmark; ",
         "blue = significant only;\n",
-        "light orange = clinically meaningful range but not significant; grey = neither."
+        "light orange = range meeting C-PASS benchmark but not significant; grey = neither."
       ),
       x = "Participants",
       y = NULL
