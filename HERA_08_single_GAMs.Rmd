@@ -2110,9 +2110,8 @@ plot_significance_probability <- function(df_outcome, pred_df,
       y = "Predicted probability of significant GAM",
       color = NULL, linetype = NULL,
       caption = paste0(
-        "'Range Only' = logistic model predicting significance from cyclical range alone.\n",
-        "'Range + Obs. Count' = model also adjusting for number of observations ",
-        "(held at its median for the prediction curve).\n",
+        "'Range Only (no covariates)' = logistic model predicting significance from cyclical range alone.\n",
+        "'Range + Obs. Count (n held at median)' = model also adjusting for number of observations.\n",
         "Dashed vertical lines mark range thresholds."
       )
     ) +
