@@ -2094,16 +2094,18 @@ if (length(all_ids_signif) > 0) {
     ) %>%
     dplyr::filter(!is.na(domain))
 
-  # Per-domain summary (each row = one outcome x participant pair)
+  # Per-domain summary (person-level: % of GAM-valid participants with >= 1
+  # outcome in this domain meeting each criterion, matching the key-metrics
+  # table on Page 4).
   domain_summary <- comparison_data %>%
     dplyr::group_by(domain) %>%
     dplyr::summarise(
       n_pairs      = dplyr::n(),
       mean_range   = mean(best_range, na.rm = TRUE),
       median_range = median(best_range, na.rm = TRUE),
-      pct_sig      = mean(sig, na.rm = TRUE) * 100,
-      pct_benchmark = mean(meets_benchmark, na.rm = TRUE) * 100,
-      pct_either   = mean(sig | meets_benchmark, na.rm = TRUE) * 100,
+      pct_sig       = length(unique(id[sig])) / n_gam_valid * 100,
+      pct_benchmark = length(unique(id[meets_benchmark])) / n_gam_valid * 100,
+      pct_either    = length(unique(id[sig | meets_benchmark])) / n_gam_valid * 100,
       .groups      = "drop"
     )
 
@@ -2139,7 +2141,8 @@ if (length(all_ids_signif) > 0) {
     ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
     ggplot2::labs(
       title = "Affective vs. Physical Symptom Cyclicity",
-      subtitle = "Comparing cyclicity rates across all DRSP outcomes (individual items + composites)",
+      subtitle = paste0("% of GAM-valid participants (N = ", n_gam_valid,
+                        ") with \u2265 1 outcome meeting criterion (individual items + composites)"),
       x = NULL,
       y = "Percentage"
     ) +
@@ -2154,7 +2157,8 @@ if (length(all_ids_signif) > 0) {
     paste0(
       "Affective = mood/emotional DRSP items + composites (Neg. Affect, Distress, Lability, Low Arousal). ",
       "Physical = somatic DRSP items + composites (Breast Sx, Eating Sx).\n",
-      "% of outcome \u00d7 participant pairs meeting each criterion. ",
+      "% of GAM-valid participants (N = ", n_gam_valid, ") with \u2265 1 outcome in domain meeting each criterion. ",
+      "Outcomes include individual DRSP items + composites.\n",
       "Benchmark = person-specific 30% of DRSP scale range (C-PASS-equivalent change benchmark)."
     ),
     gp = grid::gpar(fontsize = 9, fontface = "italic"),
