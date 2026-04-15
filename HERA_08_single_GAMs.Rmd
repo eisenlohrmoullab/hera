@@ -189,6 +189,9 @@ physical_symptoms <- c("drsp_12", "drsp_13", "drsp_14", "drsp_15",
 # --- Pattern constants for variable matching ---
 DRSP_VAR_PATTERN <- "^drsp_\\d+$"
 
+# --- Border color key caption (reused on DRSP individual item plot pages) ---
+BORDER_KEY_CAPTION <- "Border key:  \u25A0 Red = Range \u2265 1.5  |  \u25A0 Salmon = Range \u2265 1.0  |  \u25A0 Pink = Range \u2265 0.5  |  No border = Range < 0.5"
+
 # --- Max possible counts per category (for density-plot Y-axis scaling) ---
 all_raw_drsp <- names(outcomes)[grepl(DRSP_VAR_PATTERN, names(outcomes))]
 n_physical_max <- length(intersect(all_raw_drsp, physical_symptoms))
@@ -828,8 +831,7 @@ for (current_id in ids_to_run) {
         "     1\u20136 DRSP scale.\n\n",
         " \u25B6  Red dashed line:   Menses onset (cycle day 1)\n\n",
         " \u25B6  Green dashed line: Estimated ovulation\n\n",
-        " \u25B6  Red horizontal line (at y = 4): Reference line of \"moderate\" severity for\n",
-        "     DRSP individual items\n\n",
+        " \u25B6  Red horizontal line (at y = 4): Reference line of \"moderate\" severity\n\n",
         " \u25B6  Dots on GAM curve: Peak (highest) and trough (lowest) predicted values\n\n",
         " \u25B6  Faded points:     Raw daily data behind the GAM curve\n\n",
         " \u25B6  Annotation text:  Stars (*) indicate significance (p < .05); Range = max \u2212 min\n",
@@ -1350,11 +1352,7 @@ for (current_id in ids_to_run) {
 
         # Add border color key as caption on DRSP individual item pages
         is_drsp_page <- grepl("^DRSP_Page_", page_name)
-        border_key_caption <- if (is_drsp_page) {
-          "Border key:  \u25A0 Red = Range \u2265 1.5  |  \u25A0 Salmon = Range \u2265 1.0  |  \u25A0 Pink = Range \u2265 0.5  |  No border = Range < 0.5"
-        } else {
-          NULL
-        }
+        border_key_caption <- if (is_drsp_page) BORDER_KEY_CAPTION else NULL
 
         final_page <- patchwork::wrap_plots(plotlist = plot_list, ncol = plots_per_col) +
           patchwork::plot_annotation(
@@ -2958,11 +2956,7 @@ if (length(all_ids_signif) > 0) {
           }
           # Add border key caption for individual DRSP item pages
           is_drsp_item <- grepl("^drsp_\\d+$", target_var)
-          border_caption <- if (is_drsp_item) {
-            "Border key:  \u25A0 Red = Range \u2265 1.5  |  \u25A0 Salmon = Range \u2265 1.0  |  \u25A0 Pink = Range \u2265 0.5  |  No border = Range < 0.5"
-          } else {
-            NULL
-          }
+          border_caption <- if (is_drsp_item) BORDER_KEY_CAPTION else NULL
 
           final_page <- patchwork::wrap_plots(plotlist = page_plots,
                                               ncol = plots_per_col_exp) +
