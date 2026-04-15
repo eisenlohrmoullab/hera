@@ -1631,10 +1631,10 @@ if (length(all_ids_signif) > 0) {
   draw_page_number()
 
   # ---- PAGE 4 (was 6): % Significant and % Range >= 1.5 by outcome (faceted bars) ----
-  # Precompute ordering by % Range >= 1.5 before pivoting so all metrics
-  # share a consistent outcome order (rather than ordering by the mean of both).
+  # Precompute ordering by % Sig OR Range >= 1.5 (descending) before pivoting so all metrics
+  # share a consistent outcome order.
   pct_data <- outcome_desc %>%
-    dplyr::mutate(label = factor(label, levels = label[order(pct_range15)])) %>%
+    dplyr::mutate(label = factor(label, levels = label[order(pct_sig_or_range15)])) %>%
     dplyr::select(label, pct_sig, pct_range15, pct_sig_or_range15) %>%
     tidyr::pivot_longer(cols = c(pct_sig, pct_range15, pct_sig_or_range15),
                         names_to = "metric", values_to = "pct") %>%
@@ -1672,7 +1672,7 @@ if (length(all_ids_signif) > 0) {
       y = "Percentage",
       caption = paste0(
         "Blue = statistically significant cyclicity (p < .05); orange = range meeting C-PASS benchmark (\u22651.5);\n",
-        "green = either criterion met. Outcomes ordered by % Range \u2265 1.5 (bottom to top)."
+        "green = either criterion met. Outcomes ordered by % Sig OR Range \u2265 1.5 (bottom to top)."
       )
     ) +
     ggplot2::theme_minimal(base_size = 9) +
