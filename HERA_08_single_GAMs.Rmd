@@ -62,12 +62,13 @@ table_cols_per_page <- 6
 plots_per_col <- 3
 plots_per_row <- 3
 
-# --- Minimum observations per cycle-quarter to run GAMs ---
+# --- Sparse-quarter cutoff for GAM inclusion ---
 # The cycle is divided into 4 equal quarters over [-1, 1].
 # Inclusion rule: ALL 4 quarters must have at least 1 observation, AND at least
-# 3 of 4 quarters must have >= 2 observations. One quarter with exactly 1 obs
-# is tolerated; any quarter with 0 observations causes exclusion.
-min_obs_per_quarter <- 2
+# 3 of 4 quarters must have >= sparse_quarter_cutoff observations. One quarter
+# with exactly 1 obs is tolerated; any quarter with 0 observations causes exclusion.
+# This value is the threshold below which a non-empty quarter is considered sparse.
+sparse_quarter_cutoff <- 2
 ```
 
 # Section 2: Create output folders & check time vars
@@ -117,6 +118,69 @@ outcomes <- c(
   "drsp_20"          = "Headache",
   "drsp_21"          = "Joint/Muscle Pain"
 )
+
+# --- Centralized composite definitions (sourced from HERA_01_data_prep.Rmd) ---
+# Single source of truth for both per-ID (Page 0c) and per-outcome exploration PDFs.
+composite_specs <- list(
+  drsp_NA = list(
+    label = "Negative Affect Mean",
+    domain = "AFFECTIVE",
+    components = c(
+      "Depression (1)", "Hopelessness (2)", "Worthlessness (3)",
+      "Anxiety (4)", "Mood Swings (5)", "Rejection Sensitivity (6)",
+      "Anger/Irritability (7)", "Interpersonal Conflicts (8)",
+      "Loss of Interest (9)", "Feeling Overwhelmed (16)",
+      "Feeling Out of Control (17)"
+    )
+  ),
+  drsp_distress = list(
+    label = "Distress",
+    domain = "AFFECTIVE",
+    components = c(
+      "Depression (1)", "Hopelessness (2)", "Worthlessness (3)",
+      "Anxiety (4)", "Feeling Overwhelmed (16)",
+      "Feeling Out of Control (17)"
+    )
+  ),
+  drsp_labilsocsx = list(
+    label = "Social/Affect Lability",
+    domain = "AFFECTIVE",
+    components = c(
+      "Mood Swings (5)", "Rejection Sensitivity (6)",
+      "Anger/Irritability (7)", "Interpersonal Conflicts (8)"
+    )
+  ),
+  drsp_lowarousal = list(
+    label = "Low Arousal",
+    domain = "AFFECTIVE",
+    components = c(
+      "Loss of Interest (9)", "Difficulty Concentrating (10)",
+      "Fatigue/Lethargy (11)", "Hypersomnia (14)", "Insomnia (15)"
+    )
+  ),
+  drsp_breastpain = list(
+    label = "Breast Sx",
+    domain = "PHYSICAL",
+    components = c(
+      "Breast Tenderness (18)", "Breast Swelling (19)"
+    )
+  ),
+  drsp_eatsx = list(
+    label = "Eating Sx",
+    domain = "PHYSICAL",
+    components = c(
+      "Overeating (12)", "Specific Food Cravings (13)"
+    )
+  )
+)
+
+# Helper: render a one-line composite definition string from a spec entry.
+render_composite_definition <- function(spec) {
+  paste0("rowMeans of: ", paste(spec$components, collapse = ", "))
+}
+
+# Named list of one-liner definitions for each composite (used in exploration PDFs).
+composite_definitions <- lapply(composite_specs, render_composite_definition)
 
 # --- Physical vs Affect symptom classification (raw DRSP items only) ---
 physical_symptoms <- c("drsp_12", "drsp_13", "drsp_14", "drsp_15",
@@ -318,12 +382,13 @@ quarter_bin_counts <- function(vals) {
 
 # --- Check cycle-quarter coverage for a given time variable ---
 # Wrapper around quarter_bin_counts() that extracts the cycle column from a
-# data frame and returns a list with quarter_counts, n_empty, n_sparse, and
-# passes (TRUE when all 4 quarters have ≥1 obs AND at most 1 quarter has <2 obs).
+# data frame and returns a list with quarter_counts, n_empty (quarters with 0 obs),
+# n_sparse (non-empty quarters with < sparse_quarter_cutoff obs), and
+# passes (TRUE when all 4 quarters have ≥1 obs AND at most 1 quarter is sparse).
 check_quarter_coverage <- function(data, cycle_var) {
   counts <- quarter_bin_counts(data[[cycle_var]])
   n_empty  <- sum(counts == 0)
-  n_sparse <- sum(counts < min_obs_per_quarter)
+  n_sparse <- sum(counts > 0 & counts < sparse_quarter_cutoff)
   list(
     quarter_counts  = counts,
     min_per_quarter = min(counts),
@@ -348,13 +413,13 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map) {
     "[{outcome_var}] N={nrow(dat)}, Quarter counts: ",
     "{paste(names(qcov$quarter_counts), qcov$quarter_counts, sep='=', collapse=', ')}, ",
     "Min per quarter: {qcov$min_per_quarter}, Empty: {qcov$n_empty}, ",
-    "Sparse (<{min_obs_per_quarter}): {qcov$n_sparse}, Passes: {qcov$passes}"
+    "Sparse (>0 & <{sparse_quarter_cutoff}): {qcov$n_sparse}, Passes: {qcov$passes}"
   ))
 
   if (!qcov$passes) {
     message(glue::glue(
       "Skipping GAM for {outcome_var}: quarter coverage requirement not met ",
-      "(need 4/4 quarters with \u22651 obs & \u22653/4 with \u2265{min_obs_per_quarter} obs; ",
+      "(need 4/4 quarters with \u22651 obs & \u22653/4 with \u2265{sparse_quarter_cutoff} obs; ",
       "empty={qcov$n_empty}, sparse={qcov$n_sparse})"
     ))
     return(NULL)
@@ -658,10 +723,10 @@ for (current_id in ids_to_run) {
     meta0 <- axis_meta[[tv0]]
 
     # Returns TRUE when coverage is insufficient: any quarter has 0 obs, or
-    # more than 1 quarter has fewer than min_obs_per_quarter observations.
+    # more than 1 non-empty quarter has fewer than sparse_quarter_cutoff observations.
     is_quarter_sparse <- function(qcounts) {
       n_empty  <- sum(qcounts == 0)
-      n_sparse <- sum(qcounts < min_obs_per_quarter)
+      n_sparse <- sum(qcounts > 0 & qcounts < sparse_quarter_cutoff)
       n_empty > 0 || n_sparse > 1
     }
 
@@ -723,11 +788,11 @@ for (current_id in ids_to_run) {
     coverage_subtitle <- paste0("Time variable: ", tv0)
     if (tv0_sparse) {
       n_empty_q  <- sum(tv0_qcounts == 0)
-      n_sparse_q <- sum(tv0_qcounts < min_obs_per_quarter)
+      n_sparse_q <- sum(tv0_qcounts > 0 & tv0_qcounts < sparse_quarter_cutoff)
       if (n_empty_q > 0) {
         warn_detail <- paste0(n_empty_q, " quarter(s) with 0 observations")
       } else {
-        warn_detail <- paste0(n_sparse_q, " quarter(s) with <", min_obs_per_quarter,
+        warn_detail <- paste0(n_sparse_q, " quarter(s) with <", sparse_quarter_cutoff,
                               " observations (max 1 allowed)")
       }
       coverage_subtitle <- paste0(
@@ -791,31 +856,22 @@ for (current_id in ids_to_run) {
       paste0("Composite Outcome Definitions \u2014 ID: ", current_id),
       gp = grid::gpar(fontsize = 16, fontface = "bold")
     )
+    # Build page body dynamically from composite_specs (single source of truth).
+    comp_lines <- "The following composite scores are computed in HERA_01_data_prep.Rmd as the\nrow-wise mean (rowMeans, na.rm = TRUE) of their component DRSP items.\n\n"
+    for (domain in c("AFFECTIVE", "PHYSICAL")) {
+      comp_lines <- paste0(comp_lines, "\n", domain, " COMPOSITES\n\n")
+      for (cname in names(composite_specs)) {
+        spec <- composite_specs[[cname]]
+        if (spec$domain != domain) next
+        comp_lines <- paste0(
+          comp_lines,
+          " \u25B6  ", spec$label, " (", cname, ")\n",
+          "     = mean of: ", paste(spec$components, collapse = ", "), "\n\n"
+        )
+      }
+    }
     comp_body <- grid::textGrob(
-      paste0(
-        "The following composite scores are computed in HERA_01_data_prep.Rmd as the\n",
-        "row-wise mean (rowMeans, na.rm = TRUE) of their component DRSP items.\n\n\n",
-        "AFFECTIVE COMPOSITES\n\n",
-        " \u25B6  Negative Affect Mean (drsp_NA)\n",
-        "     = mean of: Depression (1), Hopelessness (2), Worthlessness (3), Anxiety (4),\n",
-        "       Mood Swings (5), Rejection Sensitivity (6), Anger/Irritability (7),\n",
-        "       Interpersonal Conflicts (8), Loss of Interest (9),\n",
-        "       Feeling Overwhelmed (16), Feeling Out of Control (17)\n\n",
-        " \u25B6  Distress (drsp_distress)\n",
-        "     = mean of: Depression (1), Hopelessness (2), Worthlessness (3), Anxiety (4),\n",
-        "       Feeling Overwhelmed (16), Feeling Out of Control (17)\n\n",
-        " \u25B6  Social/Affect Lability (drsp_labilsocsx)\n",
-        "     = mean of: Mood Swings (5), Rejection Sensitivity (6),\n",
-        "       Anger/Irritability (7), Interpersonal Conflicts (8)\n\n",
-        " \u25B6  Low Arousal (drsp_lowarousal)\n",
-        "     = mean of: Loss of Interest (9), Difficulty Concentrating (10),\n",
-        "       Fatigue/Lethargy (11), Hypersomnia (14), Insomnia (15)\n\n\n",
-        "PHYSICAL COMPOSITES\n\n",
-        " \u25B6  Breast Sx (drsp_breastpain)\n",
-        "     = mean of: Breast Tenderness (18), Breast Swelling (19)\n\n",
-        " \u25B6  Eating Sx (drsp_eatsx)\n",
-        "     = mean of: Overeating (12), Specific Food Cravings (13)"
-      ),
+      comp_lines,
       gp = grid::gpar(fontsize = 10, lineheight = 1.15, fontfamily = "mono"),
       just = "left", x = 0.05
     )
@@ -852,7 +908,7 @@ for (current_id in ids_to_run) {
     tv_qcounts  <- quarter_bin_counts(tv_vals_all)
     if (is_quarter_sparse(tv_qcounts)) {
       n_empty_tv  <- sum(tv_qcounts == 0)
-      n_sparse_tv <- sum(tv_qcounts < min_obs_per_quarter)
+      n_sparse_tv <- sum(tv_qcounts > 0 & tv_qcounts < sparse_quarter_cutoff)
       message(sprintf("    -> Skipping tv=%s: insufficient quarter coverage (Q1=%d, Q2=%d, Q3=%d, Q4=%d; empty=%d, sparse=%d)",
                       tv, tv_qcounts["Q1"], tv_qcounts["Q2"], tv_qcounts["Q3"], tv_qcounts["Q4"],
                       n_empty_tv, n_sparse_tv))
@@ -1372,9 +1428,9 @@ if (length(all_ids_signif) > 0) {
       "     irritability, etc.) and composites (Neg. Affect, Distress, Lability, Low Arousal).\n\n",
       " \u25B6  Physical outcomes: Somatic symptoms (breast tenderness, headache,\n",
       "     overeating, insomnia, etc.) and composites (Breast Sx, Eating Sx).\n\n",
-      " \u25B6  GAM-valid: Participants with enough data coverage across the menstrual\n",
-      "     cycle (\u22652 obs per quarter) to fit a reliable model. All percentages in this\n",
-      "     report use GAM-valid N as the denominator."
+      " \u25B6  GAM-valid: Participants with data in all 4 cycle quarters (\u22651 obs in each)\n",
+      "     and with at most one quarter having fewer than 2 observations. All percentages\n",
+      "     in this report use GAM-valid N as the denominator."
     ),
     gp = grid::gpar(fontsize = 10, lineheight = 1.15), just = "left", x = 0.05
   )
@@ -2220,8 +2276,8 @@ make_empirical_bins <- function(df_outcome, n_bins = 10) {
     )
 }
 
-# --- Empirical bins + model overlay ---
-plot_empirical_and_model <- function(df_outcome, pred_df, empirical_df,
+# --- Model probability curves (logistic predictions only) ---
+plot_empirical_and_model <- function(df_outcome, pred_df,
                                      thresholds = c(0.25, 0.36, 0.50)) {
   ggplot2::ggplot() +
     ggplot2::geom_line(data = pred_df,
@@ -2240,8 +2296,8 @@ plot_empirical_and_model <- function(df_outcome, pred_df, empirical_df,
       linetype = NULL,
       caption  = paste0(
         "The lines show logistic regression model predictions of significance probability as a function of range.\n",
-        "'Range Only' = logistic model predicting significance from cyclical range alone.\n",
-        "'Range + Obs. Count' = model also adjusting for number of observations (n held at median)."
+        "'Range Only (no covariates)' = logistic model predicting significance from cyclical range alone.\n",
+        "'Range + Obs. Count (n held at median = \u2026)' = model also adjusting for number of observations."
       )
     ) +
     ggplot2::theme_minimal(base_size = 14) +
@@ -2269,7 +2325,7 @@ analyze_one_outcome <- function(df, target_var,
 
   p_hist <- plot_range_histogram(df_outcome)
   p_prob <- plot_significance_probability(df_outcome, pred_df, thresholds = thresholds)
-  p_emp  <- plot_empirical_and_model(df_outcome, pred_df, emp_df, thresholds = thresholds)
+  p_emp  <- plot_empirical_and_model(df_outcome, pred_df, thresholds = thresholds)
 
   list(
     data                        = df_outcome,
@@ -2558,15 +2614,7 @@ if (length(all_ids_signif) > 0) {
     colhead = list(fg_params = list(hjust = 0.5, x = 0.5, fontface = "bold"))
   )
 
-  # --- Composite outcome definitions (sourced from HERA_01_data_prep.Rmd) ---
-  composite_definitions <- list(
-    drsp_NA = "rowMeans of: Depression (1), Hopelessness (2), Worthlessness (3), Anxiety (4), Mood Swings (5), Rejection Sensitivity (6), Anger/Irritability (7), Interpersonal Conflicts (8), Loss of Interest (9), Feeling Overwhelmed (16), Feeling Out of Control (17)",
-    drsp_distress = "rowMeans of: Depression (1), Hopelessness (2), Worthlessness (3), Anxiety (4), Feeling Overwhelmed (16), Feeling Out of Control (17)",
-    drsp_labilsocsx = "rowMeans of: Mood Swings (5), Rejection Sensitivity (6), Anger/Irritability (7), Interpersonal Conflicts (8)",
-    drsp_lowarousal = "rowMeans of: Loss of Interest (9), Difficulty Concentrating (10), Fatigue/Lethargy (11), Hypersomnia (14), Insomnia (15)",
-    drsp_breastpain = "rowMeans of: Breast Tenderness (18), Breast Swelling (19)",
-    drsp_eatsx = "rowMeans of: Overeating (12), Specific Food Cravings (13)"
-  )
+  # composite_definitions is computed from composite_specs in Section 3 (single source of truth).
 
   for (target_var in all_outcome_vars) {
     cat(sprintf("\n=== Processing: %s ===\n", target_var))
