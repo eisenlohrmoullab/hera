@@ -1430,6 +1430,8 @@ if (length(all_ids_signif) > 0) {
       pct_sig     = sum(sig, na.rm = TRUE) / n_gam_valid * 100,
       n_range15   = sum(is.finite(best_range) & best_range >= 1.5, na.rm = TRUE),
       pct_range15 = sum(is.finite(best_range) & best_range >= 1.5, na.rm = TRUE) / n_gam_valid * 100,
+      n_sig_or_range15   = sum(sig | (is.finite(best_range) & best_range >= 1.5), na.rm = TRUE),
+      pct_sig_or_range15 = sum(sig | (is.finite(best_range) & best_range >= 1.5), na.rm = TRUE) / n_gam_valid * 100,
       .groups     = "drop"
     ) %>%
     dplyr::left_join(
@@ -1514,7 +1516,9 @@ if (length(all_ids_signif) > 0) {
       `N Sig`       = n_sig,
       `% Sig`       = sprintf("%.1f%%", pct_sig),
       `N ≥1.5`  = n_range15,
-      `% ≥1.5`  = sprintf("%.1f%%", pct_range15)
+      `% ≥1.5`  = sprintf("%.1f%%", pct_range15),
+      `N Either`    = n_sig_or_range15,
+      `% Either`    = sprintf("%.1f%%", pct_sig_or_range15)
     )
 
   desc_theme <- gridExtra::ttheme_default(
@@ -1623,19 +1627,23 @@ if (length(all_ids_signif) > 0) {
   print(p_median_bar)
 
   # ---- PAGE 6: % Significant and % Range >= 1.5 by outcome (side-by-side bars) ----
-  # Precompute ordering by % Range >= 1.5 before pivoting so both metrics
+  # Precompute ordering by % Range >= 1.5 before pivoting so all metrics
   # share a consistent outcome order (rather than ordering by the mean of both).
   pct_data <- outcome_desc %>%
     dplyr::mutate(label = factor(label, levels = label[order(pct_range15)])) %>%
-    dplyr::select(label, pct_sig, pct_range15) %>%
-    tidyr::pivot_longer(cols = c(pct_sig, pct_range15),
+    dplyr::select(label, pct_sig, pct_range15, pct_sig_or_range15) %>%
+    tidyr::pivot_longer(cols = c(pct_sig, pct_range15, pct_sig_or_range15),
                         names_to = "metric", values_to = "pct") %>%
     dplyr::mutate(
       metric = dplyr::case_when(
-        metric == "pct_sig"     ~ "% Significant (p < .05)",
-        metric == "pct_range15" ~ "% Range \u2265 1.5",
+        metric == "pct_sig"             ~ "% Significant (p < .05)",
+        metric == "pct_range15"         ~ "% Range \u2265 1.5",
+        metric == "pct_sig_or_range15"  ~ "% Sig OR Range \u2265 1.5",
         TRUE ~ metric
       ),
+      metric = factor(metric, levels = c("% Significant (p < .05)",
+                                          "% Range \u2265 1.5",
+                                          "% Sig OR Range \u2265 1.5")),
       pct_label = sprintf("%.1f%%", pct)
     )
 
@@ -1651,9 +1659,10 @@ if (length(all_ids_signif) > 0) {
     ggplot2::coord_flip() +
     ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
     ggplot2::scale_fill_manual(values = c("% Significant (p < .05)" = "#0072B2",
-                                          "% Range \u2265 1.5" = "#D55E00")) +
+                                          "% Range \u2265 1.5" = "#D55E00",
+                                          "% Sig OR Range \u2265 1.5" = "#009E73")) +
     ggplot2::labs(
-      title = "Percentage of GAM-Valid Sample: Significant and Range \u2265 1.5 by Outcome",
+      title = "Percentage of GAM-Valid Sample: Significant, Range \u2265 1.5, or Either by Outcome",
       subtitle = paste0("Denominator: GAM-valid N = ", n_gam_valid),
       x = NULL,
       y = "Percentage",
