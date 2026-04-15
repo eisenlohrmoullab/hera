@@ -1549,7 +1549,7 @@ if (length(all_ids_signif) > 0) {
   )
 
   overall_pdf <- file.path(output_folder, paste0("Overall_Sample_Summary_", current_date, ".pdf"))
-  grDevices::pdf(overall_pdf, width = 11, height = 8.5)
+  grDevices::cairo_pdf(overall_pdf, width = 11, height = 8.5)
 
   # --- Page numbering helper ---
   # NOTE: Update total_report_pages if pages are added/removed from this report.
