@@ -685,11 +685,11 @@ for (current_id in ids_to_run) {
       valid <- !is.na(vals) & !is.na(tv_vals)
       n_obs <- sum(valid)
       has_data <- n_obs > 0
-      halves <- count_quarter_obs(tv_vals[valid])
+      qcounts <- count_quarter_obs(tv_vals[valid])
       sub_label <- paste0(
         "n = ", n_obs, " daily observations",
-        "  (Q1: ", halves["Q1"], ", Q2: ", halves["Q2"],
-        ", Q3: ", halves["Q3"], ", Q4: ", halves["Q4"], ")"
+        "  (Q1: ", qcounts["Q1"], ", Q2: ", qcounts["Q2"],
+        ", Q3: ", qcounts["Q3"], ", Q4: ", qcounts["Q4"], ")"
       )
       p <- ggplot2::ggplot(dat, ggplot2::aes(x = .data[[tv]], y = .data[[var]])) +
         ggplot2::geom_vline(xintercept = meta$menses, color = "red",
