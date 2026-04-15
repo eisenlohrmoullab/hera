@@ -2461,7 +2461,7 @@ if (length(all_ids_signif) > 0) {
       dplyr::summarise(pct_either = mean(category != "Neither", na.rm = TRUE), .groups = "drop") %>%
       dplyr::arrange(pct_either) %>%
       dplyr::pull(label)
-    oo_ordered <- as.character(oo)
+    outcome_order <- as.character(oo)
 
     # Order participants by total outcomes meeting either criterion within this domain
     io <- domain_data %>%
@@ -2473,7 +2473,7 @@ if (length(all_ids_signif) > 0) {
     domain_data <- domain_data %>%
       dplyr::mutate(
         label = as.character(label),
-        label = factor(label, levels = oo_ordered),
+        label = factor(label, levels = outcome_order),
         id = factor(id, levels = io)
       )
 
