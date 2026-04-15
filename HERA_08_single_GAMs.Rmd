@@ -16,6 +16,7 @@ output: html_document
 ```{r}
 library(dplyr)
 library(ggplot2)
+library(ggtext)
 library(mgcv)
 library(patchwork)
 library(gridExtra)
@@ -1429,7 +1430,7 @@ if (length(all_ids_signif) > 0) {
 
   # --- Page numbering helper ---
   # NOTE: Update total_report_pages if pages are added/removed from this report.
-  total_report_pages <- 10L
+  total_report_pages <- 11L
   page_counter <- 0L
   draw_page_number <- function() {
     page_counter <<- page_counter + 1L
@@ -1448,51 +1449,49 @@ if (length(all_ids_signif) > 0) {
     vjust = 0.5
   )
   cover_purpose <- grid::textGrob(
-    paste0(
-      "This report summarizes cyclical symptom patterns across the menstrual cycle\n",
-      "for all participants in your sample. Each participant\u2019s daily symptom ratings\n",
-      "were modeled using Generalized Additive Models (GAMs) to capture smooth,\n",
+    paste(strwrap(paste0(
+      "This report summarizes cyclical symptom patterns across the menstrual cycle ",
+      "for all participants in your sample. Each participant\u2019s daily symptom ratings ",
+      "were modeled using Generalized Additive Models (GAMs) to capture smooth, ",
       "non-linear patterns of change across the cycle."
-    ),
-    gp = grid::gpar(fontsize = 11, lineheight = 1.3), just = "left", x = 0.05
+    ), width = 120), collapse = "\n"),
+    gp = grid::gpar(fontsize = 11, lineheight = 1.3), just = "left", x = 0.04
   )
   cover_defs <- grid::textGrob(
     paste0(
       "KEY DEFINITIONS\n\n",
-      " \u25B6  Range: The difference between the highest and lowest predicted values from\n",
-      "     each person\u2019s GAM curve \u2014 how much a symptom fluctuates across the cycle.\n\n",
-      " \u25B6  Significant GAM (p < .05): The cyclical pattern is statistically\n",
-      "     distinguishable from a flat line \u2014 evidence symptoms truly vary across the cycle.\n",
-      "     Higher % = more people show cyclical symptoms.\n\n",
-      " \u25B6  Meets benchmark: Each person\u2019s benchmark is 30% of their personal range of DRSP\n",
-      "     scale used (max \u2212 min across all items). A GAM range meeting or exceeding this\n",
-      "     person-specific threshold is flagged as meeting the C-PASS-equivalent 30% change\n",
+      " \u25B6  Range: The difference between the highest and lowest predicted values from each person\u2019s GAM curve \u2014 how much a\n",
+      "     symptom fluctuates across the cycle.\n\n",
+      " \u25B6  Significant GAM (p < .05): The cyclical pattern is statistically distinguishable from a flat line \u2014 evidence symptoms\n",
+      "     truly vary across the cycle. Higher % = more people show cyclical symptoms.\n\n",
+      " \u25B6  Meets benchmark: Each person\u2019s benchmark is 30% of their personal range of DRSP scale used (max \u2212 min across all items).\n",
+      "     A GAM range meeting or exceeding this person-specific threshold is flagged as meeting the C-PASS-equivalent 30% change\n",
       "     criterion. This is a reference benchmark, not a validated clinical cutpoint.\n\n",
-      " \u25B6  Affective outcomes: Mood/emotional symptoms (depression, anxiety,\n",
-      "     irritability, etc.) and composites (Neg. Affect, Distress, Lability, Low Arousal).\n\n",
-      " \u25B6  Physical outcomes: Somatic symptoms (breast tenderness, headache,\n",
-      "     overeating, insomnia, etc.) and composites (Breast Sx, Eating Sx).\n\n",
-      " \u25B6  GAM-valid: Participants with data in all 4 cycle quarters (\u22651 obs in each)\n",
-      "     and with at most one quarter having fewer than 2 observations. All percentages\n",
-      "     in this report use GAM-valid N as the denominator."
+      " \u25B6  Affective outcomes: Mood/emotional symptoms (depression, anxiety, irritability, etc.) and composites (Neg. Affect, Distress,\n",
+      "     Lability, Low Arousal).\n\n",
+      " \u25B6  Physical outcomes: Somatic symptoms (breast tenderness, headache, overeating, insomnia, etc.) and composites (Breast Sx,\n",
+      "     Eating Sx).\n\n",
+      " \u25B6  GAM-valid: Participants with data in all 4 cycle quarters (\u22651 obs in each) and with at most one quarter having fewer than\n",
+      "     2 observations. All percentages in this report use GAM-valid N as the denominator."
     ),
-    gp = grid::gpar(fontsize = 9.5, lineheight = 1.1), just = "left", x = 0.05
+    gp = grid::gpar(fontsize = 9.5, lineheight = 1.1), just = "left", x = 0.04
   )
   cover_toc <- grid::textGrob(
     paste0(
       "REPORT CONTENTS\n\n",
       "  Page  1 \u2014 How to Read This Report (this page)\n",
       "  Page  2 \u2014 Quarter-Based Data Coverage by Participant\n",
-      "  Page  3 \u2014 Key Metrics Summary\n",
-      "  Page  4 \u2014 Per-Outcome Descriptives Table (color-coded)\n",
-      "  Page  5 \u2014 Distribution of Ranges by Outcome (histograms)\n",
-      "  Page  6 \u2014 Significance & Range Rates by Outcome (grouped bars)\n",
-      "  Page  7 \u2014 Per-Person Range Distributions (dot + box plot)\n",
-      "  Page  8 \u2014 Significance/Range Heatmap (Outcome \u00d7 Participant)\n",
-      "  Page  9 \u2014 Affective vs. Physical Symptom Comparison\n",
-      "  Page 10 \u2014 Symptom Co-Occurrence Matrix"
+      "  Page  3 \u2014 GAM Exclusion Reasons\n",
+      "  Page  4 \u2014 Key Metrics Summary\n",
+      "  Page  5 \u2014 Affective vs. Physical Symptom Comparison\n",
+      "  Page  6 \u2014 Per-Outcome Descriptives Table (color-coded)\n",
+      "  Page  7 \u2014 Distribution of Ranges by Outcome (histograms)\n",
+      "  Page  8 \u2014 Significance & Range Rates by Outcome (grouped bars)\n",
+      "  Page  9 \u2014 Per-Person Range Distributions (dot + box plot)\n",
+      "  Page 10 \u2014 Significance/Range Heatmap (Outcome \u00d7 Participant)\n",
+      "  Page 11 \u2014 Symptom Co-Occurrence Matrix"
     ),
-    gp = grid::gpar(fontsize = 9.5, lineheight = 1.15), just = "left", x = 0.05
+    gp = grid::gpar(fontsize = 9.5, lineheight = 1.15), just = "left", x = 0.04
   )
   gridExtra::grid.arrange(
     cover_title, cover_purpose, cover_defs, cover_toc,
@@ -1583,7 +1582,8 @@ if (length(all_ids_signif) > 0) {
         "Inclusion rule: all 4 quarters must have \u22651 observation, and at most 1 quarter may have <",
         sparse_quarter_cutoff, " observations.\n",
         "IDs sorted by total observations within each group (descending). ",
-        "Numbers in cells = observation count per quarter."
+        "Numbers in cells = observation count per quarter.\n",
+        "Red dashed line = estimated menses onset."
       ),
       x = "Cycle Quarter",
       y = NULL
@@ -1600,7 +1600,184 @@ if (length(all_ids_signif) > 0) {
       panel.grid     = ggplot2::element_blank(),
       legend.position = "right"
     )
+  # Add menses onset reference line
+  cov_meta <- axis_meta[[cov_tv]]
+  if (length(cov_meta$menses) == 1 && cov_meta$menses == 0) {
+    menses_xpos <- 2.5  # menses at 0: boundary between Q2 and Q3
+  } else {
+    menses_xpos <- 0.5  # menses at -1: left edge of Q1
+  }
+  p_cov <- p_cov +
+    ggplot2::geom_vline(xintercept = menses_xpos, color = "red",
+                        linetype = "dashed", linewidth = 0.6) +
+    ggplot2::annotate("text", x = menses_xpos, y = Inf,
+                      label = "Menses", color = "red",
+                      size = 2.5, vjust = 1.2, fontface = "bold")
   print(p_cov)
+  draw_page_number()
+
+  # ---- PAGE 3: GAM Exclusion Reasons ----
+  # For each participant, check each outcome to determine why GAMs cannot be run.
+  # Exclusion reasons: insufficient data (N<10), no variability, quarter coverage failure,
+  # insufficient knots (N<4), missing columns.
+  excl_rows <- list()
+  for (pid in all_sample_ids) {
+    datSX_excl <- df[df$id == pid, , drop = FALSE]
+
+    for (tv in time_vars) {
+      tv_vals <- datSX_excl[[tv]]
+      tv_vals <- tv_vals[!is.na(tv_vals)]
+
+      # Check quarter coverage at participant-time-variable level
+      tv_qcounts <- quarter_bin_counts(tv_vals)
+      tv_n_empty  <- sum(tv_qcounts == 0)
+      tv_n_sparse <- sum(tv_qcounts > 0 & tv_qcounts < sparse_quarter_cutoff)
+      tv_coverage_fail <- tv_n_empty > 0 || tv_n_sparse > 1
+
+      if (tv_coverage_fail) {
+        excl_rows[[length(excl_rows) + 1]] <- data.frame(
+          id = pid, time_var = tv, outcome = "(all outcomes)",
+          reason = "Quarter coverage failure",
+          detail = sprintf("Empty quarters: %d, Sparse quarters: %d", tv_n_empty, tv_n_sparse),
+          stringsAsFactors = FALSE
+        )
+        next
+      }
+
+      for (outcome_var in names(outcomes)) {
+        log_out <- paste0(outcome_var, "_Log")
+        keep_cols <- c(log_out, tv)
+        if (!all(keep_cols %in% names(datSX_excl))) {
+          excl_rows[[length(excl_rows) + 1]] <- data.frame(
+            id = pid, time_var = tv, outcome = outcome_var,
+            reason = "Missing columns",
+            detail = "Required column(s) not in data",
+            stringsAsFactors = FALSE
+          )
+          next
+        }
+        outcome_dat <- datSX_excl[complete.cases(datSX_excl[, keep_cols]), keep_cols, drop = FALSE]
+        n_obs <- nrow(outcome_dat)
+        if (n_obs < 10) {
+          excl_rows[[length(excl_rows) + 1]] <- data.frame(
+            id = pid, time_var = tv, outcome = outcome_var,
+            reason = "Insufficient data (N < 10)",
+            detail = sprintf("N = %d", n_obs),
+            stringsAsFactors = FALSE
+          )
+          next
+        }
+        out_var <- var(outcome_dat[[log_out]], na.rm = TRUE)
+        if (!is.finite(out_var) || out_var < 1e-6) {
+          excl_rows[[length(excl_rows) + 1]] <- data.frame(
+            id = pid, time_var = tv, outcome = outcome_var,
+            reason = "No variability",
+            detail = sprintf("Var(log outcome) = %.2e", ifelse(is.finite(out_var), out_var, 0)),
+            stringsAsFactors = FALSE
+          )
+          next
+        }
+        # Outcome-specific quarter coverage check
+        qcov_excl <- check_quarter_coverage(data = outcome_dat, cycle_var = tv)
+        if (!qcov_excl$passes) {
+          excl_rows[[length(excl_rows) + 1]] <- data.frame(
+            id = pid, time_var = tv, outcome = outcome_var,
+            reason = "Outcome quarter coverage failure",
+            detail = sprintf("Empty: %d, Sparse: %d", qcov_excl$n_empty, qcov_excl$n_sparse),
+            stringsAsFactors = FALSE
+          )
+          next
+        }
+      }
+    }
+  }
+
+  excl_df <- dplyr::bind_rows(excl_rows)
+
+  if (nrow(excl_df) > 0) {
+    # Summarize exclusion reasons for a concise overview
+    excl_summary <- excl_df %>%
+      dplyr::group_by(reason) %>%
+      dplyr::summarise(
+        n_exclusion_records = dplyr::n(),
+        n_unique_ids = dplyr::n_distinct(id),
+        .groups = "drop"
+      ) %>%
+      dplyr::arrange(dplyr::desc(n_exclusion_records))
+
+    # Count participants with GAM results vs excluded
+    ids_with_gams <- unique(gam_summary_all$id)
+    ids_all <- all_sample_ids
+    ids_no_gams <- setdiff(ids_all, ids_with_gams)
+
+    # Build the visualization: bar chart of exclusion reasons
+    p_excl_reasons <- ggplot2::ggplot(excl_summary,
+                                       ggplot2::aes(x = reorder(reason, n_unique_ids),
+                                                    y = n_unique_ids)) +
+      ggplot2::geom_col(fill = "#EF5350", alpha = 0.85, width = 0.6) +
+      ggplot2::geom_text(ggplot2::aes(label = n_unique_ids),
+                         hjust = -0.2, size = 4) +
+      ggplot2::coord_flip() +
+      ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
+      ggplot2::labs(
+        title = "GAM Exclusion Reasons",
+        subtitle = paste0(
+          "Each bar = unique participants affected by that exclusion reason  |  ",
+          "Total participants: ", length(ids_all),
+          "  |  With \u2265 1 GAM: ", length(ids_with_gams),
+          "  |  With 0 GAMs: ", length(ids_no_gams)
+        ),
+        x = NULL,
+        y = "Number of Unique Participants Affected"
+      ) +
+      ggplot2::theme_minimal(base_size = 12) +
+      ggplot2::theme(
+        plot.title = ggplot2::element_text(face = "bold", size = 14),
+        plot.subtitle = ggplot2::element_text(size = 9)
+      )
+
+    # Summary table
+    excl_tbl_data <- excl_summary %>%
+      dplyr::transmute(
+        `Exclusion Reason` = reason,
+        `Exclusion Records` = n_exclusion_records,
+        `Unique Participants` = n_unique_ids
+      )
+    excl_tbl_theme <- gridExtra::ttheme_default(
+      base_size = 10,
+      core    = list(fg_params = list(hjust = 0, x = 0.02)),
+      colhead = list(fg_params = list(hjust = 0, x = 0.02, fontface = "bold"))
+    )
+    excl_tbl <- gridExtra::tableGrob(excl_tbl_data, rows = NULL, theme = excl_tbl_theme)
+
+    excl_caption <- grid::textGrob(
+      paste0(
+        "Exclusion reasons are checked in order: (1) quarter coverage at participant-level, ",
+        "(2) missing columns, (3) insufficient data (N < 10), (4) no variability in log-transformed outcome, ",
+        "(5) outcome-level quarter coverage. ",
+        "A participant may appear under multiple reasons for different outcomes. ",
+        "Participant-level exclusions (e.g., quarter coverage) count once per time variable, not per outcome."
+      ),
+      gp = grid::gpar(fontsize = 8, fontface = "italic"),
+      just = "left", x = 0.02
+    )
+
+    gridExtra::grid.arrange(
+      p_excl_reasons,
+      excl_tbl,
+      excl_caption,
+      ncol = 1,
+      heights = grid::unit(c(0.50, 0.38, 0.10), "npc")
+    )
+  } else {
+    # No exclusions - show a simple message
+    grid::grid.newpage()
+    grid::grid.text(
+      paste0("GAM Exclusion Reasons\n\nNo exclusions found: all participant ",
+             "\u00d7 outcome pairs passed GAM fitting criteria."),
+      gp = grid::gpar(fontsize = 14)
+    )
+  }
   draw_page_number()
 
   # --- Classify outcomes for affective calculations ---
@@ -1616,6 +1793,24 @@ if (length(all_ids_signif) > 0) {
   # Physical composites and all physical outcomes
   phys_composites <- c("drsp_breastpain", "drsp_eatsx")
   all_physical_outcomes <- c(physical_symptoms, phys_composites)
+
+  # Domain display colors for outcome labels (consistent throughout report)
+  DOMAIN_COL_AFFECTIVE <- "#0072B2"  # blue
+  DOMAIN_COL_PHYSICAL  <- "#D55E00"  # orange/vermillion
+  # Map a vector of outcome labels to domain colors
+  label_domain_colors <- function(labels) {
+    vars <- names(outcomes)[match(labels, outcomes)]
+    vars <- ifelse(is.na(vars), labels, vars)
+    ifelse(vars %in% all_physical_outcomes, DOMAIN_COL_PHYSICAL, DOMAIN_COL_AFFECTIVE)
+  }
+
+  # Wrap a label in an HTML <span> with the appropriate domain color.
+  # Returns a character vector of HTML-colored labels for use with
+  # ggtext::element_markdown() axis text.
+  domain_color_label <- function(labels) {
+    cols <- label_domain_colors(labels)
+    paste0("<span style='color:", cols, "'>", labels, "</span>")
+  }
 
   # --- Per-ID summary: best result per outcome (one row per id × variable) ---
   # Use finite-safe aggregation to avoid Inf/-Inf when all values are NA.
@@ -1692,7 +1887,7 @@ if (length(all_ids_signif) > 0) {
       by = "variable"
     ) %>%
     dplyr::mutate(label = dplyr::coalesce(label, variable)) %>%
-    dplyr::arrange(dplyr::desc(median_range))
+    dplyr::arrange(dplyr::desc(pct_sig_or_benchmark))
 
   # Key metrics summary table
   key_metrics <- data.frame(
@@ -1702,13 +1897,13 @@ if (length(all_ids_signif) > 0) {
       "",
       "N with \u2265 1 significant GAM (any outcome)",
       "% with \u2265 1 significant GAM (any outcome)",
-      "N with \u2265 1 significant affective GAM",
-      "% with \u2265 1 significant affective GAM",
+      "N with \u2265 1 significant GAM (affective outcomes only)",
+      "% with \u2265 1 significant GAM (affective outcomes only)",
       "",
-      "N with \u2265 1 symptom/composite meeting person-specific benchmark",
-      "% with \u2265 1 symptom/composite meeting person-specific benchmark",
-      "N with \u2265 1 affective symptom/composite meeting benchmark",
-      "% with \u2265 1 affective symptom/composite meeting benchmark"
+      "N with \u2265 1 outcome meeting person-specific benchmark (any)",
+      "% with \u2265 1 outcome meeting person-specific benchmark (any)",
+      "N with \u2265 1 outcome meeting person-specific benchmark (affective only)",
+      "% with \u2265 1 outcome meeting person-specific benchmark (affective only)"
     ),
     Value = c(
       as.character(n_total_sample),
@@ -1728,9 +1923,9 @@ if (length(all_ids_signif) > 0) {
   )
 
   key_theme <- gridExtra::ttheme_default(
-    base_size = 11,
-    core    = list(fg_params = list(hjust = 0, x = 0.05)),
-    colhead = list(fg_params = list(hjust = 0, x = 0.05, fontface = "bold"))
+    base_size = 9.5,
+    core    = list(fg_params = list(hjust = 0, x = 0.02)),
+    colhead = list(fg_params = list(hjust = 0, x = 0.02, fontface = "bold"))
   )
 
   title_grob <- grid::textGrob(
@@ -1755,7 +1950,94 @@ if (length(all_ids_signif) > 0) {
   gridExtra::grid.arrange(
     title_grob, subtitle_grob, key_tbl, note_grob,
     ncol = 1,
-    heights = grid::unit(c(0.08, 0.05, 0.55, 0.04), "npc")
+    heights = grid::unit(c(0.07, 0.04, 0.60, 0.04), "npc")
+  )
+  draw_page_number()
+
+  # ---- PAGE 5: Affective vs. Physical Symptom Comparison ----
+  # Uses raw DRSP items only (excludes composites) for a clean comparison.
+
+  comparison_data <- id_outcome_summary %>%
+    dplyr::mutate(
+      domain = dplyr::case_when(
+        variable %in% affective_raw_drsp ~ "Affective",
+        variable %in% physical_symptoms  ~ "Physical",
+        TRUE ~ NA_character_
+      )
+    ) %>%
+    dplyr::filter(!is.na(domain))
+
+  # Per-domain summary (each row = one outcome x participant pair)
+  domain_summary <- comparison_data %>%
+    dplyr::group_by(domain) %>%
+    dplyr::summarise(
+      n_pairs      = dplyr::n(),
+      mean_range   = mean(best_range, na.rm = TRUE),
+      median_range = median(best_range, na.rm = TRUE),
+      pct_sig      = mean(sig, na.rm = TRUE) * 100,
+      pct_benchmark = mean(meets_benchmark, na.rm = TRUE) * 100,
+      pct_either   = mean(sig | meets_benchmark, na.rm = TRUE) * 100,
+      .groups      = "drop"
+    )
+
+  # Grouped bar chart for key percentage metrics
+  domain_long <- domain_summary %>%
+    tidyr::pivot_longer(
+      cols = c(pct_sig, pct_benchmark, pct_either),
+      names_to = "metric", values_to = "pct"
+    ) %>%
+    dplyr::mutate(
+      metric = dplyr::case_when(
+        metric == "pct_sig"       ~ "% Significant",
+        metric == "pct_benchmark" ~ "% Meets Benchmark",
+        metric == "pct_either"    ~ "% Either",
+        TRUE ~ metric
+      ),
+      metric = factor(metric, levels = c("% Significant", "% Meets Benchmark", "% Either")),
+      pct_label = sprintf("%.1f%%", pct)
+    )
+
+  p_domain <- ggplot2::ggplot(domain_long,
+                               ggplot2::aes(x = metric, y = pct, fill = domain)) +
+    ggplot2::geom_col(position = "dodge", alpha = 0.85, width = 0.6) +
+    ggplot2::geom_text(
+      ggplot2::aes(label = pct_label),
+      position = ggplot2::position_dodge(width = 0.6),
+      vjust = -0.3, size = 4
+    ) +
+    ggplot2::scale_fill_manual(
+      values = c("Affective" = DOMAIN_COL_AFFECTIVE, "Physical" = DOMAIN_COL_PHYSICAL),
+      name = NULL
+    ) +
+    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
+    ggplot2::labs(
+      title = "Affective vs. Physical Symptom Cyclicity",
+      subtitle = "Comparing cyclicity rates across individual DRSP items (excl. composites)",
+      x = NULL,
+      y = "Percentage"
+    ) +
+    ggplot2::theme_minimal(base_size = 12) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold", size = 14),
+      legend.position = "bottom"
+    )
+
+  # Caption grob for the layout
+  domain_caption <- grid::textGrob(
+    paste0(
+      "Affective = individual mood/emotional DRSP items (excl. composites). ",
+      "Physical = individual somatic DRSP items (excl. composites).\n",
+      "% of outcome \u00d7 participant pairs meeting each criterion. ",
+      "Benchmark = person-specific 30% of DRSP scale range (C-PASS-equivalent change benchmark)."
+    ),
+    gp = grid::gpar(fontsize = 9, fontface = "italic"),
+    just = "left", x = 0.02
+  )
+  gridExtra::grid.arrange(
+    p_domain,
+    domain_caption,
+    ncol = 1,
+    heights = grid::unit(c(0.88, 0.12), "npc")
   )
   draw_page_number()
 
@@ -1790,6 +2072,9 @@ if (length(all_ids_signif) > 0) {
   n_desc_rows <- nrow(display_desc)
   n_desc_cols <- ncol(display_desc)
   fill_matrix <- matrix("white", nrow = n_desc_rows, ncol = n_desc_cols)
+  # Domain color-coding for Outcome column text
+  text_color_matrix <- matrix("black", nrow = n_desc_rows, ncol = n_desc_cols)
+  text_color_matrix[, 1] <- label_domain_colors(as.character(display_desc$Outcome))
   # Median Range (col 3): orange shading for high values
   # Use only GAM-valid IDs for the median benchmark
   gam_valid_benchmarks <- id_benchmark_map[names(id_benchmark_map) %in% as.character(all_ids)]
@@ -1812,14 +2097,14 @@ if (length(all_ids_signif) > 0) {
 
   desc_theme <- gridExtra::ttheme_default(
     base_size = 7,
-    core    = list(fg_params = list(hjust = 0, x = 0.02),
+    core    = list(fg_params = list(hjust = 0, x = 0.02, col = text_color_matrix),
                    bg_params = list(fill = fill_matrix)),
     colhead = list(fg_params = list(hjust = 0.5, x = 0.5, fontface = "bold")),
     padding = grid::unit(c(2, 1.5), "mm")
   )
 
   title2 <- grid::textGrob(
-    "Per-Outcome Range Descriptives (sorted by median range)",
+    "Per-Outcome Range Descriptives (sorted by % Either descending)",
     gp = grid::gpar(fontsize = 14, fontface = "bold")
   )
   note2 <- grid::textGrob(
@@ -1834,7 +2119,8 @@ if (length(all_ids_signif) > 0) {
       "% Sig = % with statistically significant cyclicity (p < .05); ",
       "% \u2265BM = % with range meeting person-specific 30% change benchmark;\n",
       "% Either = % meeting either criterion. BM = C-PASS-equivalent change benchmark (30% of person\u2019s scale range).\n",
-      "Shading: blue = high % Sig; orange = high Median Range or % \u2265BM; green = high % Either."
+      "Shading: blue = high % Sig; orange = high Median Range or % \u2265BM; green = high % Either.\n",
+      "Outcome label color: blue = affective/emotional; orange = physical/somatic."
     ),
     gp = grid::gpar(fontsize = 7, fontface = "italic")
   )
@@ -1889,8 +2175,13 @@ if (length(all_ids_signif) > 0) {
   # Precompute ordering by % Sig OR meets benchmark (ascending, so highest values appear at the
   # top of the coord_flip-ed plot) before pivoting so all metrics share a consistent outcome order.
   pct_data <- outcome_desc %>%
-    dplyr::mutate(label = factor(label, levels = label[order(pct_sig_or_benchmark)])) %>%
-    dplyr::select(label, pct_sig, pct_benchmark, pct_sig_or_benchmark) %>%
+    dplyr::mutate(
+      # Create HTML-colored labels for domain color-coding via ggtext
+      color_label = domain_color_label(as.character(label)),
+      color_label = factor(color_label,
+                           levels = color_label[order(pct_sig_or_benchmark)])
+    ) %>%
+    dplyr::select(color_label, pct_sig, pct_benchmark, pct_sig_or_benchmark) %>%
     tidyr::pivot_longer(cols = c(pct_sig, pct_benchmark, pct_sig_or_benchmark),
                         names_to = "metric", values_to = "pct") %>%
     dplyr::mutate(
@@ -1907,7 +2198,7 @@ if (length(all_ids_signif) > 0) {
     )
 
   p_pct_bars <- ggplot2::ggplot(pct_data,
-                                 ggplot2::aes(x = label, y = pct, fill = metric)) +
+                                 ggplot2::aes(x = color_label, y = pct, fill = metric)) +
     ggplot2::geom_col(alpha = 0.85, width = 0.7) +
     ggplot2::geom_text(
       ggplot2::aes(label = pct_label),
@@ -1936,15 +2227,19 @@ if (length(all_ids_signif) > 0) {
       plot.caption = ggplot2::element_text(size = 8, hjust = 0, face = "italic"),
       legend.position = "none",
       strip.text = ggplot2::element_text(face = "bold", size = 9),
-      panel.spacing = grid::unit(1, "lines")
+      panel.spacing = grid::unit(1, "lines"),
+      axis.text.y = ggtext::element_markdown()
     )
   print(p_pct_bars)
   draw_page_number()
 
   # ---- PAGE 5 (was 8): Dot/Strip Plot with Box-and-Whisker ----
+  # Create HTML-colored labels for domain color-coding via ggtext
+  range_plot_data <- range_plot_data %>%
+    dplyr::mutate(color_label = domain_color_label(as.character(label)))
   p_dot_strip <- ggplot2::ggplot(
     range_plot_data,
-    ggplot2::aes(x = reorder(label, best_range, FUN = median, na.rm = TRUE),
+    ggplot2::aes(x = reorder(color_label, best_range, FUN = median, na.rm = TRUE),
                  y = best_range)
   ) +
     ggplot2::geom_boxplot(width = 0.5, fill = "#E8E8E8", outlier.shape = NA, alpha = 0.7) +
@@ -1976,7 +2271,8 @@ if (length(all_ids_signif) > 0) {
     ggplot2::theme(
       plot.title = ggplot2::element_text(face = "bold", size = 13),
       plot.caption = ggplot2::element_text(size = 8, hjust = 0, face = "italic"),
-      legend.position = "bottom"
+      legend.position = "bottom",
+      axis.text.y = ggtext::element_markdown()
     )
   print(p_dot_strip)
   draw_page_number()
@@ -2027,9 +2323,13 @@ if (length(all_ids_signif) > 0) {
     dplyr::arrange(n_either) %>%
     dplyr::pull(id)
 
+  # Replace labels with HTML-colored versions for domain color-coding
+  outcome_order_colored <- domain_color_label(as.character(outcome_order))
+
   heatmap_data <- heatmap_data %>%
     dplyr::mutate(
-      label = factor(label, levels = outcome_order),
+      label = domain_color_label(as.character(label)),
+      label = factor(label, levels = outcome_order_colored),
       id = factor(id, levels = id_order)
     )
 
@@ -2063,102 +2363,19 @@ if (length(all_ids_signif) > 0) {
       axis.text.x = ggplot2::element_blank(),
       axis.ticks.x = ggplot2::element_blank(),
       legend.position = "bottom",
-      panel.grid = ggplot2::element_blank()
+      panel.grid = ggplot2::element_blank(),
+      axis.text.y = ggtext::element_markdown()
     )
   print(p_heatmap)
-  draw_page_number()
-
-  # ---- PAGE 7 (was 10): Affective vs. Physical Symptom Comparison ----
-  # Uses raw DRSP items only (excludes composites) for a clean comparison.
-
-  comparison_data <- id_outcome_summary %>%
-    dplyr::mutate(
-      domain = dplyr::case_when(
-        variable %in% affective_raw_drsp ~ "Affective",
-        variable %in% physical_symptoms  ~ "Physical",
-        TRUE ~ NA_character_
-      )
-    ) %>%
-    dplyr::filter(!is.na(domain))
-
-  # Per-domain summary (each row = one outcome x participant pair)
-  domain_summary <- comparison_data %>%
-    dplyr::group_by(domain) %>%
-    dplyr::summarise(
-      n_pairs      = dplyr::n(),
-      mean_range   = mean(best_range, na.rm = TRUE),
-      median_range = median(best_range, na.rm = TRUE),
-      pct_sig      = mean(sig, na.rm = TRUE) * 100,
-      pct_benchmark = mean(meets_benchmark, na.rm = TRUE) * 100,
-      pct_either   = mean(sig | meets_benchmark, na.rm = TRUE) * 100,
-      .groups      = "drop"
-    )
-
-  # Grouped bar chart for key percentage metrics
-  domain_long <- domain_summary %>%
-    tidyr::pivot_longer(
-      cols = c(pct_sig, pct_benchmark, pct_either),
-      names_to = "metric", values_to = "pct"
-    ) %>%
-    dplyr::mutate(
-      metric = dplyr::case_when(
-        metric == "pct_sig"       ~ "% Significant",
-        metric == "pct_benchmark" ~ "% Meets Benchmark",
-        metric == "pct_either"    ~ "% Either",
-        TRUE ~ metric
-      ),
-      metric = factor(metric, levels = c("% Significant", "% Meets Benchmark", "% Either")),
-      pct_label = sprintf("%.1f%%", pct)
-    )
-
-  p_domain <- ggplot2::ggplot(domain_long,
-                               ggplot2::aes(x = metric, y = pct, fill = domain)) +
-    ggplot2::geom_col(position = "dodge", alpha = 0.85, width = 0.6) +
-    ggplot2::geom_text(
-      ggplot2::aes(label = pct_label),
-      position = ggplot2::position_dodge(width = 0.6),
-      vjust = -0.3, size = 4
-    ) +
-    ggplot2::scale_fill_manual(
-      values = c("Affective" = "#0072B2", "Physical" = "#D55E00"),
-      name = NULL
-    ) +
-    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
-    ggplot2::labs(
-      title = "Affective vs. Physical Symptom Cyclicity",
-      subtitle = "Comparing cyclicity rates across individual DRSP items (excl. composites)",
-      x = NULL,
-      y = "Percentage"
-    ) +
-    ggplot2::theme_minimal(base_size = 12) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 14),
-      legend.position = "bottom"
-    )
-
-  # Caption grob for the layout
-  domain_caption <- grid::textGrob(
-    paste0(
-      "Affective = individual mood/emotional DRSP items (excl. composites). ",
-      "Physical = individual somatic DRSP items (excl. composites).\n",
-      "% of outcome \u00d7 participant pairs meeting each criterion. ",
-      "Benchmark = person-specific 30% of DRSP scale range (C-PASS-equivalent change benchmark)."
-    ),
-    gp = grid::gpar(fontsize = 9, fontface = "italic"),
-    just = "left", x = 0.02
-  )
-  gridExtra::grid.arrange(
-    p_domain,
-    domain_caption,
-    ncol = 1,
-    heights = grid::unit(c(0.88, 0.12), "npc")
-  )
   draw_page_number()
 
   # ---- PAGE 8 (was 11): Symptom Co-Occurrence Matrix ----
   # For each pair of outcomes, what % of GAM-valid participants meet
   # "sig OR meets benchmark" in both outcomes?
+  # Exclude composites — show only individual DRSP items
+  composite_vars <- names(composite_specs)
   cooccur_data <- id_outcome_summary %>%
+    dplyr::filter(!variable %in% composite_vars) %>%
     dplyr::mutate(meets = sig | meets_benchmark) %>%
     dplyr::left_join(
       tibble::enframe(outcomes, name = "variable", value = "label"),
@@ -2190,10 +2407,15 @@ if (length(all_ids_signif) > 0) {
     dplyr::arrange(pct) %>%
     dplyr::pull(label)
 
+  # Create HTML-colored versions of outcome labels for domain color-coding
+  outcome_pct_order_colored <- domain_color_label(as.character(outcome_pct_order))
+
   cooccur_df <- cooccur_df %>%
     dplyr::mutate(
-      Outcome1 = factor(Outcome1, levels = outcome_pct_order),
-      Outcome2 = factor(Outcome2, levels = rev(outcome_pct_order))
+      Outcome1 = domain_color_label(as.character(Outcome1)),
+      Outcome2 = domain_color_label(as.character(Outcome2)),
+      Outcome1 = factor(Outcome1, levels = outcome_pct_order_colored),
+      Outcome2 = factor(Outcome2, levels = rev(outcome_pct_order_colored))
     )
 
   p_cooccur <- ggplot2::ggplot(cooccur_df,
@@ -2209,8 +2431,8 @@ if (length(all_ids_signif) > 0) {
       name = "% of Sample"
     ) +
     ggplot2::labs(
-      title = "Symptom Co-Occurrence: % of Sample Meeting Criterion for Both Outcomes",
-      subtitle = "Criterion: significant (p < .05) OR meets person-specific benchmark",
+      title = "Symptom Co-Occurrence: % of Sample Meeting Criterion for Both Symptoms",
+      subtitle = "Individual DRSP items only (excl. composites) | Criterion: significant (p < .05) OR meets person-specific benchmark",
       caption = paste0(
         "Each cell shows the % of GAM-valid participants (N = ", n_gam_valid,
         ") who meet the criterion for BOTH outcomes.\n",
@@ -2223,8 +2445,8 @@ if (length(all_ids_signif) > 0) {
     ggplot2::theme(
       plot.title = ggplot2::element_text(face = "bold", size = 12),
       plot.caption = ggplot2::element_text(size = 8, hjust = 0, face = "italic"),
-      axis.text.x = ggplot2::element_text(angle = 45, hjust = 1, size = 6),
-      axis.text.y = ggplot2::element_text(size = 6),
+      axis.text.x = ggtext::element_markdown(angle = 45, hjust = 1, size = 6),
+      axis.text.y = ggtext::element_markdown(size = 6),
       panel.grid = ggplot2::element_blank(),
       legend.position = "right"
     )
@@ -2590,7 +2812,8 @@ plot_overlay_gam_twogroup <- function(fit_results_list, group1_ids, group2_ids,
                                       group1_label = "Group 1",
                                       group2_label = "Group 2",
                                       group1_color = "#0072B2",
-                                      group2_color = "#999999") {
+                                      group2_color = "#999999",
+                                      n_total = NULL) {
   meta <- axis_meta_list[[tv]]
 
   build_group_data <- function(ids, grp) {
@@ -2612,6 +2835,15 @@ plot_overlay_gam_twogroup <- function(fit_results_list, group1_ids, group2_ids,
 
   n1 <- length(unique(overlay_data$id[overlay_data$group == "group1"]))
   n2 <- length(unique(overlay_data$id[overlay_data$group == "group2"]))
+
+  # Build legend labels with optional percentage
+  if (!is.null(n_total) && n_total > 0) {
+    lbl1 <- paste0(group1_label, " (N=", n1, ", ", sprintf("%.1f", n1/n_total*100), "%)")
+    lbl2 <- paste0(group2_label, " (N=", n2, ", ", sprintf("%.1f", n2/n_total*100), "%)")
+  } else {
+    lbl1 <- paste0(group1_label, " (N=", n1, ")")
+    lbl2 <- paste0(group2_label, " (N=", n2, ")")
+  }
 
   # Compute y-axis limits: default 1–4.5, expand to 5 or 6 if predictions exceed 4.5
   finite_ests <- overlay_data$estimate[is.finite(overlay_data$estimate)]
@@ -2639,8 +2871,7 @@ plot_overlay_gam_twogroup <- function(fit_results_list, group1_ids, group2_ids,
     ggplot2::geom_line(alpha = 0.5, linewidth = 0.6) +
     ggplot2::scale_color_manual(
       values = c(group1 = group1_color, group2 = group2_color),
-      labels = c(group1 = paste0(group1_label, " (N=", n1, ")"),
-                 group2 = paste0(group2_label, " (N=", n2, ")"))
+      labels = c(group1 = lbl1, group2 = lbl2)
     ) +
     ggplot2::scale_x_continuous(
       limits = c(-1, 1),
@@ -3001,7 +3232,8 @@ if (length(all_ids_signif) > 0) {
         group1_label     = "Sig. or Meets Benchmark",
         group2_label     = "Neither",
         group1_color     = "#CC79A7",
-        group2_color     = "#009E73"
+        group2_color     = "#009E73",
+        n_total          = length(qualifying_ids)
       )
       if (!is.null(p_twocol_range)) print(p_twocol_range)
     }
