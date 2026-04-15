@@ -1981,7 +1981,7 @@ if (length(all_ids_signif) > 0) {
     dplyr::pull(id)
   pct_affective_either <- length(ids_affective_either) / n_gam_valid * 100
 
-  # ---- PAGE 1: Overall Descriptive Summary ----
+  # ---- PAGE 4: Key Metrics Summary ----
   # Per-outcome descriptive statistics across all participants
   # Percentages use n_gam_valid (participants with valid GAM data) as denominator
   outcome_desc <- id_outcome_summary %>%
@@ -2168,7 +2168,7 @@ if (length(all_ids_signif) > 0) {
   )
   draw_page_number()
 
-  # ---- PAGE 3 (p.3): Per-Outcome Range Descriptives Table (color-coded) ----
+  # ---- PAGE 6: Per-Outcome Range Descriptives Table (color-coded) ----
   display_desc <- outcome_desc %>%
     dplyr::transmute(
       Outcome       = label,
@@ -2259,7 +2259,7 @@ if (length(all_ids_signif) > 0) {
   )
   draw_page_number()
 
-  # ---- PAGE 3: Distribution of Ranges (histogram faceted by outcome) ----
+  # ---- PAGE 7: Distribution of Ranges (histogram faceted by outcome) ----
   # Show range distributions for all outcomes, faceted
   range_plot_data <- id_outcome_summary %>%
     dplyr::left_join(
@@ -2298,7 +2298,7 @@ if (length(all_ids_signif) > 0) {
   print(p_range_dist)
   draw_page_number()
 
-  # ---- PAGE 4 (was 6): % Significant and % meeting benchmark by outcome (faceted bars) ----
+  # ---- PAGE 8: % Significant and % meeting benchmark by outcome (faceted bars) ----
   # Precompute ordering by % Sig OR meets benchmark (ascending, so highest values appear at the
   # top of the coord_flip-ed plot) before pivoting so all metrics share a consistent outcome order.
   pct_data <- outcome_desc %>%
@@ -2360,7 +2360,7 @@ if (length(all_ids_signif) > 0) {
   print(p_pct_bars)
   draw_page_number()
 
-  # ---- PAGE 5 (was 8): Dot/Strip Plot with Box-and-Whisker ----
+  # ---- PAGE 9: Dot/Strip Plot with Box-and-Whisker ----
   # Create HTML-colored labels for domain color-coding via ggtext
   range_plot_data <- range_plot_data %>%
     dplyr::mutate(color_label = domain_color_label(as.character(label)))
@@ -2404,7 +2404,7 @@ if (length(all_ids_signif) > 0) {
   print(p_dot_strip)
   draw_page_number()
 
-  # ---- PAGES 6-7: Significance/Range Heatmaps (split by domain) ----
+  # ---- PAGES 10-11: Significance/Range Heatmaps (split by domain) ----
   # Prepare common heatmap data with domain classification
   heatmap_data <- id_outcome_summary %>%
     dplyr::left_join(
@@ -2490,7 +2490,7 @@ if (length(all_ids_signif) > 0) {
       )
   }
 
-  # PAGE 6: Affective outcomes heatmap
+  # PAGE 10: Affective outcomes heatmap
   p_heatmap_aff <- build_domain_heatmap(
     dplyr::filter(heatmap_data, domain == "Affective"), "Affective"
   )
@@ -2499,7 +2499,7 @@ if (length(all_ids_signif) > 0) {
     draw_page_number()
   }
 
-  # PAGE 7: Physical outcomes heatmap
+  # PAGE 11: Physical outcomes heatmap
   p_heatmap_phys <- build_domain_heatmap(
     dplyr::filter(heatmap_data, domain == "Physical"), "Physical"
   )
@@ -2508,7 +2508,7 @@ if (length(all_ids_signif) > 0) {
     draw_page_number()
   }
 
-  # ---- PAGE 9 (was 11): Symptom Co-Occurrence Matrix ----
+  # ---- PAGE 12: Symptom Co-Occurrence Matrix ----
   # For each pair of outcomes, what % of GAM-valid participants meet
   # "sig OR meets benchmark" in both outcomes?
   # Exclude composites — show only individual DRSP items
@@ -2636,14 +2636,17 @@ get_outcome_df <- function(df, target_var) {
     dplyr::filter(variable == target_var) %>%
     dplyr::group_by(id, variable) %>%
     dplyr::summarise(
-      p.value         = suppressWarnings(min(p.value, na.rm = TRUE)),
-      range           = suppressWarnings(max(range,   na.rm = TRUE)),
-      n               = suppressWarnings(max(n,       na.rm = TRUE)),
-      significant_num = ifelse(any(significant_num == 1, na.rm = TRUE), 1, 0),
+      # Compute best-row index from the ORIGINAL per-row p.value vector
+      # (must precede p.value aggregation which overwrites it with a scalar).
       .best_idx       = {idx <- which.min(p.value); if (length(idx) == 0) NA_integer_ else idx[1]},
       peak_time       = if (!is.na(.best_idx)) peak_time[.best_idx] else NA_real_,
       trough_time     = if (!is.na(.best_idx)) trough_time[.best_idx] else NA_real_,
       best_time_var   = if (!is.na(.best_idx)) time_var[.best_idx] else NA_character_,
+      # Scalar aggregations (overwrite original column names)
+      p.value         = suppressWarnings(min(p.value, na.rm = TRUE)),
+      range           = suppressWarnings(max(range,   na.rm = TRUE)),
+      n               = suppressWarnings(max(n,       na.rm = TRUE)),
+      significant_num = ifelse(any(significant_num == 1, na.rm = TRUE), 1, 0),
       id_benchmark    = dplyr::first(id_benchmark),
       .groups         = "drop"
     ) %>%
