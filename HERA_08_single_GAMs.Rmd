@@ -62,11 +62,11 @@ table_cols_per_page <- 6
 plots_per_col <- 3
 plots_per_row <- 3
 
-# --- Minimum observations per cycle-half to run GAMs ---
-# Per-outcome gate: after filtering to complete cases (outcome + time var),
-# if either cycle half has fewer than this many observations,
-# the GAM is skipped for that specific outcome × time-var combination.
-min_obs_per_half <- 3
+# --- Minimum observations per cycle-quarter to run GAMs ---
+# The cycle is divided into 4 equal quarters over [-1, 1].
+# If any quarter has fewer than this many observations, the GAM is skipped
+# for that specific outcome × time-var combination.
+min_obs_per_quarter <- 2
 ```
 
 # Section 2: Create output folders & check time vars
@@ -301,118 +301,59 @@ axis_meta <- lapply(time_vars, function(tv) {
 })
 names(axis_meta) <- time_vars
 
-# --- Assess cycle coverage for a given time variable ---
-# Divides the cycle variable range into 6 fixed bins and counts observations per bin.
-# Returns a list with total_n, bins_present, bins_with_2plus, empty_bins, and bin_counts.
-assess_cycle_coverage <- function(data, cycle_var) {
-  n_bins <- 6L
-  vals <- data[[cycle_var]]
+# --- Shared helper: count observations in each cycle quarter ---
+# Accepts a numeric vector of cycle-time values (NAs allowed; they are dropped).
+# Returns a named integer vector of length 4 (Q1–Q4) with counts per quarter.
+# Uses left-closed intervals: [-1,-0.5), [-0.5,0), [0,0.5), [0.5,1].
+quarter_bin_counts <- function(vals) {
   vals <- vals[!is.na(vals)]
-
-  # Use fixed breakpoints across the full theoretical cycle range [-1, 1]
-  # so that bins are comparable across participants and outcomes
-  cycle_bin <- cut(vals,
-                   breaks = seq(-1, 1, length.out = n_bins + 1),
-                   labels = FALSE,
-                   include.lowest = TRUE)
-
-  bin_counts <- as.data.frame(table(cycle_bin = factor(cycle_bin, levels = seq_len(n_bins))),
-                              stringsAsFactors = FALSE)
-  names(bin_counts) <- c("cycle_bin", "n_per_bin")
-  bin_counts$n_per_bin <- as.integer(bin_counts$n_per_bin)
-
-  total_n <- length(vals)
-  bins_present <- sum(bin_counts$n_per_bin > 0)
-  bins_with_2plus <- sum(bin_counts$n_per_bin >= 2)
-  empty_bins <- n_bins - bins_present
-
-  list(
-    total_n = total_n,
-    bins_present = bins_present,
-    bins_with_2plus = bins_with_2plus,
-    empty_bins = empty_bins,
-    bin_counts = bin_counts
-  )
+  qbin <- cut(vals,
+              breaks = seq(-1, 1, length.out = 5),
+              labels = paste0("Q", 1:4),
+              include.lowest = TRUE, right = FALSE)
+  counts <- as.integer(table(factor(qbin, levels = paste0("Q", 1:4))))
+  setNames(counts, paste0("Q", 1:4))
 }
 
-# --- Decide GAM specification based on cycle coverage ---
-# Returns a list with run_gam (logical), k (integer or NA), and mode (character).
-decide_gam_spec <- function(coverage) {
-  # Good coverage → full model
-  if (
-    coverage$total_n >= 15 &&
-    coverage$bins_present >= 5 &&
-    coverage$bins_with_2plus >= 4 &&
-    coverage$empty_bins <= 1
-  ) {
-    return(list(
-      run_gam = TRUE,
-      k = 6L,
-      mode = "full_cycle"
-    ))
-  }
-
-  # Moderate coverage → reduced complexity
-  if (
-    coverage$total_n >= 12 &&
-    coverage$bins_present >= 4
-  ) {
-    return(list(
-      run_gam = TRUE,
-      k = 4L,
-      mode = "reduced_k"
-    ))
-  }
-
-  # Poor coverage → do not run GAM
+# --- Check cycle-quarter coverage for a given time variable ---
+# Wrapper around quarter_bin_counts() that extracts the cycle column from a
+# data frame and returns a list with quarter_counts, min_per_quarter, and
+# passes (TRUE when every quarter has >= min_obs_per_quarter observations).
+check_quarter_coverage <- function(data, cycle_var) {
+  counts <- quarter_bin_counts(data[[cycle_var]])
   list(
-    run_gam = FALSE,
-    k = NA_integer_,
-    mode = "insufficient_coverage"
+    quarter_counts  = counts,
+    min_per_quarter = min(counts),
+    passes          = all(counts >= min_obs_per_quarter)
   )
 }
 
 # --- Fit + predict one outcome for one time var (bam + predict) ---
-fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
+fit_outcome <- function(dat, outcome_var, tv, outcomes_map) {
   log_out <- paste0(outcome_var, "_Log")
   keep <- c(log_out, tv)
   if (!all(keep %in% names(dat))) return(NULL)
   dat <- dat[complete.cases(dat[, keep]), keep, drop = FALSE]
   if (nrow(dat) < 10 || var(dat[[log_out]], na.rm = TRUE) < 1e-6) return(NULL)
 
-  # Count observations in each positional half for adequacy flagging.
-  # These are orientation-neutral: n_neg = values in [-1, 0), n_nonneg = values in [0, 1].
-  # For menses-centered vars (cyclic_time, cyclic_time_impute): neg = luteal, nonneg = follicular.
-  # For ov-centered vars      (cyclic_time_ov, cyclic_time_imp_ov): neg = follicular, nonneg = luteal.
-  n_neg    <- sum(dat[[tv]] <  0, na.rm = TRUE)
-  n_nonneg <- sum(dat[[tv]] >= 0, na.rm = TRUE)
+  # --- Quarter-based coverage check ---
+  qcov <- check_quarter_coverage(data = dat, cycle_var = tv)
 
-  # Skip if either cycle half has fewer than min_obs_per_half observations.
-  if (min(n_neg, n_nonneg) < min_obs_per_half) {
+  message(glue::glue(
+    "[{outcome_var}] N={nrow(dat)}, Quarter counts: ",
+    "{paste(names(qcov$quarter_counts), qcov$quarter_counts, sep='=', collapse=', ')}, ",
+    "Min per quarter: {qcov$min_per_quarter}, Passes: {qcov$passes}"
+  ))
+
+  if (!qcov$passes) {
     message(glue::glue(
-      "Skipping GAM for {outcome_var}: only {min(n_neg, n_nonneg)} obs in one ",
-      "cycle half (min_obs_per_half={min_obs_per_half})"
+      "Skipping GAM for {outcome_var}: quarter coverage requirement not met ",
+      "(need >={min_obs_per_quarter} per quarter, min={qcov$min_per_quarter})"
     ))
     return(NULL)
   }
 
-  # --- Cycle coverage check & adaptive k ---
-  coverage <- assess_cycle_coverage(data = dat, cycle_var = tv)
-  decision <- decide_gam_spec(coverage)
-
-  message(glue::glue(
-    "[{outcome_var}] Total N: {coverage$total_n}, Bins present: {coverage$bins_present}, ",
-    "Bins with >=2: {coverage$bins_with_2plus}, Empty bins: {coverage$empty_bins}, ",
-    "Mode: {decision$mode}"
-  ))
-
-  if (!decision$run_gam) {
-    message(glue::glue("Skipping GAM for {outcome_var}: insufficient cycle coverage"))
-    return(NULL)
-  }
-
-  # Use the coverage-based k, but still respect k_max and data-size constraints
-  k <- min(decision$k, k_max, nrow(dat) - 1L)
+  k <- min(6L, nrow(dat) - 1L)
   if (k < 3L) return(NULL)
 
   fml <- as.formula(paste0(log_out, " ~ s(", tv, ", bs = 'cc', k = ", k, ")"))
@@ -439,6 +380,10 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
   peak_time   <- pg[[tv]][which.max(est)]
   trough_time <- pg[[tv]][which.min(est)]
 
+  # Count observations in each positional half for reporting.
+  n_neg    <- sum(dat[[tv]] <  0, na.rm = TRUE)
+  n_nonneg <- sum(dat[[tv]] >= 0, na.rm = TRUE)
+
   pred <- cbind(pg, estimate = est, conf.low = conf.low, conf.high = conf.high)
   pred$outcome_var   <- outcome_var
   pred$outcome_label <- outcomes_map[[outcome_var]]
@@ -462,7 +407,7 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map, k_max = 10L) {
       range = diff(range(est, na.rm = TRUE)),
       peak_time = peak_time,
       trough_time = trough_time,
-      coverage_mode = decision$mode
+      coverage_mode = "quarter_check"
     )
   )
 }
@@ -504,6 +449,16 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
     # data mode: leave y_limits = NULL → ggplot auto-scales
   }
 
+  # Prepare raw data overlay using the same inclusion rule as fit_outcome:
+  # require non-missing log-transformed outcome and time var, then plot on original scale.
+  raw_pts <- NULL
+  log_out <- paste0(outcome_var, "_Log")
+  if (!is.null(raw_data) && outcome_var %in% names(raw_data) &&
+      log_out %in% names(raw_data) && tv %in% names(raw_data)) {
+    raw_pts <- raw_data[complete.cases(raw_data[, c(log_out, tv)]), c(outcome_var, tv), drop = FALSE]
+    if (nrow(raw_pts) == 0) raw_pts <- NULL
+  }
+
   # Dynamic expansion for all outcomes: expand y_max to 5 or 6 if predictions or raw points exceed
   # default 4.5.  Only expand when y_limits were computed internally (not passed by a shared-y caller).
   if (!y_limits_from_caller && !is.null(y_limits)) {
@@ -543,16 +498,6 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
     sprintf("%s%s Range = %.2f%s", cpass_label, stars, rng, edf_str)
   }
   meta  <- axis_meta_list[[tv]]
-
-  # Prepare raw data overlay using the same inclusion rule as fit_outcome:
-  # require non-missing log-transformed outcome and time var, then plot on original scale.
-  raw_pts <- NULL
-  log_out <- paste0(outcome_var, "_Log")
-  if (!is.null(raw_data) && outcome_var %in% names(raw_data) &&
-      log_out %in% names(raw_data) && tv %in% names(raw_data)) {
-    raw_pts <- raw_data[complete.cases(raw_data[, c(log_out, tv)]), c(outcome_var, tv), drop = FALSE]
-    if (nrow(raw_pts) == 0) raw_pts <- NULL
-  }
 
   p <- ggplot2::ggplot(plot_df, ggplot2::aes(x = .data[[tv]], y = estimate))
 
@@ -715,25 +660,9 @@ for (current_id in ids_to_run) {
     tv0 <- time_vars[1]
     meta0 <- axis_meta[[tv0]]
 
-    # Shared helper: count observations in each cycle-phase half and label
-    # them as luteal vs follicular, accounting for time-variable orientation.
-    # Uses the same non-overlapping split as fit_outcome(): tv < 0 vs tv >= 0.
-    #   non-"ov" vars: -1=Ov, 0=Menses, 1=Ov  → tv<0 is luteal, tv>=0 is follicular
-    #   "ov" vars:     -1=Men, 0=Ov,    1=Men  → tv<0 is follicular, tv>=0 is luteal
-    count_phase_halves <- function(tv_vals, meta) {
-      n_lo <- sum(tv_vals < 0)
-      n_hi <- sum(tv_vals >= 0)
-      is_ov_centered <- identical(meta$ov, 0)
-      if (is_ov_centered) {
-        list(n_luteal = n_hi, n_follicular = n_lo)
-      } else {
-        list(n_luteal = n_lo, n_follicular = n_hi)
-      }
-    }
-
-    # Returns TRUE when either half of the cycle has fewer than min_obs_per_half observations.
-    is_half_sparse <- function(halves) {
-      halves$n_luteal < min_obs_per_half || halves$n_follicular < min_obs_per_half
+    # Returns TRUE when any quarter has fewer than min_obs_per_quarter observations.
+    is_quarter_sparse <- function(qcounts) {
+      any(qcounts < min_obs_per_quarter)
     }
 
     make_raw_panel <- function(dat, tv, meta, var, y_lab, color) {
@@ -750,10 +679,11 @@ for (current_id in ids_to_run) {
       valid <- !is.na(vals) & !is.na(tv_vals)
       n_obs <- sum(valid)
       has_data <- n_obs > 0
-      halves <- count_phase_halves(tv_vals[valid], meta)
+      qcounts <- quarter_bin_counts(tv_vals[valid])
       sub_label <- paste0(
         "n = ", n_obs, " daily observations",
-        "  (luteal: ", halves$n_luteal, ", follicular: ", halves$n_follicular, ")"
+        "  (Q1: ", qcounts["Q1"], ", Q2: ", qcounts["Q2"],
+        ", Q3: ", qcounts["Q3"], ", Q4: ", qcounts["Q4"], ")"
       )
       p <- ggplot2::ggplot(dat, ggplot2::aes(x = .data[[tv]], y = .data[[var]])) +
         ggplot2::geom_vline(xintercept = meta$menses, color = "red",
@@ -782,16 +712,16 @@ for (current_id in ids_to_run) {
 
     tv0_vals <- datSX_id[[tv0]]
     tv0_vals <- tv0_vals[!is.na(tv0_vals)]
-    tv0_halves <- count_phase_halves(tv0_vals, meta0)
-    tv0_sparse <- is_half_sparse(tv0_halves)
+    tv0_qcounts <- quarter_bin_counts(tv0_vals)
+    tv0_sparse  <- is_quarter_sparse(tv0_qcounts)
 
     # Subtitle is informational only; the skip decision is made per time variable.
     coverage_subtitle <- paste0("Time variable: ", tv0)
     if (tv0_sparse) {
       coverage_subtitle <- paste0(
         coverage_subtitle,
-        "\n\u26A0 Fewer than ", min_obs_per_half,
-        " observations in one or both cycle-halves for ", tv0
+        "\n\u26A0 Fewer than ", min_obs_per_quarter,
+        " observations in one or more cycle quarters for ", tv0
       )
     }
 
@@ -830,14 +760,14 @@ for (current_id in ids_to_run) {
   for (tv in time_vars) {
     message(sprintf("  ... time variable: %s", tv))
 
-    # Per-tv coverage gate — consistent with fit_outcome(): tv < 0 vs tv >= 0.
+    # Per-tv coverage gate — require ≥min_obs_per_quarter in each cycle quarter.
     tv_vals_all <- datSX_id[[tv]]
     tv_vals_all <- tv_vals_all[!is.na(tv_vals_all)]
-    tv_meta     <- axis_meta[[tv]]
-    tv_halves   <- count_phase_halves(tv_vals_all, tv_meta)
-    if (is_half_sparse(tv_halves)) {
-      message(sprintf("    -> Skipping tv=%s: insufficient cycle-half coverage (luteal=%d, follicular=%d, min=%d)",
-                      tv, tv_halves$n_luteal, tv_halves$n_follicular, min_obs_per_half))
+    tv_qcounts  <- quarter_bin_counts(tv_vals_all)
+    if (is_quarter_sparse(tv_qcounts)) {
+      message(sprintf("    -> Skipping tv=%s: insufficient quarter coverage (Q1=%d, Q2=%d, Q3=%d, Q4=%d, min=%d)",
+                      tv, tv_qcounts["Q1"], tv_qcounts["Q2"], tv_qcounts["Q3"], tv_qcounts["Q4"],
+                      min_obs_per_quarter))
       next
     }
 
@@ -1494,6 +1424,8 @@ if (length(all_ids_signif) > 0) {
       pct_sig     = sum(sig, na.rm = TRUE) / n_gam_valid * 100,
       n_range15   = sum(is.finite(best_range) & best_range >= 1.5, na.rm = TRUE),
       pct_range15 = sum(is.finite(best_range) & best_range >= 1.5, na.rm = TRUE) / n_gam_valid * 100,
+      n_sig_or_range15   = sum(sig | (is.finite(best_range) & best_range >= 1.5), na.rm = TRUE),
+      pct_sig_or_range15 = sum(sig | (is.finite(best_range) & best_range >= 1.5), na.rm = TRUE) / n_gam_valid * 100,
       .groups     = "drop"
     ) %>%
     dplyr::left_join(
@@ -1578,7 +1510,9 @@ if (length(all_ids_signif) > 0) {
       `N Sig`       = n_sig,
       `% Sig`       = sprintf("%.1f%%", pct_sig),
       `N ≥1.5`  = n_range15,
-      `% ≥1.5`  = sprintf("%.1f%%", pct_range15)
+      `% ≥1.5`  = sprintf("%.1f%%", pct_range15),
+      `N Either`    = n_sig_or_range15,
+      `% Either`    = sprintf("%.1f%%", pct_sig_or_range15)
     )
 
   desc_theme <- gridExtra::ttheme_default(
@@ -1687,19 +1621,23 @@ if (length(all_ids_signif) > 0) {
   print(p_median_bar)
 
   # ---- PAGE 6: % Significant and % Range >= 1.5 by outcome (side-by-side bars) ----
-  # Precompute ordering by % Range >= 1.5 before pivoting so both metrics
+  # Precompute ordering by % Range >= 1.5 before pivoting so all metrics
   # share a consistent outcome order (rather than ordering by the mean of both).
   pct_data <- outcome_desc %>%
     dplyr::mutate(label = factor(label, levels = label[order(pct_range15)])) %>%
-    dplyr::select(label, pct_sig, pct_range15) %>%
-    tidyr::pivot_longer(cols = c(pct_sig, pct_range15),
+    dplyr::select(label, pct_sig, pct_range15, pct_sig_or_range15) %>%
+    tidyr::pivot_longer(cols = c(pct_sig, pct_range15, pct_sig_or_range15),
                         names_to = "metric", values_to = "pct") %>%
     dplyr::mutate(
       metric = dplyr::case_when(
-        metric == "pct_sig"     ~ "% Significant (p < .05)",
-        metric == "pct_range15" ~ "% Range \u2265 1.5",
+        metric == "pct_sig"             ~ "% Significant (p < .05)",
+        metric == "pct_range15"         ~ "% Range \u2265 1.5",
+        metric == "pct_sig_or_range15"  ~ "% Sig OR Range \u2265 1.5",
         TRUE ~ metric
       ),
+      metric = factor(metric, levels = c("% Significant (p < .05)",
+                                          "% Range \u2265 1.5",
+                                          "% Sig OR Range \u2265 1.5")),
       pct_label = sprintf("%.1f%%", pct)
     )
 
@@ -1715,9 +1653,10 @@ if (length(all_ids_signif) > 0) {
     ggplot2::coord_flip() +
     ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
     ggplot2::scale_fill_manual(values = c("% Significant (p < .05)" = "#0072B2",
-                                          "% Range \u2265 1.5" = "#D55E00")) +
+                                          "% Range \u2265 1.5" = "#D55E00",
+                                          "% Sig OR Range \u2265 1.5" = "#009E73")) +
     ggplot2::labs(
-      title = "Percentage of GAM-Valid Sample: Significant and Range \u2265 1.5 by Outcome",
+      title = "Percentage of GAM-Valid Sample: Significant, Range \u2265 1.5, or Either by Outcome",
       subtitle = paste0("Denominator: GAM-valid N = ", n_gam_valid),
       x = NULL,
       y = "Percentage",
