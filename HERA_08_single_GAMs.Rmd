@@ -2418,7 +2418,7 @@ if (length(all_ids_signif) > 0) {
       if (!is.null(p_nonsig_overlay)) print(p_nonsig_overlay)
     }
 
-    # ---- PAGE 3A: All curves — significant (blue) vs. non-significant (grey) ----
+    # ---- PAGE 3A: All curves — significant (red) vs. non-significant (light blue) ----
     for (tv in time_vars) {
       p_twocol_sig <- plot_overlay_gam_twogroup(
         fit_results_list = all_fit_results_by_tv[[tv]],
@@ -2430,13 +2430,13 @@ if (length(all_ids_signif) > 0) {
         title_prefix     = "All GAM Curves: Significant vs. Non-Significant",
         group1_label     = "Significant (p < .05)",
         group2_label     = "Non-Significant (p \u2265 .05)",
-        group1_color     = "#0072B2",
-        group2_color     = "#999999"
+        group1_color     = "#D55E00",
+        group2_color     = "#56B4E9"
       )
       if (!is.null(p_twocol_sig)) print(p_twocol_sig)
     }
 
-    # ---- PAGE 3B: All curves — significant OR range >= 1.5 (orange) vs. neither (grey) ----
+    # ---- PAGE 3B: All curves — significant OR range >= 1.5 (vermillion) vs. neither (sky blue) ----
     for (tv in time_vars) {
       p_twocol_range <- plot_overlay_gam_twogroup(
         fit_results_list = all_fit_results_by_tv[[tv]],
@@ -2448,8 +2448,8 @@ if (length(all_ids_signif) > 0) {
         title_prefix     = "All GAM Curves: Sig. or Range \u22651.5 vs. Neither",
         group1_label     = "Sig. or Range \u22651.5",
         group2_label     = "Neither",
-        group1_color     = "#E69F00",
-        group2_color     = "#999999"
+        group1_color     = "#CC79A7",
+        group2_color     = "#009E73"
       )
       if (!is.null(p_twocol_range)) print(p_twocol_range)
     }
