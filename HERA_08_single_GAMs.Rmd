@@ -740,22 +740,22 @@ for (current_id in ids_to_run) {
     key_body <- grid::textGrob(
       paste0(
         "PLOT BORDER COLORS (individual DRSP item plots)\n\n",
-        "\u2022 Red border:     GAM range \u2265 1.5 \u2014 equivalent to the C-PASS 30% change criterion\n",
-        "                   used to benchmark PMDD cyclical change\n\n",
-        "\u2022 Salmon border:  GAM range \u2265 1.0 but < 1.5 \u2014 moderate cyclical fluctuation\n\n",
-        "\u2022 Pink border:    GAM range \u2265 0.5 but < 1.0 \u2014 mild cyclical fluctuation\n\n",
-        "\u2022 No border:      GAM range < 0.5 \u2014 minimal cyclical change\n\n\n",
+        " \u25B6  Red border:     GAM range \u2265 1.5 \u2014 equivalent to the C-PASS 30% change criterion\n",
+        "                     used to benchmark PMDD cyclical change\n\n",
+        " \u25B6  Salmon border:  GAM range \u2265 1.0 but < 1.5 \u2014 moderate cyclical fluctuation\n\n",
+        " \u25B6  Pink border:    GAM range \u2265 0.5 but < 1.0 \u2014 mild cyclical fluctuation\n\n",
+        " \u25B6  No border:      GAM range < 0.5 \u2014 minimal cyclical change\n\n\n",
         "OTHER VISUAL ELEMENTS\n\n",
-        "\u2022 Pink shaded region: Area above 4.5 on the y-axis, shown when the axis expands\n",
-        "  beyond the default 1\u20134.5 range. Indicates values in the upper extreme of the\n",
-        "  1\u20136 DRSP scale.\n\n",
-        "\u2022 Red dashed line:   Menses onset (cycle day 1)\n\n",
-        "\u2022 Green dashed line: Estimated ovulation\n\n",
-        "\u2022 Red horizontal line (at y = 4): Reference line for DRSP individual items\n\n",
-        "\u2022 Dots on GAM curve: Peak (highest) and trough (lowest) predicted values\n\n",
-        "\u2022 Faded points:     Raw daily data behind the GAM curve\n\n",
-        "\u2022 Annotation text:  Stars (*) indicate significance (p < .05); Range = max \u2212 min\n",
-        "                   of predicted values; EDF = effective degrees of freedom"
+        " \u25B6  Pink shaded region: Area above 4.5 on the y-axis, shown when the axis expands\n",
+        "     beyond the default 1\u20134.5 range. Indicates values in the upper extreme of the\n",
+        "     1\u20136 DRSP scale.\n\n",
+        " \u25B6  Red dashed line:   Menses onset (cycle day 1)\n\n",
+        " \u25B6  Green dashed line: Estimated ovulation\n\n",
+        " \u25B6  Red horizontal line (at y = 4): Reference line for DRSP individual items\n\n",
+        " \u25B6  Dots on GAM curve: Peak (highest) and trough (lowest) predicted values\n\n",
+        " \u25B6  Faded points:     Raw daily data behind the GAM curve\n\n",
+        " \u25B6  Annotation text:  Stars (*) indicate significance (p < .05); Range = max \u2212 min\n",
+        "                     of predicted values; EDF = effective degrees of freedom"
       ),
       gp = grid::gpar(fontsize = 10, lineheight = 1.15, fontfamily = "mono"),
       just = "left", x = 0.05
@@ -1299,30 +1299,29 @@ if (length(all_ids_signif) > 0) {
   cover_defs <- grid::textGrob(
     paste0(
       "KEY DEFINITIONS\n\n",
-      "\u2022 Range: The difference between the highest and lowest predicted values from\n",
-      "  each person\u2019s GAM curve \u2014 how much a symptom fluctuates across the cycle.\n\n",
-      "\u2022 Significant GAM (p < .05): The cyclical pattern is statistically\n",
-      "  distinguishable from a flat line \u2014 evidence symptoms truly vary across\n",
-      "  the cycle.\n\n",
-      "\u2022 Range \u2265 1.5: A swing of 1.5+ points on the 1\u20136 DRSP scale, equivalent to\n",
-      "  the C-PASS 30% change criterion used to benchmark PMDD cyclical change.\n",
-      "  This is a reference value for comparison with the existing C-PASS standard,\n",
-      "  not a validated clinical cutpoint.\n\n",
-      "\u2022 Affective outcomes: Mood/emotional symptoms (depression, anxiety,\n",
-      "  irritability, etc.) and composites (Neg. Affect, Distress, Lability,\n",
-      "  Low Arousal).\n\n",
-      "\u2022 Physical outcomes: Somatic symptoms (breast tenderness, headache,\n",
-      "  overeating, insomnia, etc.) and composites (Breast Sx, Eating Sx).\n\n",
-      "\u2022 GAM-valid: Participants with enough data coverage across the menstrual\n",
-      "  cycle (\u22652 obs per quarter) to fit a reliable model."
+      " \u25B6  Range: The difference between the highest and lowest predicted values from\n",
+      "     each person\u2019s GAM curve \u2014 how much a symptom fluctuates across the cycle.\n\n",
+      " \u25B6  Significant GAM (p < .05): The cyclical pattern is statistically\n",
+      "     distinguishable from a flat line \u2014 evidence symptoms truly vary across the cycle.\n",
+      "     Higher % = more people show cyclical symptoms.\n\n",
+      " \u25B6  Range \u2265 1.5: A swing of 1.5+ points on the 1\u20136 DRSP scale, equivalent to\n",
+      "     the C-PASS 30% change criterion used to benchmark PMDD cyclical change.\n",
+      "     This is a reference benchmark, not a validated clinical cutpoint.\n\n",
+      " \u25B6  Affective outcomes: Mood/emotional symptoms (depression, anxiety,\n",
+      "     irritability, etc.) and composites (Neg. Affect, Distress, Lability, Low Arousal).\n\n",
+      " \u25B6  Physical outcomes: Somatic symptoms (breast tenderness, headache,\n",
+      "     overeating, insomnia, etc.) and composites (Breast Sx, Eating Sx).\n\n",
+      " \u25B6  GAM-valid: Participants with enough data coverage across the menstrual\n",
+      "     cycle (\u22652 obs per quarter) to fit a reliable model. All percentages in this\n",
+      "     report use GAM-valid N as the denominator."
     ),
-    gp = grid::gpar(fontsize = 10, lineheight = 1.2), just = "left", x = 0.05
+    gp = grid::gpar(fontsize = 10, lineheight = 1.15), just = "left", x = 0.05
   )
   cover_toc <- grid::textGrob(
     paste0(
       "REPORT CONTENTS\n\n",
       "  Page  1 \u2014 How to Read This Report (this page)\n",
-      "  Page  2 \u2014 Key Metrics Summary with Interpretation Guide\n",
+      "  Page  2 \u2014 Key Metrics Summary\n",
       "  Page  3 \u2014 Per-Outcome Descriptives Table (color-coded)\n",
       "  Page  4 \u2014 Distribution of Ranges by Outcome (histograms)\n",
       "  Page  5 \u2014 Significance & Range Rates by Outcome (grouped bars)\n",
@@ -1336,7 +1335,7 @@ if (length(all_ids_signif) > 0) {
   gridExtra::grid.arrange(
     cover_title, cover_purpose, cover_defs, cover_toc,
     ncol = 1,
-    heights = grid::unit(c(0.08, 0.12, 0.52, 0.28), "npc"),
+    heights = grid::unit(c(0.07, 0.10, 0.55, 0.28), "npc"),
     padding = grid::unit(1, "lines")
   )
   draw_page_number()
@@ -1488,25 +1487,9 @@ if (length(all_ids_signif) > 0) {
   )
 
   gridExtra::grid.arrange(
-    title_grob, subtitle_grob, key_tbl,
-    grid::textGrob(
-      paste0(
-        "INTERPRETING THESE METRICS\n\n",
-        "\u2022 Significant GAM: The person\u2019s symptom shows a reliable pattern of change across the\n",
-        "  menstrual cycle (p < .05). Higher % = more people show cyclical symptoms.\n\n",
-        "\u2022 Range \u2265 1.5: The symptom swings by at least 1.5 points on the 1\u20136 DRSP scale across\n",
-        "  the cycle \u2014 equivalent to the C-PASS 30% change criterion for PMDD. Higher % = more\n",
-        "  people with large cyclical swings.\n\n",
-        "\u2022 Affective vs. Any: Affective metrics focus on mood/emotional symptoms only (excluding\n",
-        "  physical symptoms). This shows whether cyclicity is primarily mood-driven.\n\n",
-        "\u2022 Denominator: All percentages use GAM-valid N (participants with enough data to model)\n",
-        "  rather than total N, giving a more accurate picture of cyclicity rates."
-      ),
-      gp = grid::gpar(fontsize = 9), just = "left", x = 0.05
-    ),
-    note_grob,
+    title_grob, subtitle_grob, key_tbl, note_grob,
     ncol = 1,
-    heights = grid::unit(c(0.08, 0.05, 0.42, 0.38, 0.04), "npc")
+    heights = grid::unit(c(0.08, 0.05, 0.55, 0.04), "npc")
   )
   draw_page_number()
 
@@ -1815,12 +1798,13 @@ if (length(all_ids_signif) > 0) {
   draw_page_number()
 
   # ---- PAGE 7 (was 10): Affective vs. Physical Symptom Comparison ----
+  # Uses raw DRSP items only (excludes composites) for a clean comparison.
 
   comparison_data <- id_outcome_summary %>%
     dplyr::mutate(
       domain = dplyr::case_when(
-        variable %in% all_affective_outcomes ~ "Affective",
-        variable %in% all_physical_outcomes  ~ "Physical",
+        variable %in% affective_raw_drsp ~ "Affective",
+        variable %in% physical_symptoms  ~ "Physical",
         TRUE ~ NA_character_
       )
     ) %>%
@@ -1871,7 +1855,7 @@ if (length(all_ids_signif) > 0) {
     ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
     ggplot2::labs(
       title = "Affective vs. Physical Symptom Cyclicity",
-      subtitle = "Comparing cyclicity rates across outcome \u00d7 participant pairs",
+      subtitle = "Comparing cyclicity rates across individual DRSP items (excl. composites)",
       x = NULL,
       y = "Percentage"
     ) +
@@ -1884,8 +1868,8 @@ if (length(all_ids_signif) > 0) {
   # Caption grob for the layout
   domain_caption <- grid::textGrob(
     paste0(
-      "Affective = mood/emotional symptoms and composites (Neg. Affect, Distress, Lability, Low Arousal). ",
-      "Physical = somatic symptoms and composites (Breast Sx, Eating Sx).\n",
+      "Affective = individual mood/emotional DRSP items (excl. composites). ",
+      "Physical = individual somatic DRSP items (excl. composites).\n",
       "% of outcome \u00d7 participant pairs meeting each criterion. ",
       "Range \u2265 1.5 reference line corresponds to the C-PASS 30% change benchmark."
     ),
@@ -2179,9 +2163,6 @@ make_empirical_bins <- function(df_outcome, n_bins = 10) {
 plot_empirical_and_model <- function(df_outcome, pred_df, empirical_df,
                                      thresholds = c(0.25, 0.36, 0.50)) {
   ggplot2::ggplot() +
-    ggplot2::geom_point(data = empirical_df,
-                        ggplot2::aes(x = mean_range, y = prop_significant, size = n),
-                        alpha = 0.8) +
     ggplot2::geom_line(data = pred_df,
                        ggplot2::aes(x = range, y = pred_prob, linetype = model),
                        linewidth = 1.2) +
@@ -2189,19 +2170,17 @@ plot_empirical_and_model <- function(df_outcome, pred_df, empirical_df,
     ggplot2::scale_y_continuous(limits = c(0, 1),
                                 labels = scales::percent_format(accuracy = 1)) +
     ggplot2::labs(
-      title    = paste0("Empirical and Modeled Probability: ", unique(df_outcome$variable)),
+      title    = paste0("Modeled Probability of Significance: ", unique(df_outcome$variable)),
       subtitle = paste0(
-        "Dots = observed proportion significant in each range bin (size = bin count).\n",
         "Lines = logistic model predictions. Dashed verticals = range thresholds."
       ),
       x        = "Cyclical range",
       y        = "Probability of significant GAM",
-      size     = "Bin n",
       linetype = NULL,
       caption  = paste0(
-        "This plot shows how the probability of achieving a significant GAM increases with cyclical range.\n",
-        "Each dot represents a bin of participants grouped by similar range values; larger dots = more participants.\n",
-        "The lines show logistic regression model predictions of significance probability as a function of range."
+        "The lines show logistic regression model predictions of significance probability as a function of range.\n",
+        "'Range Only' = logistic model predicting significance from cyclical range alone.\n",
+        "'Range + Obs. Count' = model also adjusting for number of observations (n held at median)."
       )
     ) +
     ggplot2::theme_minimal(base_size = 14) +
