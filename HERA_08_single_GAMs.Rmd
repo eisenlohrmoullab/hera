@@ -2640,12 +2640,14 @@ get_outcome_df <- function(df, target_var) {
       range           = suppressWarnings(max(range,   na.rm = TRUE)),
       n               = suppressWarnings(max(n,       na.rm = TRUE)),
       significant_num = ifelse(any(significant_num == 1, na.rm = TRUE), 1, 0),
-      peak_time       = if (length(which.min(p.value)) > 0) peak_time[which.min(p.value)][1] else NA_real_,
-      trough_time     = if (length(which.min(p.value)) > 0) trough_time[which.min(p.value)][1] else NA_real_,
-      best_time_var   = if (length(which.min(p.value)) > 0) time_var[which.min(p.value)][1] else NA_character_,
+      .best_idx       = {idx <- which.min(p.value); if (length(idx) == 0) NA_integer_ else idx[1]},
+      peak_time       = if (!is.na(.best_idx)) peak_time[.best_idx] else NA_real_,
+      trough_time     = if (!is.na(.best_idx)) trough_time[.best_idx] else NA_real_,
+      best_time_var   = if (!is.na(.best_idx)) time_var[.best_idx] else NA_character_,
       id_benchmark    = dplyr::first(id_benchmark),
       .groups         = "drop"
     ) %>%
+    dplyr::select(-.best_idx) %>%
     dplyr::mutate(
       # min(NA, na.rm=TRUE) returns Inf; convert back to NA
       p.value = ifelse(is.infinite(p.value), NA_real_, p.value),
