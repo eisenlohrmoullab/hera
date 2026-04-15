@@ -69,6 +69,14 @@ plots_per_row <- 3
 # with exactly 1 obs is tolerated; any quarter with 0 observations causes exclusion.
 # This value is the threshold below which a non-empty quarter is considered sparse.
 sparse_quarter_cutoff <- 2
+
+# --- Person-specific C-PASS-equivalent change benchmark ---
+# For each participant, the "range of scale used" is computed as
+# max − min of all raw DRSP item responses (drsp_1 … drsp_21) ever recorded.
+# The person-specific benchmark = range_of_scale_used × cpass_change_pct.
+# A GAM range meeting or exceeding this benchmark is flagged as meeting the
+# C-PASS-equivalent 30% change criterion.
+cpass_change_pct <- 0.30
 ```
 
 # Section 2: Create output folders & check time vars
@@ -190,7 +198,7 @@ physical_symptoms <- c("drsp_12", "drsp_13", "drsp_14", "drsp_15",
 DRSP_VAR_PATTERN <- "^drsp_\\d+$"
 
 # --- Border color key caption (reused on DRSP individual item plot pages) ---
-BORDER_KEY_CAPTION <- "Border key:  \u25A0 Red = Range \u2265 1.5  |  \u25A0 Salmon = Range \u2265 1.0  |  \u25A0 Pink = Range \u2265 0.5  |  No border = Range < 0.5"
+BORDER_KEY_CAPTION <- "Border key:  \u25A0 Red = GAM range meets person-specific 30% change benchmark  |  No border = below benchmark"
 
 # --- Max possible counts per category (for density-plot Y-axis scaling) ---
 all_raw_drsp <- names(outcomes)[grepl(DRSP_VAR_PATTERN, names(outcomes))]
@@ -492,7 +500,7 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map) {
 #   (fixed outcomes → c(y_min, y_max); data-mode outcomes → data-driven, no clamp)
 # y_limits = c(lo, hi) means: use those limits as-is (e.g. from shared-y section)
 create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
-                                  raw_data = NULL) {
+                                  raw_data = NULL, benchmark = NULL) {
   if (is.null(plot_df) || nrow(plot_df) == 0) return(NULL)
 
   # Track whether y_limits were provided by the caller (vs. computed internally)
@@ -570,14 +578,14 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
     y_fix_max <- max(y_fix_max, y_limits[2])
   }
 
-  cpass_flag <- !is.null(rng) && is.finite(rng) && rng >= 1.5
+  cpass_flag <- !is.null(rng) && is.finite(rng) && !is.null(benchmark) && is.finite(benchmark) && rng >= benchmark
   stars <- dplyr::case_when(
     is.finite(p_val) & p_val < 0.001 ~ "***",
     is.finite(p_val) & p_val < 0.01  ~ "**",
     is.finite(p_val) & p_val < 0.05  ~ "*",
     TRUE ~ ""
   )
-  cpass_label <- if (cpass_flag) "\u25B2 Range \u22651.5 | " else ""
+  cpass_label <- if (cpass_flag) sprintf("\u25B2 \u2265 benchmark (%.2f) | ", benchmark) else ""
   edf_str <- if (!is.null(edf_val) && !is.na(edf_val)) sprintf(", EDF = %.2f", edf_val) else ""
   ann <- if (!is.null(n_obs) && !is.na(n_obs)) {
     sprintf("%s%s Range = %.2f%s, N = %d", cpass_label, stars, rng, edf_str, as.integer(n_obs))
@@ -647,22 +655,13 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
     p <- p + ggplot2::coord_cartesian(clip = "off")
   }
 
-  # Colored effect-size borders for DRSP individual items
+  # Red border for DRSP individual items when GAM range meets person-specific benchmark
   is_drsp <- grepl(DRSP_VAR_PATTERN, outcome_var)
 
-  if (is_drsp) {
-    border_col <- dplyr::case_when(
-      is.finite(rng) && rng >= 1.5 ~ "red",
-      is.finite(rng) && rng >= 1.0 ~ "salmon",
-      is.finite(rng) && rng >= 0.5 ~ "pink",
-      TRUE                         ~ NA_character_
+  if (is_drsp && cpass_flag) {
+    p <- p + ggplot2::theme(
+      panel.border = ggplot2::element_rect(color = "red", linewidth = 1.5, fill = NA)
     )
-
-    if (!is.na(border_col)) {
-      p <- p + ggplot2::theme(
-        panel.border = ggplot2::element_rect(color = border_col, linewidth = 1.5, fill = NA)
-      )
-    }
   }
 
   p
@@ -696,6 +695,12 @@ all_ids_signif <- list()
 # (Section 5) and outcome-reports (Section 7).
 id_global_ymax_map <- c()
 
+# Per-ID person-specific C-PASS-equivalent change benchmark lookup.
+# Computed as range_of_scale_used × cpass_change_pct where range_of_scale_used
+# is the difference between the maximum and minimum rating a person ever gave
+# across ALL raw DRSP items (drsp_1 … drsp_21).
+id_benchmark_map <- c()
+
 # fixed layout controls
 max_plots_per_page <- plots_per_col * plots_per_row
 table_theme <- gridExtra::ttheme_default(
@@ -708,6 +713,20 @@ table_theme <- gridExtra::ttheme_default(
 for (current_id in ids_to_run) {
   message(sprintf("--- Processing ID: %s ---", current_id))
   datSX_id <- subset(df, id == current_id)
+
+  # --- Compute person-specific C-PASS-equivalent change benchmark ---
+  # Gather all raw DRSP item columns (drsp_1 … drsp_21) for this person.
+  drsp_item_cols <- grep("^drsp_\\d+$", names(datSX_id), value = TRUE)
+  all_drsp_vals <- unlist(datSX_id[, drsp_item_cols, drop = FALSE], use.names = FALSE)
+  all_drsp_vals <- all_drsp_vals[is.finite(all_drsp_vals)]
+  id_scale_range <- if (length(all_drsp_vals) > 0) {
+    max(all_drsp_vals) - min(all_drsp_vals)
+  } else {
+    NA_real_
+  }
+  id_benchmark <- if (!is.na(id_scale_range)) id_scale_range * cpass_change_pct else NA_real_
+  id_benchmark_map[as.character(current_id)] <- id_benchmark
+  message(sprintf("    Scale range: %.1f, Benchmark: %.2f", id_scale_range, id_benchmark))
 
   # ---- Open a single LANDSCAPE PDF per participant ----
   pdf_filename <- file.path(report_folder, sprintf("Report_ID_%s.pdf", current_id))
@@ -837,11 +856,10 @@ for (current_id in ids_to_run) {
         " \u25B6  Annotation text:  Stars (*) indicate significance (p < .05); Range = max \u2212 min\n",
         "                     of predicted values; EDF = effective degrees of freedom\n\n",
         "PLOT BORDER COLORS (individual DRSP item plots)\n\n",
-        " \u25B6  Red border:     GAM range \u2265 1.5 \u2014 meets the C-PASS-equivalent 30% change criterion\n",
-        "                     used to benchmark PMDD cyclical change\n\n",
-        " \u25B6  Salmon border:  GAM range \u2265 1.0 but < 1.5\n\n",
-        " \u25B6  Pink border:    GAM range \u2265 0.5 but < 1.0\n\n",
-        " \u25B6  No border:      GAM range < 0.5"
+        " \u25B6  Red border:     GAM range meets this person\u2019s C-PASS-equivalent 30% change\n",
+        "                     benchmark (", sprintf("%.2f", id_benchmark), " = scale range ",
+        sprintf("%.0f", id_scale_range), " \u00d7 30%)\n\n",
+        " \u25B6  No border:      GAM range below person-specific benchmark"
       ),
       gp = grid::gpar(fontsize = 9.5, lineheight = 1.1, fontfamily = "mono"),
       just = "left", x = 0.05
@@ -975,11 +993,12 @@ for (current_id in ids_to_run) {
     dplyr::summarise(
       tested = dplyr::n(),
       n_sig  = sum(stars != "", na.rm = TRUE),
-      n_cpass = sum(is.finite(range) & range >= 1.5 & stars != "", na.rm = TRUE),
+      n_cpass = sum(is.finite(range) & range >= id_benchmark & stars != "", na.rm = TRUE),
       .groups = "drop"
     ) %>%
     tidyr::unite("count", n_sig, tested, sep = " / ") %>%
-    dplyr::rename(`Sig / Tested` = count, `Range ≥1.5 sig` = n_cpass)
+    dplyr::rename(`Sig / Tested` = count,
+                  !!paste0("Range \u2265", sprintf("%.2f", id_benchmark), " sig") := n_cpass)
 
   cover_theme <- gridExtra::ttheme_default(
     base_size = 9,
@@ -1338,7 +1357,7 @@ for (current_id in ids_to_run) {
       plot_list <- lapply(page_outcome_labels, function(lab) {
         plot_df <- dplyr::filter(page_data, outcome_label == lab)
         if (nrow(plot_df) == 0) return(NULL)
-        create_annotated_plot(plot_df, tv, axis_meta, y_limits = id_global_ylimits, raw_data = datSX_id)
+        create_annotated_plot(plot_df, tv, axis_meta, y_limits = id_global_ylimits, raw_data = datSX_id, benchmark = id_benchmark)
       })
       plot_list <- Filter(Negate(is.null), plot_list)
 
@@ -3041,8 +3060,10 @@ if (length(all_ids_signif) > 0) {
           }
         }
         qid_ymax <- expand_ymax(4.5, outcome_max)
+        qid_benchmark <- id_benchmark_map[as.character(qid)]
         p <- create_annotated_plot(res$pred, tv, axis_meta,
-                                   y_limits = c(1, qid_ymax), raw_data = datSX_qid)
+                                   y_limits = c(1, qid_ymax), raw_data = datSX_qid,
+                                   benchmark = qid_benchmark)
         if (!is.null(p)) {
           id_range <- round(res$sig$range, 2)
           id_n     <- res$sig$n
