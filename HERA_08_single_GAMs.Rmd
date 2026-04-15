@@ -301,24 +301,28 @@ axis_meta <- lapply(time_vars, function(tv) {
 })
 names(axis_meta) <- time_vars
 
-# --- Check cycle-quarter coverage for a given time variable ---
-# Divides the cycle variable range [-1, 1] into 4 equal quarters and counts
-# observations per quarter.  Returns a list with quarter_counts (integer vector
-# of length 4), min_per_quarter, and passes (logical — TRUE when every quarter
-# has at least min_obs_per_quarter observations).
-check_quarter_coverage <- function(data, cycle_var) {
-  vals <- data[[cycle_var]]
+# --- Shared helper: count observations in each cycle quarter ---
+# Accepts a numeric vector of cycle-time values (NAs allowed; they are dropped).
+# Returns a named integer vector of length 4 (Q1–Q4) with counts per quarter.
+# Uses left-closed intervals: [-1,-0.5), [-0.5,0), [0,0.5), [0.5,1].
+quarter_bin_counts <- function(vals) {
   vals <- vals[!is.na(vals)]
+  qbin <- cut(vals,
+              breaks = seq(-1, 1, length.out = 5),
+              labels = paste0("Q", 1:4),
+              include.lowest = TRUE, right = FALSE)
+  counts <- as.integer(table(factor(qbin, levels = paste0("Q", 1:4))))
+  setNames(counts, paste0("Q", 1:4))
+}
 
-  quarter_bin <- cut(vals,
-                     breaks = seq(-1, 1, length.out = 5),
-                     labels = paste0("Q", 1:4),
-                     include.lowest = TRUE)
-
-  counts <- as.integer(table(factor(quarter_bin, levels = paste0("Q", 1:4))))
-
+# --- Check cycle-quarter coverage for a given time variable ---
+# Wrapper around quarter_bin_counts() that extracts the cycle column from a
+# data frame and returns a list with quarter_counts, min_per_quarter, and
+# passes (TRUE when every quarter has >= min_obs_per_quarter observations).
+check_quarter_coverage <- function(data, cycle_var) {
+  counts <- quarter_bin_counts(data[[cycle_var]])
   list(
-    quarter_counts  = setNames(counts, paste0("Q", 1:4)),
+    quarter_counts  = counts,
     min_per_quarter = min(counts),
     passes          = all(counts >= min_obs_per_quarter)
   )
@@ -656,16 +660,6 @@ for (current_id in ids_to_run) {
     tv0 <- time_vars[1]
     meta0 <- axis_meta[[tv0]]
 
-    # Shared helper: count observations in each cycle quarter [-1,-.5), [-.5,0), [0,.5), [.5,1].
-    count_quarter_obs <- function(tv_vals) {
-      qbin <- cut(tv_vals,
-                  breaks = seq(-1, 1, length.out = 5),
-                  labels = paste0("Q", 1:4),
-                  include.lowest = TRUE)
-      counts <- as.integer(table(factor(qbin, levels = paste0("Q", 1:4))))
-      setNames(counts, paste0("Q", 1:4))
-    }
-
     # Returns TRUE when any quarter has fewer than min_obs_per_quarter observations.
     is_quarter_sparse <- function(qcounts) {
       any(qcounts < min_obs_per_quarter)
@@ -685,7 +679,7 @@ for (current_id in ids_to_run) {
       valid <- !is.na(vals) & !is.na(tv_vals)
       n_obs <- sum(valid)
       has_data <- n_obs > 0
-      qcounts <- count_quarter_obs(tv_vals[valid])
+      qcounts <- quarter_bin_counts(tv_vals[valid])
       sub_label <- paste0(
         "n = ", n_obs, " daily observations",
         "  (Q1: ", qcounts["Q1"], ", Q2: ", qcounts["Q2"],
@@ -718,7 +712,7 @@ for (current_id in ids_to_run) {
 
     tv0_vals <- datSX_id[[tv0]]
     tv0_vals <- tv0_vals[!is.na(tv0_vals)]
-    tv0_qcounts <- count_quarter_obs(tv0_vals)
+    tv0_qcounts <- quarter_bin_counts(tv0_vals)
     tv0_sparse  <- is_quarter_sparse(tv0_qcounts)
 
     # Subtitle is informational only; the skip decision is made per time variable.
@@ -769,7 +763,7 @@ for (current_id in ids_to_run) {
     # Per-tv coverage gate — require ≥min_obs_per_quarter in each cycle quarter.
     tv_vals_all <- datSX_id[[tv]]
     tv_vals_all <- tv_vals_all[!is.na(tv_vals_all)]
-    tv_qcounts  <- count_quarter_obs(tv_vals_all)
+    tv_qcounts  <- quarter_bin_counts(tv_vals_all)
     if (is_quarter_sparse(tv_qcounts)) {
       message(sprintf("    -> Skipping tv=%s: insufficient quarter coverage (Q1=%d, Q2=%d, Q3=%d, Q4=%d, min=%d)",
                       tv, tv_qcounts["Q1"], tv_qcounts["Q2"], tv_qcounts["Q3"], tv_qcounts["Q4"],
