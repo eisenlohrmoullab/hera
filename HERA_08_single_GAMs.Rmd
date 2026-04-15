@@ -2065,12 +2065,13 @@ make_prediction_df <- function(df_outcome, model_range, model_range_n = NULL,
               length.out = 300)
   pred1 <- tibble::tibble(range = xseq) %>%
     dplyr::mutate(pred_prob = predict(model_range, newdata = ., type = "response"),
-                  model     = "Range only")
+                  model     = "Range Only (no covariates)")
   if (!is.null(model_range_n)) {
     if (is.null(n_value)) n_value <- median(df_outcome$n, na.rm = TRUE)
     pred2 <- tibble::tibble(range = xseq, n = n_value) %>%
       dplyr::mutate(pred_prob = predict(model_range_n, newdata = ., type = "response"),
-                    model     = paste0("Range + n (n fixed at ", round(n_value, 1), ")")) %>%
+                    model     = paste0("Range + Obs. Count (n held at median = ",
+                                       round(n_value, 0), ")")) %>%
       dplyr::select(range, pred_prob, model)
     dplyr::bind_rows(pred1, pred2)
   } else {
@@ -2105,11 +2106,25 @@ plot_significance_probability <- function(df_outcome, pred_df,
                                 labels = scales::percent_format(accuracy = 1)) +
     ggplot2::labs(
       title = paste0("Probability of Significant Cyclicity: ", unique(df_outcome$variable)),
+      subtitle = paste0(
+        "Each dot = one participant (jittered vertically). ",
+        "Lines = logistic model-predicted probability of significance."
+      ),
       x = "Cyclical range",
       y = "Predicted probability of significant GAM",
-      color = NULL, linetype = NULL
+      color = NULL, linetype = NULL,
+      caption = paste0(
+        "'Range Only' = logistic model predicting significance from cyclical range alone.\n",
+        "'Range + Obs. Count' = model also adjusting for number of observations ",
+        "(held at its median for the prediction curve).\n",
+        "Dashed vertical lines mark range thresholds."
+      )
     ) +
-    ggplot2::theme_minimal(base_size = 16)
+    ggplot2::theme_minimal(base_size = 14) +
+    ggplot2::theme(
+      plot.caption = ggplot2::element_text(size = 8, hjust = 0, face = "italic"),
+      plot.subtitle = ggplot2::element_text(size = 10)
+    )
 }
 
 # --- Binned empirical proportions ---
@@ -2140,12 +2155,25 @@ plot_empirical_and_model <- function(df_outcome, pred_df, empirical_df,
                                 labels = scales::percent_format(accuracy = 1)) +
     ggplot2::labs(
       title    = paste0("Empirical and Modeled Probability: ", unique(df_outcome$variable)),
+      subtitle = paste0(
+        "Dots = observed proportion significant in each range bin (size = bin count).\n",
+        "Lines = logistic model predictions. Dashed verticals = range thresholds."
+      ),
       x        = "Cyclical range",
       y        = "Probability of significant GAM",
       size     = "Bin n",
-      linetype = NULL
+      linetype = NULL,
+      caption  = paste0(
+        "This plot shows how the probability of achieving a significant GAM increases with cyclical range.\n",
+        "Each dot represents a bin of participants grouped by similar range values; larger dots = more participants.\n",
+        "The lines show logistic regression model predictions of significance probability as a function of range."
+      )
     ) +
-    ggplot2::theme_minimal(base_size = 16)
+    ggplot2::theme_minimal(base_size = 14) +
+    ggplot2::theme(
+      plot.caption = ggplot2::element_text(size = 8, hjust = 0, face = "italic"),
+      plot.subtitle = ggplot2::element_text(size = 10)
+    )
 }
 
 # --- All-in-one analysis wrapper for one outcome variable ---
@@ -2351,7 +2379,7 @@ plot_overlay_gam_twogroup <- function(fit_results_list, group1_ids, group2_ids,
   p
 }
 
-# --- Peak and trough timing distribution plot for significant participants ---
+# --- Peak and trough timing distribution plot for qualifying participants ---
 plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
   meta <- axis_meta_list[[tv]]
 
@@ -2391,7 +2419,8 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
                                 labels = abs) +
     ggplot2::labs(
       title = paste("Peak & Trough Timing:", outcome_label),
-      subtitle = paste0("Among participants with significant GAMs (p < .05); N = ",
+      subtitle = paste0("Among participants with significant GAMs (p < .05) ",
+                        "or range \u2265 1.5; N = ",
                         nrow(df_sig)),
       x = "Cycle Phase",
       y = "Peaks \u2191 / Troughs \u2193 (normalized density)",
@@ -2413,13 +2442,13 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
 # =========================================================
 # For each DRSP outcome, generates a landscape PDF containing:
 #   1. Summary page: descriptive stats + threshold table + peak/trough timing
-#   2. Combined overlay GAM plot (significant participants only)
-#   3. Combined overlay GAM plot (non-significant participants only)
+#   2. All GAM curves colored by significance
+#   3. All GAM curves colored by sig. or range >= 1.5
 #   4. Significance probability plot (logistic curve)
 #   5. Histogram of range by significance
 #   6. Empirical + modeled probability plot
 #   Per time variable:
-#   7. Peak & trough timing density (significant participants)
+#   7. Peak & trough timing density (significant or range >= 1.5 participants)
 #   8+. Individual GAM trajectory pages (all IDs, sorted by descending range)
 # =========================================================
 
@@ -2565,7 +2594,10 @@ if (length(all_ids_signif) > 0) {
     )
 
     sig_peak_data <- result$data %>%
-      dplyr::filter(significant_num == 1, !is.na(peak_time), !is.na(trough_time))
+      dplyr::filter(
+        (significant_num == 1) | (is.finite(range) & range >= 1.5),
+        !is.na(peak_time), !is.na(trough_time)
+      )
 
     if (nrow(sig_peak_data) > 0) {
       timing_by_tv <- sig_peak_data %>%
@@ -2573,18 +2605,18 @@ if (length(all_ids_signif) > 0) {
         dplyr::summarise(
           med_peak   = median(peak_time, na.rm = TRUE),
           med_trough = median(trough_time, na.rm = TRUE),
-          n_sig      = dplyr::n(),
+          n_qual     = dplyr::n(),
           .groups    = "drop"
         )
       for (i in seq_len(nrow(timing_by_tv))) {
         tv_label <- timing_by_tv$best_time_var[i]
         suffix <- if (nrow(timing_by_tv) > 1) paste0(" [", tv_label, "]") else ""
         desc_df <- rbind(desc_df, data.frame(
-          Metric = c(paste0("Median Peak Time (sig.)", suffix),
-                      paste0("Median Trough Time (sig.)", suffix)),
+          Metric = c(paste0("Median Peak Time (sig. or range\u22651.5)", suffix),
+                      paste0("Median Trough Time (sig. or range\u22651.5)", suffix)),
           Value = c(
-            sprintf("%.2f (N=%d)", timing_by_tv$med_peak[i], timing_by_tv$n_sig[i]),
-            sprintf("%.2f (N=%d)", timing_by_tv$med_trough[i], timing_by_tv$n_sig[i])
+            sprintf("%.2f (N=%d)", timing_by_tv$med_peak[i], timing_by_tv$n_qual[i]),
+            sprintf("%.2f (N=%d)", timing_by_tv$med_trough[i], timing_by_tv$n_qual[i])
           ),
           stringsAsFactors = FALSE
         ))
@@ -2630,33 +2662,7 @@ if (length(all_ids_signif) > 0) {
       heights = grid::unit(c(0.10, 0.05, 0.25, 0.08, 0.38, 0.08), "npc")
     )
 
-    # ---- PAGE 2: Combined Overlay GAM - Significant Participants ----
-    for (tv in time_vars) {
-      p_sig_overlay <- plot_overlay_gam(
-        fit_results_list = all_fit_results_by_tv[[tv]],
-        ids              = sig_ids,
-        tv               = tv,
-        axis_meta_list   = axis_meta,
-        outcome_label    = outcome_label,
-        title_prefix     = "Significant GAMs (p < .05)"
-      )
-      if (!is.null(p_sig_overlay)) print(p_sig_overlay)
-    }
-
-    # ---- PAGE 3: Combined Overlay GAM - Non-Significant Participants ----
-    for (tv in time_vars) {
-      p_nonsig_overlay <- plot_overlay_gam(
-        fit_results_list = all_fit_results_by_tv[[tv]],
-        ids              = nonsig_ids,
-        tv               = tv,
-        axis_meta_list   = axis_meta,
-        outcome_label    = outcome_label,
-        title_prefix     = "Non-Significant GAMs (p \u2265 .05)"
-      )
-      if (!is.null(p_nonsig_overlay)) print(p_nonsig_overlay)
-    }
-
-    # ---- PAGE 3A: All curves — significant (vermillion) vs. non-significant (sky blue) ----
+    # ---- PAGE 2: All curves — significant (vermillion) vs. non-significant (sky blue) ----
     for (tv in time_vars) {
       p_twocol_sig <- plot_overlay_gam_twogroup(
         fit_results_list = all_fit_results_by_tv[[tv]],
@@ -2674,7 +2680,7 @@ if (length(all_ids_signif) > 0) {
       if (!is.null(p_twocol_sig)) print(p_twocol_sig)
     }
 
-    # ---- PAGE 3B: All curves — significant OR range >= 1.5 (reddish purple) vs. neither (bluish green) ----
+    # ---- PAGE 3: All curves — significant OR range >= 1.5 (reddish purple) vs. neither (bluish green) ----
     for (tv in time_vars) {
       p_twocol_range <- plot_overlay_gam_twogroup(
         fit_results_list = all_fit_results_by_tv[[tv]],
@@ -2703,12 +2709,15 @@ if (length(all_ids_signif) > 0) {
 
     # ---- PAGE 7+: Peak & Trough Timing Summary (per time variable) ----
     for (tv in time_vars) {
-      sig_timing_data <- result$data %>%
-        dplyr::filter(significant_num == 1, best_time_var == tv,
-                      !is.na(peak_time), !is.na(trough_time))
+      timing_data <- result$data %>%
+        dplyr::filter(
+          (significant_num == 1) | (is.finite(range) & range >= 1.5),
+          best_time_var == tv,
+          !is.na(peak_time), !is.na(trough_time)
+        )
 
-      if (nrow(sig_timing_data) > 0) {
-        p_timing <- plot_peak_trough_timing(sig_timing_data, tv, axis_meta,
+      if (nrow(timing_data) > 0) {
+        p_timing <- plot_peak_trough_timing(timing_data, tv, axis_meta,
                                             outcome_label)
         if (!is.null(p_timing)) print(p_timing)
       }
@@ -2727,20 +2736,26 @@ if (length(all_ids_signif) > 0) {
         if (is.null(res)) next
 
         datSX_qid <- subset(df, as.character(id) == qid)
-        # Use per-ID global ymax (computed in Section 5) so that each ID's
-        # y-axis reflects its overall data range; different IDs may differ.
-        fallback_ymax <- 4.5
+        # For outcome-specific reports, compute y-axis from this outcome's
+        # data only — do NOT use the per-ID global ymax from person reports.
+        # Only expand above 4.5 if this outcome's predictions or raw data
+        # for this participant actually exceed 4.5.
+        outcome_max <- 4.5
         if (!is.null(res$pred$estimate)) {
           pred_estimates <- res$pred$estimate[is.finite(res$pred$estimate)]
           if (length(pred_estimates) > 0) {
-            fallback_ymax <- max(pred_estimates)
+            outcome_max <- max(outcome_max, max(pred_estimates))
           }
         }
-        qid_ymax <- if (as.character(qid) %in% names(id_global_ymax_map)) {
-          id_global_ymax_map[as.character(qid)]
-        } else {
-          expand_ymax(4.5, fallback_ymax)
+        # Also check raw data points for this specific outcome
+        if (nrow(datSX_qid) > 0 && target_var %in% names(datSX_qid)) {
+          raw_vals <- datSX_qid[[target_var]]
+          raw_vals <- raw_vals[is.finite(raw_vals)]
+          if (length(raw_vals) > 0) {
+            outcome_max <- max(outcome_max, max(raw_vals))
+          }
         }
+        qid_ymax <- expand_ymax(4.5, outcome_max)
         p <- create_annotated_plot(res$pred, tv, axis_meta,
                                    y_limits = c(1, qid_ymax), raw_data = datSX_qid)
         if (!is.null(p)) {
