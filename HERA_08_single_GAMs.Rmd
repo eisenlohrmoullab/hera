@@ -1314,6 +1314,10 @@ if (length(all_ids_signif) > 0) {
   # All affective outcomes (raw + composite)
   all_affective_outcomes <- c(affective_raw_drsp, affective_composites)
 
+  # Physical composites and all physical outcomes
+  phys_composites <- c("drsp_breastpain", "drsp_eatsx")
+  all_physical_outcomes <- c(physical_symptoms, phys_composites)
+
   # --- Per-ID summary: best result per outcome (one row per id × variable) ---
   # Use finite-safe aggregation to avoid Inf/-Inf when all values are NA.
   id_outcome_summary <- gam_summary_all %>%
@@ -1777,8 +1781,6 @@ if (length(all_ids_signif) > 0) {
   draw_page_number()
 
   # ---- PAGE 7 (was 10): Affective vs. Physical Symptom Comparison ----
-  phys_composites <- c("drsp_breastpain", "drsp_eatsx")
-  all_physical_outcomes <- c(physical_symptoms, phys_composites)
 
   comparison_data <- id_outcome_summary %>%
     dplyr::mutate(
