@@ -1608,11 +1608,6 @@ if (length(all_ids_signif) > 0) {
       metric = factor(metric, levels = c("% Significant (p < .05)",
                                           "% Range \u2265 1.5",
                                           "% Sig OR Range \u2265 1.5")),
-      fill_color = dplyr::case_when(
-        metric == "% Significant (p < .05)" ~ "#0072B2",
-        metric == "% Range \u2265 1.5"            ~ "#D55E00",
-        metric == "% Sig OR Range \u2265 1.5"      ~ "#009E73"
-      ),
       pct_label = sprintf("%.1f%%", pct)
     )
 
