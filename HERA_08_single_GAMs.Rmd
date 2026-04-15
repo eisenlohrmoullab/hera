@@ -1208,13 +1208,13 @@ for (current_id in ids_to_run) {
       }
     }
 
-    range_label <- format(range_thresh, nsmall = 1)
+    range_label <- format(range_thresh, nsmall = 2)
     y_axis_label <- if (normalize_01) "Normalized Score (0\u20131)" else "Predicted Score"
 
-    if (is.infinite(range_thresh)) {
+    if (is.infinite(range_thresh) || is.na(range_thresh)) {
       filter_label <- "p < .05"
     } else {
-      filter_label <- paste0("p < .05 or range \u2265 ", range_label)
+      filter_label <- paste0("p < .05 or range \u2265 benchmark (", range_label, ")")
     }
 
     p <- ggplot2::ggplot(ov_data,
@@ -1293,12 +1293,12 @@ for (current_id in ids_to_run) {
   # ---- Overlaid GAM pages by outcome category ----
   for (tv in names(preds_by_tv)) {
 
-    # (1) Individual DRSP items: sig OR range >= 0.5, Y scale uses per-ID global ymax
+    # (1) Individual DRSP items: sig OR range >= person-specific benchmark, Y scale uses per-ID global ymax
     plot_overlay_page(
       sig_tv = sig_by_tv[[tv]], pred_tv = preds_by_tv[[tv]],
       tv = tv, meta = axis_meta[[tv]],
       var_list       = all_raw_drsp,
-      range_thresh   = 0.5,
+      range_thresh   = id_benchmark,
       title_prefix   = "Overlaid GAM Curves (Individual DRSP Items)",
       subtitle_label = "Individual DRSP items",
       ylim_strategy  = "fixed", fixed_ylim = id_global_ylimits,
