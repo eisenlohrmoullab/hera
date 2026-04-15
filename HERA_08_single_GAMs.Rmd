@@ -69,6 +69,14 @@ plots_per_row <- 3
 # with exactly 1 obs is tolerated; any quarter with 0 observations causes exclusion.
 # This value is the threshold below which a non-empty quarter is considered sparse.
 sparse_quarter_cutoff <- 2
+
+# --- Person-specific C-PASS-equivalent change benchmark ---
+# For each participant, the "range of scale used" is computed as
+# max − min of all raw DRSP item responses (drsp_1 … drsp_21) ever recorded.
+# The person-specific benchmark = range_of_scale_used × cpass_change_pct.
+# A GAM range meeting or exceeding this benchmark is flagged as meeting the
+# C-PASS-equivalent 30% change criterion.
+cpass_change_pct <- 0.30
 ```
 
 # Section 2: Create output folders & check time vars
@@ -188,6 +196,9 @@ physical_symptoms <- c("drsp_12", "drsp_13", "drsp_14", "drsp_15",
 
 # --- Pattern constants for variable matching ---
 DRSP_VAR_PATTERN <- "^drsp_\\d+$"
+
+# --- Border color key caption (reused on DRSP individual item plot pages) ---
+BORDER_KEY_CAPTION <- "Border key:  \u25A0 Red = GAM range meets person-specific 30% change benchmark  |  No border = below benchmark"
 
 # --- Max possible counts per category (for density-plot Y-axis scaling) ---
 all_raw_drsp <- names(outcomes)[grepl(DRSP_VAR_PATTERN, names(outcomes))]
@@ -489,7 +500,7 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map) {
 #   (fixed outcomes → c(y_min, y_max); data-mode outcomes → data-driven, no clamp)
 # y_limits = c(lo, hi) means: use those limits as-is (e.g. from shared-y section)
 create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
-                                  raw_data = NULL) {
+                                  raw_data = NULL, benchmark = NULL) {
   if (is.null(plot_df) || nrow(plot_df) == 0) return(NULL)
 
   # Track whether y_limits were provided by the caller (vs. computed internally)
@@ -567,14 +578,14 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
     y_fix_max <- max(y_fix_max, y_limits[2])
   }
 
-  cpass_flag <- !is.null(rng) && is.finite(rng) && rng >= 1.5
+  cpass_flag <- !is.null(rng) && is.finite(rng) && !is.null(benchmark) && is.finite(benchmark) && rng >= benchmark
   stars <- dplyr::case_when(
     is.finite(p_val) & p_val < 0.001 ~ "***",
     is.finite(p_val) & p_val < 0.01  ~ "**",
     is.finite(p_val) & p_val < 0.05  ~ "*",
     TRUE ~ ""
   )
-  cpass_label <- if (cpass_flag) "\u25B2 Range \u22651.5 | " else ""
+  cpass_label <- if (cpass_flag) sprintf("\u25B2 \u2265 benchmark (%.2f) | ", benchmark) else ""
   edf_str <- if (!is.null(edf_val) && !is.na(edf_val)) sprintf(", EDF = %.2f", edf_val) else ""
   ann <- if (!is.null(n_obs) && !is.na(n_obs)) {
     sprintf("%s%s Range = %.2f%s, N = %d", cpass_label, stars, rng, edf_str, as.integer(n_obs))
@@ -644,22 +655,13 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
     p <- p + ggplot2::coord_cartesian(clip = "off")
   }
 
-  # Colored effect-size borders for DRSP individual items
+  # Red border for DRSP individual items when GAM range meets person-specific benchmark
   is_drsp <- grepl(DRSP_VAR_PATTERN, outcome_var)
 
-  if (is_drsp) {
-    border_col <- dplyr::case_when(
-      is.finite(rng) && rng >= 1.5 ~ "red",
-      is.finite(rng) && rng >= 1.0 ~ "salmon",
-      is.finite(rng) && rng >= 0.5 ~ "pink",
-      TRUE                         ~ NA_character_
+  if (is_drsp && cpass_flag) {
+    p <- p + ggplot2::theme(
+      panel.border = ggplot2::element_rect(color = "red", linewidth = 1.5, fill = NA)
     )
-
-    if (!is.na(border_col)) {
-      p <- p + ggplot2::theme(
-        panel.border = ggplot2::element_rect(color = border_col, linewidth = 1.5, fill = NA)
-      )
-    }
   }
 
   p
@@ -693,6 +695,12 @@ all_ids_signif <- list()
 # (Section 5) and outcome-reports (Section 7).
 id_global_ymax_map <- c()
 
+# Per-ID person-specific C-PASS-equivalent change benchmark lookup.
+# Computed as range_of_scale_used × cpass_change_pct where range_of_scale_used
+# is the difference between the maximum and minimum rating a person ever gave
+# across ALL raw DRSP items (drsp_1 … drsp_21).
+id_benchmark_map <- c()
+
 # fixed layout controls
 max_plots_per_page <- plots_per_col * plots_per_row
 table_theme <- gridExtra::ttheme_default(
@@ -705,6 +713,20 @@ table_theme <- gridExtra::ttheme_default(
 for (current_id in ids_to_run) {
   message(sprintf("--- Processing ID: %s ---", current_id))
   datSX_id <- subset(df, id == current_id)
+
+  # --- Compute person-specific C-PASS-equivalent change benchmark ---
+  # Gather all raw DRSP item columns (drsp_1 … drsp_21) for this person.
+  drsp_item_cols <- grep("^drsp_\\d+$", names(datSX_id), value = TRUE)
+  all_drsp_vals <- unlist(datSX_id[, drsp_item_cols, drop = FALSE], use.names = FALSE)
+  all_drsp_vals <- all_drsp_vals[is.finite(all_drsp_vals)]
+  id_scale_range <- if (length(all_drsp_vals) > 0) {
+    max(all_drsp_vals) - min(all_drsp_vals)
+  } else {
+    NA_real_
+  }
+  id_benchmark <- if (!is.na(id_scale_range)) id_scale_range * cpass_change_pct else NA_real_
+  id_benchmark_map[as.character(current_id)] <- id_benchmark
+  message(sprintf("    Scale range: %.1f, Benchmark: %.2f", id_scale_range, id_benchmark))
 
   # ---- Open a single LANDSCAPE PDF per participant ----
   pdf_filename <- file.path(report_folder, sprintf("Report_ID_%s.pdf", current_id))
@@ -815,33 +837,31 @@ for (current_id in ids_to_run) {
       )
     print(p_cover)
 
-    # ---- Page 0b: Interpretation Key (border colors & pink shading) ----
-    grid::grid.newpage()
+    # ---- Page 0b: Interpretation Key (visual elements) ----
     key_title <- grid::textGrob(
       paste0("How to Read This Report \u2014 ID: ", current_id),
       gp = grid::gpar(fontsize = 16, fontface = "bold")
     )
     key_body <- grid::textGrob(
       paste0(
-        "PLOT BORDER COLORS (individual DRSP item plots)\n\n",
-        " \u25B6  Red border:     GAM range \u2265 1.5 \u2014 equivalent to the C-PASS 30% change criterion\n",
-        "                     used to benchmark PMDD cyclical change\n\n",
-        " \u25B6  Salmon border:  GAM range \u2265 1.0 but < 1.5 \u2014 moderate cyclical fluctuation\n\n",
-        " \u25B6  Pink border:    GAM range \u2265 0.5 but < 1.0 \u2014 mild cyclical fluctuation\n\n",
-        " \u25B6  No border:      GAM range < 0.5 \u2014 minimal cyclical change\n\n\n",
-        "OTHER VISUAL ELEMENTS\n\n",
+        "VISUAL ELEMENTS\n\n",
         " \u25B6  Pink shaded region: Area above 4.5 on the y-axis, shown when the axis expands\n",
         "     beyond the default 1\u20134.5 range. Indicates values in the upper extreme of the\n",
         "     1\u20136 DRSP scale.\n\n",
         " \u25B6  Red dashed line:   Menses onset (cycle day 1)\n\n",
         " \u25B6  Green dashed line: Estimated ovulation\n\n",
-        " \u25B6  Red horizontal line (at y = 4): Reference line for DRSP individual items\n\n",
+        " \u25B6  Red horizontal line (at y = 4): Reference line of \"moderate\" severity\n\n",
         " \u25B6  Dots on GAM curve: Peak (highest) and trough (lowest) predicted values\n\n",
         " \u25B6  Faded points:     Raw daily data behind the GAM curve\n\n",
         " \u25B6  Annotation text:  Stars (*) indicate significance (p < .05); Range = max \u2212 min\n",
-        "                     of predicted values; EDF = effective degrees of freedom"
+        "                     of predicted values; EDF = effective degrees of freedom\n\n",
+        "PLOT BORDER COLORS (individual DRSP item plots)\n\n",
+        " \u25B6  Red border:     GAM range meets this person\u2019s C-PASS-equivalent 30% change\n",
+        "                     benchmark (", sprintf("%.2f", id_benchmark), " = scale range ",
+        sprintf("%.0f", id_scale_range), " \u00d7 30%)\n\n",
+        " \u25B6  No border:      GAM range below person-specific benchmark"
       ),
-      gp = grid::gpar(fontsize = 10, lineheight = 1.15, fontfamily = "mono"),
+      gp = grid::gpar(fontsize = 9.5, lineheight = 1.1, fontfamily = "mono"),
       just = "left", x = 0.05
     )
     gridExtra::grid.arrange(
@@ -851,7 +871,6 @@ for (current_id in ids_to_run) {
     )
 
     # ---- Page 0c: Composite Outcome Definitions ----
-    grid::grid.newpage()
     comp_title <- grid::textGrob(
       paste0("Composite Outcome Definitions \u2014 ID: ", current_id),
       gp = grid::gpar(fontsize = 16, fontface = "bold")
@@ -974,11 +993,12 @@ for (current_id in ids_to_run) {
     dplyr::summarise(
       tested = dplyr::n(),
       n_sig  = sum(stars != "", na.rm = TRUE),
-      n_cpass = sum(is.finite(range) & range >= 1.5 & stars != "", na.rm = TRUE),
+      n_cpass = sum(is.finite(range) & range >= id_benchmark & stars != "", na.rm = TRUE),
       .groups = "drop"
     ) %>%
     tidyr::unite("count", n_sig, tested, sep = " / ") %>%
-    dplyr::rename(`Sig / Tested` = count, `Range ≥1.5 sig` = n_cpass)
+    dplyr::rename(`Sig / Tested` = count,
+                  !!paste0("Range \u2265", sprintf("%.2f", id_benchmark), " sig") := n_cpass)
 
   cover_theme <- gridExtra::ttheme_default(
     base_size = 9,
@@ -1188,13 +1208,13 @@ for (current_id in ids_to_run) {
       }
     }
 
-    range_label <- format(range_thresh, nsmall = 1)
+    range_label <- format(range_thresh, nsmall = 2)
     y_axis_label <- if (normalize_01) "Normalized Score (0\u20131)" else "Predicted Score"
 
-    if (is.infinite(range_thresh)) {
+    if (is.infinite(range_thresh) || is.na(range_thresh)) {
       filter_label <- "p < .05"
     } else {
-      filter_label <- paste0("p < .05 or range \u2265 ", range_label)
+      filter_label <- paste0("p < .05 or range \u2265 benchmark (", range_label, ")")
     }
 
     p <- ggplot2::ggplot(ov_data,
@@ -1273,12 +1293,12 @@ for (current_id in ids_to_run) {
   # ---- Overlaid GAM pages by outcome category ----
   for (tv in names(preds_by_tv)) {
 
-    # (1) Individual DRSP items: sig OR range >= 0.5, Y scale uses per-ID global ymax
+    # (1) Individual DRSP items: sig OR range >= person-specific benchmark, Y scale uses per-ID global ymax
     plot_overlay_page(
       sig_tv = sig_by_tv[[tv]], pred_tv = preds_by_tv[[tv]],
       tv = tv, meta = axis_meta[[tv]],
       var_list       = all_raw_drsp,
-      range_thresh   = 0.5,
+      range_thresh   = id_benchmark,
       title_prefix   = "Overlaid GAM Curves (Individual DRSP Items)",
       subtitle_label = "Individual DRSP items",
       ylim_strategy  = "fixed", fixed_ylim = id_global_ylimits,
@@ -1337,7 +1357,7 @@ for (current_id in ids_to_run) {
       plot_list <- lapply(page_outcome_labels, function(lab) {
         plot_df <- dplyr::filter(page_data, outcome_label == lab)
         if (nrow(plot_df) == 0) return(NULL)
-        create_annotated_plot(plot_df, tv, axis_meta, y_limits = id_global_ylimits, raw_data = datSX_id)
+        create_annotated_plot(plot_df, tv, axis_meta, y_limits = id_global_ylimits, raw_data = datSX_id, benchmark = id_benchmark)
       })
       plot_list <- Filter(Negate(is.null), plot_list)
 
@@ -1348,10 +1368,19 @@ for (current_id in ids_to_run) {
         }
         page_title_label <- gsub("_", " ", page_name)
         page_title <- paste(page_title_label, "\u2014 ID:", current_id, "| Time Variable:", tv)
+
+        # Add border color key as caption on DRSP individual item pages
+        is_drsp_page <- grepl("^DRSP_Page_", page_name)
+        border_key_caption <- if (is_drsp_page) BORDER_KEY_CAPTION else NULL
+
         final_page <- patchwork::wrap_plots(plotlist = plot_list, ncol = plots_per_col) +
           patchwork::plot_annotation(
             title = page_title,
-            theme = ggplot2::theme(plot.title = ggplot2::element_text(size = 12, face = "bold"))
+            caption = border_key_caption,
+            theme = ggplot2::theme(
+              plot.title = ggplot2::element_text(size = 12, face = "bold"),
+              plot.caption = ggplot2::element_text(size = 8, hjust = 0.5, color = "grey30")
+            )
           )
         print(final_page)
       }
@@ -1381,12 +1410,23 @@ if (length(all_ids_signif)) {
 if (length(all_ids_signif) > 0) {
   gam_summary_all <- dplyr::bind_rows(all_ids_signif)
 
+  # Attach person-specific C-PASS-equivalent change benchmark to the summary
+  benchmark_df <- data.frame(
+    id = names(id_benchmark_map),
+    id_benchmark = unname(id_benchmark_map),
+    stringsAsFactors = FALSE
+  )
+  gam_summary_all <- dplyr::left_join(
+    gam_summary_all %>% dplyr::mutate(id = as.character(id)),
+    benchmark_df, by = "id"
+  )
+
   overall_pdf <- file.path(output_folder, paste0("Overall_Sample_Summary_", current_date, ".pdf"))
   grDevices::pdf(overall_pdf, width = 11, height = 8.5)
 
   # --- Page numbering helper ---
   # NOTE: Update total_report_pages if pages are added/removed from this report.
-  total_report_pages <- 9L
+  total_report_pages <- 10L
   page_counter <- 0L
   draw_page_number <- function() {
     page_counter <<- page_counter + 1L
@@ -1421,9 +1461,10 @@ if (length(all_ids_signif) > 0) {
       " \u25B6  Significant GAM (p < .05): The cyclical pattern is statistically\n",
       "     distinguishable from a flat line \u2014 evidence symptoms truly vary across the cycle.\n",
       "     Higher % = more people show cyclical symptoms.\n\n",
-      " \u25B6  Range \u2265 1.5: A swing of 1.5+ points on the 1\u20136 DRSP scale, equivalent to\n",
-      "     the C-PASS 30% change criterion used to benchmark PMDD cyclical change.\n",
-      "     This is a reference benchmark, not a validated clinical cutpoint.\n\n",
+      " \u25B6  Meets benchmark: Each person\u2019s benchmark is 30% of their personal range of DRSP\n",
+      "     scale used (max \u2212 min across all items). A GAM range meeting or exceeding this\n",
+      "     person-specific threshold is flagged as meeting the C-PASS-equivalent 30% change\n",
+      "     criterion. This is a reference benchmark, not a validated clinical cutpoint.\n\n",
       " \u25B6  Affective outcomes: Mood/emotional symptoms (depression, anxiety,\n",
       "     irritability, etc.) and composites (Neg. Affect, Distress, Lability, Low Arousal).\n\n",
       " \u25B6  Physical outcomes: Somatic symptoms (breast tenderness, headache,\n",
@@ -1432,29 +1473,131 @@ if (length(all_ids_signif) > 0) {
       "     and with at most one quarter having fewer than 2 observations. All percentages\n",
       "     in this report use GAM-valid N as the denominator."
     ),
-    gp = grid::gpar(fontsize = 10, lineheight = 1.15), just = "left", x = 0.05
+    gp = grid::gpar(fontsize = 9.5, lineheight = 1.1), just = "left", x = 0.05
   )
   cover_toc <- grid::textGrob(
     paste0(
       "REPORT CONTENTS\n\n",
       "  Page  1 \u2014 How to Read This Report (this page)\n",
-      "  Page  2 \u2014 Key Metrics Summary\n",
-      "  Page  3 \u2014 Per-Outcome Descriptives Table (color-coded)\n",
-      "  Page  4 \u2014 Distribution of Ranges by Outcome (histograms)\n",
-      "  Page  5 \u2014 Significance & Range Rates by Outcome (grouped bars)\n",
-      "  Page  6 \u2014 Per-Person Range Distributions (dot + box plot)\n",
-      "  Page  7 \u2014 Significance/Range Heatmap (Outcome \u00d7 Participant)\n",
-      "  Page  8 \u2014 Affective vs. Physical Symptom Comparison\n",
-      "  Page  9 \u2014 Symptom Co-Occurrence Matrix"
+      "  Page  2 \u2014 Quarter-Based Data Coverage by Participant\n",
+      "  Page  3 \u2014 Key Metrics Summary\n",
+      "  Page  4 \u2014 Per-Outcome Descriptives Table (color-coded)\n",
+      "  Page  5 \u2014 Distribution of Ranges by Outcome (histograms)\n",
+      "  Page  6 \u2014 Significance & Range Rates by Outcome (grouped bars)\n",
+      "  Page  7 \u2014 Per-Person Range Distributions (dot + box plot)\n",
+      "  Page  8 \u2014 Significance/Range Heatmap (Outcome \u00d7 Participant)\n",
+      "  Page  9 \u2014 Affective vs. Physical Symptom Comparison\n",
+      "  Page 10 \u2014 Symptom Co-Occurrence Matrix"
     ),
-    gp = grid::gpar(fontsize = 10, lineheight = 1.2), just = "left", x = 0.05
+    gp = grid::gpar(fontsize = 9.5, lineheight = 1.15), just = "left", x = 0.05
   )
   gridExtra::grid.arrange(
     cover_title, cover_purpose, cover_defs, cover_toc,
     ncol = 1,
-    heights = grid::unit(c(0.07, 0.10, 0.55, 0.28), "npc"),
+    heights = grid::unit(c(0.07, 0.10, 0.52, 0.26), "npc"),
     padding = grid::unit(1, "lines")
   )
+  draw_page_number()
+
+  # ---- PAGE 2: Quarter-Based Data Coverage by Participant ----
+  # Compute per-ID quarter counts using the first available time variable.
+  # Classify each ID as GAM-included vs excluded based on the quarter coverage rule.
+  cov_tv <- time_vars[1]
+  all_sample_ids <- unique(df$id)
+  cov_rows <- lapply(all_sample_ids, function(pid) {
+    pid_vals <- df[[cov_tv]][df$id == pid]
+    pid_vals <- pid_vals[!is.na(pid_vals)]
+    qc <- quarter_bin_counts(pid_vals)
+    n_empty  <- sum(qc == 0)
+    n_sparse <- sum(qc > 0 & qc < sparse_quarter_cutoff)
+    passes   <- n_empty == 0 && n_sparse <= 1
+    data.frame(
+      id = pid,
+      Q1 = qc["Q1"], Q2 = qc["Q2"], Q3 = qc["Q3"], Q4 = qc["Q4"],
+      total_obs = sum(qc),
+      included = passes,
+      stringsAsFactors = FALSE
+    )
+  })
+  cov_df <- dplyr::bind_rows(cov_rows)
+
+  n_included <- sum(cov_df$included)
+  n_excluded <- sum(!cov_df$included)
+
+  # Pivot to long format for tile plot
+  cov_long <- cov_df %>%
+    tidyr::pivot_longer(cols = c("Q1", "Q2", "Q3", "Q4"),
+                        names_to = "quarter", values_to = "obs_count") %>%
+    dplyr::mutate(
+      status = ifelse(included, "Included", "Excluded"),
+      id_label = as.character(id)
+    )
+
+  # Order IDs: excluded first, then included (sorted by total obs descending within each group)
+  id_order_incl <- cov_df %>%
+    dplyr::filter(included) %>%
+    dplyr::arrange(dplyr::desc(total_obs), id) %>%
+    dplyr::pull(id) %>%
+    as.character()
+  id_order_excl <- cov_df %>%
+    dplyr::filter(!included) %>%
+    dplyr::arrange(dplyr::desc(total_obs), id) %>%
+    dplyr::pull(id) %>%
+    as.character()
+  cov_long$id_label <- factor(cov_long$id_label, levels = c(id_order_excl, id_order_incl))
+  cov_long$status <- factor(cov_long$status, levels = c("Excluded", "Included"))
+
+  # Quarter labels corresponding to the cycle phase
+  quarter_labels <- c("Q1\n[-1, -0.5)", "Q2\n[-0.5, 0)", "Q3\n[0, 0.5)", "Q4\n[0.5, 1]")
+  cov_long$quarter <- factor(cov_long$quarter, levels = c("Q1", "Q2", "Q3", "Q4"),
+                              labels = quarter_labels)
+
+  # Cap color scale for readability
+  max_obs_display <- min(max(cov_long$obs_count, na.rm = TRUE), 30)
+  cov_long$obs_capped <- pmin(cov_long$obs_count, max_obs_display)
+
+  p_cov <- ggplot2::ggplot(cov_long,
+             ggplot2::aes(x = quarter, y = id_label, fill = obs_capped)) +
+    ggplot2::geom_tile(color = "white", linewidth = 0.15) +
+    ggplot2::geom_text(ggplot2::aes(label = obs_count), size = 1.6, color = "grey20") +
+    ggplot2::facet_grid(status ~ ., scales = "free_y", space = "free_y",
+                        switch = "y") +
+    ggplot2::scale_fill_gradient(
+      low = "#FFF3E0", high = "#E65100", na.value = "grey90",
+      name = "Observations",
+      limits = c(0, max_obs_display),
+      breaks = pretty(c(0, max_obs_display), n = 4)
+    ) +
+    ggplot2::labs(
+      title = "Quarter-Based Data Coverage Across the Cycle by Participant",
+      subtitle = paste0(
+        "Time variable: ", cov_tv,
+        "  |  Included (GAM-valid): N = ", n_included,
+        "  |  Excluded: N = ", n_excluded,
+        "  |  Total: N = ", length(all_sample_ids)
+      ),
+      caption = paste0(
+        "Inclusion rule: all 4 quarters must have \u22651 observation, and at most 1 quarter may have <",
+        sparse_quarter_cutoff, " observations.\n",
+        "IDs sorted by total observations within each group (descending). ",
+        "Numbers in cells = observation count per quarter."
+      ),
+      x = "Cycle Quarter",
+      y = NULL
+    ) +
+    ggplot2::theme_minimal(base_size = 8) +
+    ggplot2::theme(
+      plot.title    = ggplot2::element_text(face = "bold", size = 12),
+      plot.subtitle = ggplot2::element_text(size = 9),
+      plot.caption  = ggplot2::element_text(size = 7, hjust = 0, face = "italic"),
+      axis.text.y   = ggplot2::element_text(size = 4),
+      axis.text.x   = ggplot2::element_text(size = 7),
+      strip.text.y.left = ggplot2::element_text(face = "bold", size = 9, angle = 0),
+      strip.placement = "outside",
+      panel.grid     = ggplot2::element_blank(),
+      legend.position = "right"
+    )
+  print(p_cov)
   draw_page_number()
 
   # --- Classify outcomes for affective calculations ---
@@ -1480,27 +1623,30 @@ if (length(all_ids_signif) > 0) {
       best_range  = ifelse(any(is.finite(range)),   max(range[is.finite(range)]),     NA_real_),
       best_n      = ifelse(any(is.finite(n)),        max(n[is.finite(n)]),             NA_real_),
       sig         = any(is.finite(p.value) & p.value < 0.05, na.rm = TRUE),
+      id_benchmark = dplyr::first(id_benchmark),
       .groups     = "drop"
+    ) %>%
+    dplyr::mutate(
+      meets_benchmark = is.finite(best_range) & is.finite(id_benchmark) & best_range >= id_benchmark
     )
 
   all_ids <- unique(gam_summary_all$id)
   n_gam_valid <- length(all_ids)
   n_total_sample <- length(unique(df$id))
 
-  # --- KEY METRIC 1: % of GAM-valid sample with at least one symptom/composite range >= 1.5 ---
-  ids_any_range15 <- id_outcome_summary %>%
-    dplyr::filter(is.finite(best_range) & best_range >= 1.5) %>%
+  # --- KEY METRIC 1: % of GAM-valid sample with at least one symptom/composite meeting benchmark ---
+  ids_any_benchmark <- id_outcome_summary %>%
+    dplyr::filter(meets_benchmark) %>%
     dplyr::distinct(id) %>%
     dplyr::pull(id)
-  pct_any_range15 <- length(ids_any_range15) / n_gam_valid * 100
+  pct_any_benchmark <- length(ids_any_benchmark) / n_gam_valid * 100
 
-  # --- KEY METRIC 2: % of GAM-valid sample with at least one affective symptom/composite range >= 1.5 ---
-  ids_affective_range15 <- id_outcome_summary %>%
-    dplyr::filter(variable %in% all_affective_outcomes,
-                  is.finite(best_range) & best_range >= 1.5) %>%
+  # --- KEY METRIC 2: % of GAM-valid sample with at least one affective symptom/composite meeting benchmark ---
+  ids_affective_benchmark <- id_outcome_summary %>%
+    dplyr::filter(variable %in% all_affective_outcomes, meets_benchmark) %>%
     dplyr::distinct(id) %>%
     dplyr::pull(id)
-  pct_affective_range15 <- length(ids_affective_range15) / n_gam_valid * 100
+  pct_affective_benchmark <- length(ids_affective_benchmark) / n_gam_valid * 100
 
   # --- KEY METRIC 3: % of GAM-valid sample with at least one significant GAM (any outcome) ---
   ids_any_sig <- id_outcome_summary %>%
@@ -1532,10 +1678,10 @@ if (length(all_ids_signif) > 0) {
       max_range   = max(best_range, na.rm = TRUE),
       n_sig       = sum(sig, na.rm = TRUE),
       pct_sig     = sum(sig, na.rm = TRUE) / n_gam_valid * 100,
-      n_range15   = sum(is.finite(best_range) & best_range >= 1.5, na.rm = TRUE),
-      pct_range15 = sum(is.finite(best_range) & best_range >= 1.5, na.rm = TRUE) / n_gam_valid * 100,
-      n_sig_or_range15   = sum(sig | (is.finite(best_range) & best_range >= 1.5), na.rm = TRUE),
-      pct_sig_or_range15 = sum(sig | (is.finite(best_range) & best_range >= 1.5), na.rm = TRUE) / n_gam_valid * 100,
+      n_benchmark   = sum(meets_benchmark, na.rm = TRUE),
+      pct_benchmark = sum(meets_benchmark, na.rm = TRUE) / n_gam_valid * 100,
+      n_sig_or_benchmark   = sum(sig | meets_benchmark, na.rm = TRUE),
+      pct_sig_or_benchmark = sum(sig | meets_benchmark, na.rm = TRUE) / n_gam_valid * 100,
       .groups     = "drop"
     ) %>%
     dplyr::left_join(
@@ -1556,10 +1702,10 @@ if (length(all_ids_signif) > 0) {
       "N with \u2265 1 significant affective GAM",
       "% with \u2265 1 significant affective GAM",
       "",
-      "N with \u2265 1 symptom/composite range \u2265 1.5",
-      "% with \u2265 1 symptom/composite range \u2265 1.5",
-      "N with \u2265 1 affective symptom/composite range \u2265 1.5",
-      "% with \u2265 1 affective symptom/composite range \u2265 1.5"
+      "N with \u2265 1 symptom/composite meeting person-specific benchmark",
+      "% with \u2265 1 symptom/composite meeting person-specific benchmark",
+      "N with \u2265 1 affective symptom/composite meeting benchmark",
+      "% with \u2265 1 affective symptom/composite meeting benchmark"
     ),
     Value = c(
       as.character(n_total_sample),
@@ -1570,10 +1716,10 @@ if (length(all_ids_signif) > 0) {
       as.character(length(ids_affective_sig)),
       sprintf("%.1f%%", pct_affective_sig),
       "",
-      as.character(length(ids_any_range15)),
-      sprintf("%.1f%%", pct_any_range15),
-      as.character(length(ids_affective_range15)),
-      sprintf("%.1f%%", pct_affective_range15)
+      as.character(length(ids_any_benchmark)),
+      sprintf("%.1f%%", pct_any_benchmark),
+      as.character(length(ids_affective_benchmark)),
+      sprintf("%.1f%%", pct_affective_benchmark)
     ),
     stringsAsFactors = FALSE
   )
@@ -1622,10 +1768,10 @@ if (length(all_ids_signif) > 0) {
       `Min-Max`     = sprintf("%.2f-%.2f", min_range, max_range),
       `N Sig`       = n_sig,
       `% Sig`       = sprintf("%.1f%%", pct_sig),
-      `N ≥1.5`  = n_range15,
-      `% ≥1.5`  = sprintf("%.1f%%", pct_range15),
-      `N Either`    = n_sig_or_range15,
-      `% Either`    = sprintf("%.1f%%", pct_sig_or_range15)
+      `N \u2265BM`  = n_benchmark,
+      `% \u2265BM`  = sprintf("%.1f%%", pct_benchmark),
+      `N Either`    = n_sig_or_benchmark,
+      `% Either`    = sprintf("%.1f%%", pct_sig_or_benchmark)
     )
 
   # --- Conditional color-coding for key columns ---
@@ -1633,8 +1779,8 @@ if (length(all_ids_signif) > 0) {
   HIGHLIGHT_BLUE_DARK  <- "#BBDEFB"   # >= 50%
   HIGHLIGHT_BLUE_LIGHT <- "#E3F2FD"   # >= 25%
   HIGHLIGHT_ORG_DARK   <- "#FFE0B2"   # >= 50%
-  HIGHLIGHT_ORG_MED    <- "#FFDDC1"   # median range >= 1.5
-  HIGHLIGHT_ORG_LIGHT  <- "#FFF3E0"   # >= 25% or median range >= 1.0
+  HIGHLIGHT_ORG_MED    <- "#FFDDC1"   # median range high
+  HIGHLIGHT_ORG_LIGHT  <- "#FFF3E0"   # >= 25% or median range moderate
   HIGHLIGHT_GRN_DARK   <- "#C8E6C9"   # >= 50%
   HIGHLIGHT_GRN_LIGHT  <- "#E8F5E9"   # >= 25%
 
@@ -1642,17 +1788,24 @@ if (length(all_ids_signif) > 0) {
   n_desc_cols <- ncol(display_desc)
   fill_matrix <- matrix("white", nrow = n_desc_rows, ncol = n_desc_cols)
   # Median Range (col 3): orange shading for high values
-  fill_matrix[, 3] <- ifelse(outcome_desc$median_range >= 1.5, HIGHLIGHT_ORG_MED,
-                              ifelse(outcome_desc$median_range >= 1.0, HIGHLIGHT_ORG_LIGHT, "white"))
+  # Use only GAM-valid IDs for the median benchmark
+  gam_valid_benchmarks <- id_benchmark_map[names(id_benchmark_map) %in% as.character(all_ids)]
+  median_benchmark <- median(gam_valid_benchmarks, na.rm = TRUE)
+  # Shading tiers for Median Range column: dark orange if at or above the median
+  # benchmark, light orange if at or above two-thirds of the median benchmark
+  # (i.e., approaching the typical person's benchmark), white otherwise.
+  MEDIAN_RANGE_MODERATE_FRAC <- 2/3
+  fill_matrix[, 3] <- ifelse(outcome_desc$median_range >= median_benchmark, HIGHLIGHT_ORG_MED,
+                              ifelse(outcome_desc$median_range >= median_benchmark * MEDIAN_RANGE_MODERATE_FRAC, HIGHLIGHT_ORG_LIGHT, "white"))
   # % Sig (col 9): blue shading for high rates
   fill_matrix[, 9] <- ifelse(outcome_desc$pct_sig >= 50, HIGHLIGHT_BLUE_DARK,
                               ifelse(outcome_desc$pct_sig >= 25, HIGHLIGHT_BLUE_LIGHT, "white"))
-  # % >=1.5 (col 11): orange shading for high rates
-  fill_matrix[, 11] <- ifelse(outcome_desc$pct_range15 >= 50, HIGHLIGHT_ORG_DARK,
-                               ifelse(outcome_desc$pct_range15 >= 25, HIGHLIGHT_ORG_LIGHT, "white"))
+  # % >=BM (col 11): orange shading for high rates
+  fill_matrix[, 11] <- ifelse(outcome_desc$pct_benchmark >= 50, HIGHLIGHT_ORG_DARK,
+                               ifelse(outcome_desc$pct_benchmark >= 25, HIGHLIGHT_ORG_LIGHT, "white"))
   # % Either (col 13): green shading for high rates
-  fill_matrix[, 13] <- ifelse(outcome_desc$pct_sig_or_range15 >= 50, HIGHLIGHT_GRN_DARK,
-                               ifelse(outcome_desc$pct_sig_or_range15 >= 25, HIGHLIGHT_GRN_LIGHT, "white"))
+  fill_matrix[, 13] <- ifelse(outcome_desc$pct_sig_or_benchmark >= 50, HIGHLIGHT_GRN_DARK,
+                               ifelse(outcome_desc$pct_sig_or_benchmark >= 25, HIGHLIGHT_GRN_LIGHT, "white"))
 
   desc_theme <- gridExtra::ttheme_default(
     base_size = 7,
@@ -1668,7 +1821,7 @@ if (length(all_ids_signif) > 0) {
   )
   note2 <- grid::textGrob(
     paste0("Range = max(predicted) \u2013 min(predicted) on original scale; Sig = p < .05; ",
-           "% Sig and % \u22651.5 use GAM-valid N = ", n_gam_valid, " as denominator"),
+           "% Sig and % \u2265BM use GAM-valid N = ", n_gam_valid, " as denominator"),
     gp = grid::gpar(fontsize = 9, fontface = "italic")
   )
   footnote2 <- grid::textGrob(
@@ -1676,9 +1829,9 @@ if (length(all_ids_signif) > 0) {
       "COLUMN GUIDE: N = participants with valid GAM data for this outcome; ",
       "Median Range = typical amount of cyclical variation;\n",
       "% Sig = % with statistically significant cyclicity (p < .05); ",
-      "% \u22651.5 = % with range meeting C-PASS benchmark (\u22651.5-point swing);\n",
-      "% Either = % meeting either criterion. ",
-      "Shading: blue = high % Sig; orange = high Median Range or % \u22651.5; green = high % Either."
+      "% \u2265BM = % with range meeting person-specific 30% change benchmark;\n",
+      "% Either = % meeting either criterion. BM = C-PASS-equivalent change benchmark (30% of person\u2019s scale range).\n",
+      "Shading: blue = high % Sig; orange = high Median Range or % \u2265BM; green = high % Either."
     ),
     gp = grid::gpar(fontsize = 7, fontface = "italic")
   )
@@ -1702,8 +1855,6 @@ if (length(all_ids_signif) > 0) {
   p_range_dist <- ggplot2::ggplot(range_plot_data,
                                    ggplot2::aes(x = best_range, fill = sig)) +
     ggplot2::geom_histogram(bins = 20, alpha = 0.7, position = "identity") +
-    ggplot2::geom_vline(xintercept = 1.5, color = "red", linetype = "dashed",
-                        linewidth = 0.6) +
     ggplot2::facet_wrap(~ label, scales = "free_y", ncol = 4) +
     ggplot2::scale_fill_manual(
       values = c("TRUE" = "#0072B2", "FALSE" = "#999999"),
@@ -1712,12 +1863,13 @@ if (length(all_ids_signif) > 0) {
     ) +
     ggplot2::labs(
       title = "Distribution of GAM Ranges Across Participants",
-      subtitle = "Red dashed line = range \u2265 1.5 threshold",
+      subtitle = paste0("Person-specific benchmark (median = ", sprintf("%.2f", median_benchmark),
+                        ") based on 30% of each person\u2019s DRSP scale range"),
       x = "Range (max \u2013 min predicted)",
       y = "Count",
       caption = paste0(
         "Each panel shows one outcome. Blue bars = significant cyclicity (p < .05); grey = not significant.\n",
-        "Outcomes where most bars fall right of the red line have widespread variation meeting the C-PASS benchmark."
+        "Benchmark varies by person (30% of individual DRSP scale range); no single reference line shown."
       )
     ) +
     ggplot2::theme_minimal(base_size = 8) +
@@ -1730,24 +1882,24 @@ if (length(all_ids_signif) > 0) {
   print(p_range_dist)
   draw_page_number()
 
-  # ---- PAGE 4 (was 6): % Significant and % Range >= 1.5 by outcome (faceted bars) ----
-  # Precompute ordering by % Sig OR Range >= 1.5 (descending) before pivoting so all metrics
-  # share a consistent outcome order.
+  # ---- PAGE 4 (was 6): % Significant and % meeting benchmark by outcome (faceted bars) ----
+  # Precompute ordering by % Sig OR meets benchmark (ascending, so highest values appear at the
+  # top of the coord_flip-ed plot) before pivoting so all metrics share a consistent outcome order.
   pct_data <- outcome_desc %>%
-    dplyr::mutate(label = factor(label, levels = label[order(pct_sig_or_range15)])) %>%
-    dplyr::select(label, pct_sig, pct_range15, pct_sig_or_range15) %>%
-    tidyr::pivot_longer(cols = c(pct_sig, pct_range15, pct_sig_or_range15),
+    dplyr::mutate(label = factor(label, levels = label[order(pct_sig_or_benchmark)])) %>%
+    dplyr::select(label, pct_sig, pct_benchmark, pct_sig_or_benchmark) %>%
+    tidyr::pivot_longer(cols = c(pct_sig, pct_benchmark, pct_sig_or_benchmark),
                         names_to = "metric", values_to = "pct") %>%
     dplyr::mutate(
       metric = dplyr::case_when(
-        metric == "pct_sig"             ~ "% Significant (p < .05)",
-        metric == "pct_range15"         ~ "% Range \u2265 1.5",
-        metric == "pct_sig_or_range15"  ~ "% Sig OR Range \u2265 1.5",
+        metric == "pct_sig"              ~ "% Significant (p < .05)",
+        metric == "pct_benchmark"        ~ "% Meets Benchmark",
+        metric == "pct_sig_or_benchmark" ~ "% Sig OR Meets Benchmark",
         TRUE ~ metric
       ),
       metric = factor(metric, levels = c("% Significant (p < .05)",
-                                          "% Range \u2265 1.5",
-                                          "% Sig OR Range \u2265 1.5")),
+                                          "% Meets Benchmark",
+                                          "% Sig OR Meets Benchmark")),
       pct_label = sprintf("%.1f%%", pct)
     )
 
@@ -1763,16 +1915,16 @@ if (length(all_ids_signif) > 0) {
     ggplot2::scale_y_continuous(limits = c(0, 105),
                                 expand = ggplot2::expansion(mult = c(0, 0.05))) +
     ggplot2::scale_fill_manual(values = c("% Significant (p < .05)" = "#0072B2",
-                                          "% Range \u2265 1.5" = "#D55E00",
-                                          "% Sig OR Range \u2265 1.5" = "#009E73")) +
+                                          "% Meets Benchmark" = "#D55E00",
+                                          "% Sig OR Meets Benchmark" = "#009E73")) +
     ggplot2::labs(
       title = "Percentage of GAM-Valid Sample by Outcome",
       subtitle = paste0("Denominator: GAM-valid N = ", n_gam_valid),
       x = NULL,
       y = "Percentage",
       caption = paste0(
-        "Blue = statistically significant cyclicity (p < .05); orange = range meeting C-PASS benchmark (\u22651.5);\n",
-        "green = either criterion met. Outcomes ordered by % Sig OR Range \u2265 1.5 (bottom to top)."
+        "Blue = statistically significant cyclicity (p < .05); orange = range meeting person-specific 30% change benchmark;\n",
+        "green = either criterion met. Outcomes ordered by % Sig OR Meets Benchmark (bottom to top)."
       )
     ) +
     ggplot2::theme_minimal(base_size = 9) +
@@ -1797,7 +1949,6 @@ if (length(all_ids_signif) > 0) {
       ggplot2::aes(color = sig),
       width = 0.2, alpha = 0.5, size = 1.5
     ) +
-    ggplot2::geom_hline(yintercept = 1.5, color = "red", linetype = "dashed", linewidth = 0.6) +
     ggplot2::coord_flip() +
     ggplot2::scale_color_manual(
       values = c("TRUE" = "#0072B2", "FALSE" = "#999999"),
@@ -1808,12 +1959,12 @@ if (length(all_ids_signif) > 0) {
       title = "Individual Participant Ranges by Outcome",
       subtitle = paste0(
         "Each dot = one participant; box shows median \u00b1 IQR; ",
-        "red dashed line = range \u2265 1.5 threshold"
+        "benchmark varies by person (median = ", sprintf("%.2f", median_benchmark), ")"
       ),
       caption = paste0(
         "This plot reveals the full distribution of cyclical variation for each outcome.\n",
         "Blue dots = significant cyclicity; grey dots = not significant.\n",
-        "Outcomes are ordered by median range (bottom to top)."
+        "Outcomes are ordered by median range (bottom to top). No fixed threshold line: benchmark is person-specific."
       ),
       x = NULL,
       y = "Range (max \u2013 min predicted)"
@@ -1836,13 +1987,13 @@ if (length(all_ids_signif) > 0) {
     dplyr::mutate(
       label = dplyr::coalesce(label, variable),
       category = dplyr::case_when(
-        sig & is.finite(best_range) & best_range >= 1.5 ~ "Sig + Range \u2265 1.5",
-        sig                                              ~ "Significant Only",
-        is.finite(best_range) & best_range >= 1.5        ~ "Range \u2265 1.5 Only",
-        TRUE                                              ~ "Neither"
+        sig & meets_benchmark ~ "Sig + Meets Benchmark",
+        sig                   ~ "Significant Only",
+        meets_benchmark       ~ "Meets Benchmark Only",
+        TRUE                  ~ "Neither"
       ),
       category = factor(category, levels = c("Neither", "Significant Only",
-                                              "Range \u2265 1.5 Only", "Sig + Range \u2265 1.5"))
+                                              "Meets Benchmark Only", "Sig + Meets Benchmark"))
     )
 
   # Order outcomes: physical on bottom, affective on top, within each group
@@ -1885,8 +2036,8 @@ if (length(all_ids_signif) > 0) {
     ggplot2::scale_fill_manual(
       values = c("Neither" = "#E0E0E0",
                  "Significant Only" = "#90CAF9",
-                 "Range \u2265 1.5 Only" = "#FFCC80",
-                 "Sig + Range \u2265 1.5" = "#E65100"),
+                 "Meets Benchmark Only" = "#FFCC80",
+                 "Sig + Meets Benchmark" = "#E65100"),
       name = NULL
     ) +
     ggplot2::labs(
@@ -1895,9 +2046,9 @@ if (length(all_ids_signif) > 0) {
                         "outcomes (rows) grouped by domain: affective (top), physical (bottom)"),
       caption = paste0(
         "Each cell shows one participant\u2019s result for one outcome.\n",
-        "Dark orange = both statistically significant AND range meeting C-PASS benchmark; ",
+        "Dark orange = both statistically significant AND range meeting person-specific 30% change benchmark; ",
         "blue = significant only;\n",
-        "light orange = range meeting C-PASS benchmark but not significant; grey = neither."
+        "light orange = range meeting benchmark but not significant; grey = neither."
       ),
       x = "Participants",
       y = NULL
@@ -1935,25 +2086,25 @@ if (length(all_ids_signif) > 0) {
       mean_range   = mean(best_range, na.rm = TRUE),
       median_range = median(best_range, na.rm = TRUE),
       pct_sig      = mean(sig, na.rm = TRUE) * 100,
-      pct_range15  = mean(is.finite(best_range) & best_range >= 1.5, na.rm = TRUE) * 100,
-      pct_either   = mean(sig | (is.finite(best_range) & best_range >= 1.5), na.rm = TRUE) * 100,
+      pct_benchmark = mean(meets_benchmark, na.rm = TRUE) * 100,
+      pct_either   = mean(sig | meets_benchmark, na.rm = TRUE) * 100,
       .groups      = "drop"
     )
 
   # Grouped bar chart for key percentage metrics
   domain_long <- domain_summary %>%
     tidyr::pivot_longer(
-      cols = c(pct_sig, pct_range15, pct_either),
+      cols = c(pct_sig, pct_benchmark, pct_either),
       names_to = "metric", values_to = "pct"
     ) %>%
     dplyr::mutate(
       metric = dplyr::case_when(
-        metric == "pct_sig"     ~ "% Significant",
-        metric == "pct_range15" ~ "% Range \u2265 1.5",
-        metric == "pct_either"  ~ "% Either",
+        metric == "pct_sig"       ~ "% Significant",
+        metric == "pct_benchmark" ~ "% Meets Benchmark",
+        metric == "pct_either"    ~ "% Either",
         TRUE ~ metric
       ),
-      metric = factor(metric, levels = c("% Significant", "% Range \u2265 1.5", "% Either")),
+      metric = factor(metric, levels = c("% Significant", "% Meets Benchmark", "% Either")),
       pct_label = sprintf("%.1f%%", pct)
     )
 
@@ -1988,7 +2139,7 @@ if (length(all_ids_signif) > 0) {
       "Affective = individual mood/emotional DRSP items (excl. composites). ",
       "Physical = individual somatic DRSP items (excl. composites).\n",
       "% of outcome \u00d7 participant pairs meeting each criterion. ",
-      "Range \u2265 1.5 reference line corresponds to the C-PASS 30% change benchmark."
+      "Benchmark = person-specific 30% of DRSP scale range (C-PASS-equivalent change benchmark)."
     ),
     gp = grid::gpar(fontsize = 9, fontface = "italic"),
     just = "left", x = 0.02
@@ -2003,9 +2154,9 @@ if (length(all_ids_signif) > 0) {
 
   # ---- PAGE 8 (was 11): Symptom Co-Occurrence Matrix ----
   # For each pair of outcomes, what % of GAM-valid participants meet
-  # "sig OR range >= 1.5" in both outcomes?
+  # "sig OR meets benchmark" in both outcomes?
   cooccur_data <- id_outcome_summary %>%
-    dplyr::mutate(meets = sig | (is.finite(best_range) & best_range >= 1.5)) %>%
+    dplyr::mutate(meets = sig | meets_benchmark) %>%
     dplyr::left_join(
       tibble::enframe(outcomes, name = "variable", value = "label"),
       by = "variable"
@@ -2056,7 +2207,7 @@ if (length(all_ids_signif) > 0) {
     ) +
     ggplot2::labs(
       title = "Symptom Co-Occurrence: % of Sample Meeting Criterion for Both Outcomes",
-      subtitle = "Criterion: significant (p < .05) OR range \u2265 1.5",
+      subtitle = "Criterion: significant (p < .05) OR meets person-specific benchmark",
       caption = paste0(
         "Each cell shows the % of GAM-valid participants (N = ", n_gam_valid,
         ") who meet the criterion for BOTH outcomes.\n",
@@ -2128,6 +2279,7 @@ get_outcome_df <- function(df, target_var) {
       peak_time       = peak_time[which.min(p.value)][1],
       trough_time     = trough_time[which.min(p.value)][1],
       best_time_var   = time_var[which.min(p.value)][1],
+      id_benchmark    = dplyr::first(id_benchmark),
       .groups         = "drop"
     ) %>%
     dplyr::mutate(
@@ -2135,7 +2287,8 @@ get_outcome_df <- function(df, target_var) {
         significant_num,
         levels = c(0, 1),
         labels = c("Not Significant", "Significant")
-      )
+      ),
+      meets_benchmark = is.finite(range) & is.finite(id_benchmark) & range >= id_benchmark
     )
 }
 
@@ -2551,7 +2704,7 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
     ggplot2::labs(
       title = paste("Peak & Trough Timing:", outcome_label),
       subtitle = paste0("Among participants with significant GAMs (p < .05) ",
-                        "or range \u2265 1.5; N = ",
+                        "or meeting person-specific benchmark; N = ",
                         nrow(df_sig)),
       x = "Cycle Phase",
       y = "Peaks \u2191 / Troughs \u2193 (normalized density)",
@@ -2573,18 +2726,28 @@ plot_peak_trough_timing <- function(df_sig, tv, axis_meta_list, outcome_label) {
 # =========================================================
 # For each DRSP outcome, generates a landscape PDF containing:
 #   1. Summary page: descriptive stats + threshold table + peak/trough timing
-#   2. All GAM curves colored by significance
-#   3. All GAM curves colored by sig. or range >= 1.5
-#   4. Significance probability plot (logistic curve)
-#   5. Histogram of range by significance
-#   6. Empirical + modeled probability plot
+#   2. All GAM curves colored by sig. or meets benchmark vs. neither
+#   3. Significance probability plot (logistic curve)
+#   4. Histogram of range by significance
+#   5. Empirical + modeled probability plot
 #   Per time variable:
-#   7. Peak & trough timing density (significant or range >= 1.5 participants)
-#   8+. Individual GAM trajectory pages (all IDs, sorted by descending range)
+#   6. Peak & trough timing density (significant or meets benchmark participants)
+#   7+. Individual GAM trajectory pages (all IDs, sorted by descending range)
 # =========================================================
 
 if (length(all_ids_signif) > 0) {
   gam_summary_df <- dplyr::bind_rows(all_ids_signif)
+
+  # Attach person-specific benchmark to the outcome exploration summary
+  benchmark_df_sec7 <- data.frame(
+    id = names(id_benchmark_map),
+    id_benchmark = unname(id_benchmark_map),
+    stringsAsFactors = FALSE
+  )
+  gam_summary_df <- dplyr::left_join(
+    gam_summary_df %>% dplyr::mutate(id = as.character(id)),
+    benchmark_df_sec7, by = "id"
+  )
 
   # Create output sub-folder for exploration PDFs
   explore_folder <- file.path(output_folder, "Outcome_Exploration_PDFs")
@@ -2604,12 +2767,13 @@ if (length(all_ids_signif) > 0) {
 
   # Table themes for summary pages
   summary_table_theme <- gridExtra::ttheme_default(
-    base_size = 11,
-    core    = list(fg_params = list(hjust = 0, x = 0.05)),
+    base_size = 9,
+    core    = list(fg_params = list(hjust = 0, x = 0.05),
+                   padding = grid::unit(c(3, 1.5), "mm")),
     colhead = list(fg_params = list(hjust = 0, x = 0.05, fontface = "bold"))
   )
   threshold_table_theme <- gridExtra::ttheme_default(
-    base_size = 10,
+    base_size = 8,
     core    = list(fg_params = list(hjust = 0.5, x = 0.5)),
     colhead = list(fg_params = list(hjust = 0.5, x = 0.5, fontface = "bold"))
   )
@@ -2631,25 +2795,14 @@ if (length(all_ids_signif) > 0) {
     )
     if (is.null(result)) next
 
-    # 2. Identify all IDs sorted by range descending, plus sig/nonsig splits for overlay pages
-    sig_ids <- result$data %>%
-      dplyr::filter(significant_num == 1) %>%
-      dplyr::arrange(dplyr::desc(range)) %>%
-      dplyr::pull(id)
-
-    nonsig_ids <- result$data %>%
-      dplyr::filter(significant_num == 0) %>%
-      dplyr::arrange(dplyr::desc(range)) %>%
-      dplyr::pull(id)
-
-    # IDs where GAM is significant OR range >= 1.5 (for two-group colored overlay)
-    sig_or_range_ids <- result$data %>%
-      dplyr::filter(significant_num == 1 | (is.finite(range) & range >= 1.5)) %>%
+    # 2. Identify IDs: sig OR meets benchmark vs. neither (for two-group colored overlay)
+    sig_or_benchmark_ids <- result$data %>%
+      dplyr::filter(significant_num == 1 | meets_benchmark) %>%
       dplyr::arrange(dplyr::desc(range)) %>%
       dplyr::pull(id)
 
     neither_ids <- result$data %>%
-      dplyr::filter(significant_num == 0 & !(is.finite(range) & range >= 1.5)) %>%
+      dplyr::filter(significant_num == 0 & !meets_benchmark) %>%
       dplyr::arrange(dplyr::desc(range)) %>%
       dplyr::pull(id)
 
@@ -2710,26 +2863,44 @@ if (length(all_ids_signif) > 0) {
     }
 
     n_cpass <- sum(result$data$significant_num == 1 &
-                    is.finite(result$data$range) &
-                    result$data$range >= 1.5, na.rm = TRUE)
+                    result$data$meets_benchmark, na.rm = TRUE)
 
     n_total <- result$descriptives_overall$n_participants
     pct_cpass <- if (n_total > 0) n_cpass / n_total * 100 else NA_real_
+
+    # N and % meeting EITHER criterion: significant OR meets benchmark
+    n_either <- sum(
+      result$data$significant_num == 1 | result$data$meets_benchmark,
+      na.rm = TRUE
+    )
+    pct_either <- if (n_total > 0) n_either / n_total * 100 else NA_real_
+
+    # N meeting benchmark regardless of significance
+    n_benchmark <- sum(result$data$meets_benchmark, na.rm = TRUE)
+    pct_benchmark <- if (n_total > 0) n_benchmark / n_total * 100 else NA_real_
 
     desc_df <- data.frame(
       Metric = c("Total Participants",
                  "N Significant (p < .05)",
                  "Proportion Significant",
-                 "N Range \u22651.5 (p < .05 & range \u2265 1.5)",
-                 "% Range \u22651.5 (of total sample)",
+                 "N Meets Benchmark",
+                 "% Meets Benchmark (of total sample)",
+                 "N Sig AND Meets Benchmark",
+                 "% Sig AND Meets Benchmark (of total sample)",
+                 "N Sig OR Meets Benchmark",
+                 "% Sig OR Meets Benchmark (of total sample)",
                  "Median Range",
                  "Mean Observations per ID"),
       Value = c(
         as.character(n_total),
         as.character(result$descriptives_overall$n_significant),
         sprintf("%.1f%%", result$descriptives_overall$prop_significant * 100),
+        as.character(n_benchmark),
+        ifelse(is.na(pct_benchmark), "N/A", sprintf("%.1f%%", pct_benchmark)),
         as.character(n_cpass),
         ifelse(is.na(pct_cpass), "N/A", sprintf("%.1f%%", pct_cpass)),
+        as.character(n_either),
+        ifelse(is.na(pct_either), "N/A", sprintf("%.1f%%", pct_either)),
         sprintf("%.2f", median(result$data$range, na.rm = TRUE)),
         sprintf("%.1f", mean(result$data$n, na.rm = TRUE))
       ),
@@ -2738,7 +2909,7 @@ if (length(all_ids_signif) > 0) {
 
     sig_peak_data <- result$data %>%
       dplyr::filter(
-        (significant_num == 1) | (is.finite(range) & range >= 1.5),
+        (significant_num == 1) | meets_benchmark,
         !is.na(peak_time), !is.na(trough_time)
       )
 
@@ -2755,8 +2926,8 @@ if (length(all_ids_signif) > 0) {
         tv_label <- timing_by_tv$best_time_var[i]
         suffix <- if (nrow(timing_by_tv) > 1) paste0(" [", tv_label, "]") else ""
         desc_df <- rbind(desc_df, data.frame(
-          Metric = c(paste0("Median Peak Time (sig. or range\u22651.5)", suffix),
-                      paste0("Median Trough Time (sig. or range\u22651.5)", suffix)),
+          Metric = c(paste0("Median Peak Time (sig. or meets BM)", suffix),
+                      paste0("Median Trough Time (sig. or meets BM)", suffix)),
           Value = c(
             sprintf("%.2f (N=%d)", timing_by_tv$med_peak[i], timing_by_tv$n_qual[i]),
             sprintf("%.2f (N=%d)", timing_by_tv$med_trough[i], timing_by_tv$n_qual[i])
@@ -2804,45 +2975,27 @@ if (length(all_ids_signif) > 0) {
         title_grob, subtitle_grob, composite_note_grob,
         desc_tbl, thresh_header, thresh_tbl, note_grob,
         ncol = 1,
-        heights = grid::unit(c(0.08, 0.04, 0.04, 0.24, 0.07, 0.38, 0.07), "npc")
+        heights = grid::unit(c(0.06, 0.03, 0.04, 0.35, 0.04, 0.34, 0.04), "npc")
       )
     } else {
       gridExtra::grid.arrange(
         title_grob, subtitle_grob, desc_tbl, thresh_header, thresh_tbl, note_grob,
         ncol = 1,
-        heights = grid::unit(c(0.10, 0.05, 0.25, 0.08, 0.38, 0.08), "npc")
+        heights = grid::unit(c(0.06, 0.03, 0.38, 0.04, 0.34, 0.04), "npc")
       )
     }
 
-    # ---- PAGE 2: All curves — significant (vermillion) vs. non-significant (sky blue) ----
-    for (tv in time_vars) {
-      p_twocol_sig <- plot_overlay_gam_twogroup(
-        fit_results_list = all_fit_results_by_tv[[tv]],
-        group1_ids       = sig_ids,
-        group2_ids       = nonsig_ids,
-        tv               = tv,
-        axis_meta_list   = axis_meta,
-        outcome_label    = outcome_label,
-        title_prefix     = "All GAM Curves: Significant vs. Non-Significant",
-        group1_label     = "Significant (p < .05)",
-        group2_label     = "Non-Significant (p \u2265 .05)",
-        group1_color     = "#D55E00",
-        group2_color     = "#56B4E9"
-      )
-      if (!is.null(p_twocol_sig)) print(p_twocol_sig)
-    }
-
-    # ---- PAGE 3: All curves — significant OR range >= 1.5 (reddish purple) vs. neither (bluish green) ----
+    # ---- PAGE 2: All curves — significant OR meets benchmark (reddish purple) vs. neither (bluish green) ----
     for (tv in time_vars) {
       p_twocol_range <- plot_overlay_gam_twogroup(
         fit_results_list = all_fit_results_by_tv[[tv]],
-        group1_ids       = sig_or_range_ids,
+        group1_ids       = sig_or_benchmark_ids,
         group2_ids       = neither_ids,
         tv               = tv,
         axis_meta_list   = axis_meta,
         outcome_label    = outcome_label,
-        title_prefix     = "All GAM Curves: Sig. or Range \u22651.5 vs. Neither",
-        group1_label     = "Sig. or Range \u22651.5",
+        title_prefix     = "All GAM Curves: Sig. or Meets Benchmark vs. Neither",
+        group1_label     = "Sig. or Meets Benchmark",
         group2_label     = "Neither",
         group1_color     = "#CC79A7",
         group2_color     = "#009E73"
@@ -2850,20 +3003,20 @@ if (length(all_ids_signif) > 0) {
       if (!is.null(p_twocol_range)) print(p_twocol_range)
     }
 
-    # ---- PAGE 4: Significance Probability Plot ----
+    # ---- PAGE 3: Significance Probability Plot ----
     print(result$plot_probability)
 
-    # ---- PAGE 5: Histogram ----
+    # ---- PAGE 4: Histogram ----
     print(result$plot_histogram)
 
-    # ---- PAGE 6: Empirical + Model ----
+    # ---- PAGE 5: Empirical + Model ----
     print(result$plot_empirical)
 
-    # ---- PAGE 7+: Peak & Trough Timing Summary (per time variable) ----
+    # ---- PAGE 6+: Peak & Trough Timing Summary (per time variable) ----
     for (tv in time_vars) {
       timing_data <- result$data %>%
         dplyr::filter(
-          (significant_num == 1) | (is.finite(range) & range >= 1.5),
+          (significant_num == 1) | meets_benchmark,
           best_time_var == tv,
           !is.na(peak_time), !is.na(trough_time)
         )
@@ -2908,8 +3061,10 @@ if (length(all_ids_signif) > 0) {
           }
         }
         qid_ymax <- expand_ymax(4.5, outcome_max)
+        qid_benchmark <- id_benchmark_map[as.character(qid)]
         p <- create_annotated_plot(res$pred, tv, axis_meta,
-                                   y_limits = c(1, qid_ymax), raw_data = datSX_qid)
+                                   y_limits = c(1, qid_ymax), raw_data = datSX_qid,
+                                   benchmark = qid_benchmark)
         if (!is.null(p)) {
           id_range <- round(res$sig$range, 2)
           id_n     <- res$sig$n
@@ -2944,14 +3099,20 @@ if (length(all_ids_signif) > 0) {
                            rep(list(patchwork::plot_spacer()),
                                max_plots_per_page_exp - length(page_plots)))
           }
+          # Add border key caption for individual DRSP item pages
+          is_drsp_item <- grepl("^drsp_\\d+$", target_var)
+          border_caption <- if (is_drsp_item) BORDER_KEY_CAPTION else NULL
+
           final_page <- patchwork::wrap_plots(plotlist = page_plots,
                                               ncol = plots_per_col_exp) +
             patchwork::plot_annotation(
               title    = paste("Individual GAMs:", outcome_label),
               subtitle = paste("Sorted by descending range | Time variable:", tv),
+              caption  = border_caption,
               theme    = ggplot2::theme(
                 plot.title    = ggplot2::element_text(size = 12, face = "bold"),
-                plot.subtitle = ggplot2::element_text(size = 9)
+                plot.subtitle = ggplot2::element_text(size = 9),
+                plot.caption  = ggplot2::element_text(size = 8, hjust = 0.5, color = "grey30")
               )
             )
           print(final_page)
