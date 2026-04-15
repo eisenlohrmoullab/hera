@@ -1771,8 +1771,8 @@ if (length(all_ids_signif) > 0) {
       `Min-Max`     = sprintf("%.2f-%.2f", min_range, max_range),
       `N Sig`       = n_sig,
       `% Sig`       = sprintf("%.1f%%", pct_sig),
-      `N \u2265BM`  = n_benchmark,
-      `% \u2265BM`  = sprintf("%.1f%%", pct_benchmark),
+      `N ≥BM`  = n_benchmark,
+      `% ≥BM`  = sprintf("%.1f%%", pct_benchmark),
       `N Either`    = n_sig_or_benchmark,
       `% Either`    = sprintf("%.1f%%", pct_sig_or_benchmark)
     )
