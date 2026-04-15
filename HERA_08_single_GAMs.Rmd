@@ -64,8 +64,9 @@ plots_per_row <- 3
 
 # --- Minimum observations per cycle-quarter to run GAMs ---
 # The cycle is divided into 4 equal quarters over [-1, 1].
-# If any quarter has fewer than this many observations, the GAM is skipped
-# for that specific outcome × time-var combination.
+# Inclusion rule: ALL 4 quarters must have at least 1 observation, AND at least
+# 3 of 4 quarters must have >= 2 observations. One quarter with exactly 1 obs
+# is tolerated; any quarter with 0 observations causes exclusion.
 min_obs_per_quarter <- 2
 ```
 
@@ -317,14 +318,18 @@ quarter_bin_counts <- function(vals) {
 
 # --- Check cycle-quarter coverage for a given time variable ---
 # Wrapper around quarter_bin_counts() that extracts the cycle column from a
-# data frame and returns a list with quarter_counts, min_per_quarter, and
-# passes (TRUE when every quarter has >= min_obs_per_quarter observations).
+# data frame and returns a list with quarter_counts, n_empty, n_sparse, and
+# passes (TRUE when all 4 quarters have ≥1 obs AND at most 1 quarter has <2 obs).
 check_quarter_coverage <- function(data, cycle_var) {
   counts <- quarter_bin_counts(data[[cycle_var]])
+  n_empty  <- sum(counts == 0)
+  n_sparse <- sum(counts < min_obs_per_quarter)
   list(
     quarter_counts  = counts,
     min_per_quarter = min(counts),
-    passes          = all(counts >= min_obs_per_quarter)
+    n_empty         = n_empty,
+    n_sparse        = n_sparse,
+    passes          = n_empty == 0 && n_sparse <= 1
   )
 }
 
@@ -342,13 +347,15 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map) {
   message(glue::glue(
     "[{outcome_var}] N={nrow(dat)}, Quarter counts: ",
     "{paste(names(qcov$quarter_counts), qcov$quarter_counts, sep='=', collapse=', ')}, ",
-    "Min per quarter: {qcov$min_per_quarter}, Passes: {qcov$passes}"
+    "Min per quarter: {qcov$min_per_quarter}, Empty: {qcov$n_empty}, ",
+    "Sparse (<{min_obs_per_quarter}): {qcov$n_sparse}, Passes: {qcov$passes}"
   ))
 
   if (!qcov$passes) {
     message(glue::glue(
       "Skipping GAM for {outcome_var}: quarter coverage requirement not met ",
-      "(need >={min_obs_per_quarter} per quarter, min={qcov$min_per_quarter})"
+      "(need 4/4 quarters with \u22651 obs & \u22653/4 with \u2265{min_obs_per_quarter} obs; ",
+      "empty={qcov$n_empty}, sparse={qcov$n_sparse})"
     ))
     return(NULL)
   }
@@ -650,9 +657,12 @@ for (current_id in ids_to_run) {
     tv0 <- time_vars[1]
     meta0 <- axis_meta[[tv0]]
 
-    # Returns TRUE when any quarter has fewer than min_obs_per_quarter observations.
+    # Returns TRUE when coverage is insufficient: any quarter has 0 obs, or
+    # more than 1 quarter has fewer than min_obs_per_quarter observations.
     is_quarter_sparse <- function(qcounts) {
-      any(qcounts < min_obs_per_quarter)
+      n_empty  <- sum(qcounts == 0)
+      n_sparse <- sum(qcounts < min_obs_per_quarter)
+      n_empty > 0 || n_sparse > 1
     }
 
     make_raw_panel <- function(dat, tv, meta, var, y_lab, color) {
@@ -676,6 +686,8 @@ for (current_id in ids_to_run) {
         ", Q3: ", qcounts["Q3"], ", Q4: ", qcounts["Q4"], ")"
       )
       p <- ggplot2::ggplot(dat, ggplot2::aes(x = .data[[tv]], y = .data[[var]])) +
+        ggplot2::geom_vline(xintercept = c(-0.5, 0, 0.5), color = "black",
+                            linewidth = 0.4, linetype = "solid") +
         ggplot2::geom_vline(xintercept = meta$menses, color = "red",
                             linewidth = 0.6, linetype = "dashed") +
         ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen",
@@ -710,10 +722,17 @@ for (current_id in ids_to_run) {
     # Subtitle is informational only; the skip decision is made per time variable.
     coverage_subtitle <- paste0("Time variable: ", tv0)
     if (tv0_sparse) {
+      n_empty_q  <- sum(tv0_qcounts == 0)
+      n_sparse_q <- sum(tv0_qcounts < min_obs_per_quarter)
+      if (n_empty_q > 0) {
+        warn_detail <- paste0(n_empty_q, " quarter(s) with 0 observations")
+      } else {
+        warn_detail <- paste0(n_sparse_q, " quarter(s) with <", min_obs_per_quarter,
+                              " observations (max 1 allowed)")
+      }
       coverage_subtitle <- paste0(
         coverage_subtitle,
-        "\n\u26A0 Fewer than ", min_obs_per_quarter,
-        " observations in one or more cycle quarters for ", tv0
+        "\n\u26A0 Insufficient coverage for ", tv0, ": ", warn_detail
       )
     }
 
@@ -765,6 +784,46 @@ for (current_id in ids_to_run) {
       ncol = 1,
       heights = grid::unit(c(0.08, 0.92), "npc")
     )
+
+    # ---- Page 0c: Composite Outcome Definitions ----
+    grid::grid.newpage()
+    comp_title <- grid::textGrob(
+      paste0("Composite Outcome Definitions \u2014 ID: ", current_id),
+      gp = grid::gpar(fontsize = 16, fontface = "bold")
+    )
+    comp_body <- grid::textGrob(
+      paste0(
+        "The following composite scores are computed in HERA_01_data_prep.Rmd as the\n",
+        "row-wise mean (rowMeans, na.rm = TRUE) of their component DRSP items.\n\n\n",
+        "AFFECTIVE COMPOSITES\n\n",
+        " \u25B6  Negative Affect Mean (drsp_NA)\n",
+        "     = mean of: Depression (1), Hopelessness (2), Worthlessness (3), Anxiety (4),\n",
+        "       Mood Swings (5), Rejection Sensitivity (6), Anger/Irritability (7),\n",
+        "       Interpersonal Conflicts (8), Loss of Interest (9),\n",
+        "       Feeling Overwhelmed (16), Feeling Out of Control (17)\n\n",
+        " \u25B6  Distress (drsp_distress)\n",
+        "     = mean of: Depression (1), Hopelessness (2), Worthlessness (3), Anxiety (4),\n",
+        "       Feeling Overwhelmed (16), Feeling Out of Control (17)\n\n",
+        " \u25B6  Social/Affect Lability (drsp_labilsocsx)\n",
+        "     = mean of: Mood Swings (5), Rejection Sensitivity (6),\n",
+        "       Anger/Irritability (7), Interpersonal Conflicts (8)\n\n",
+        " \u25B6  Low Arousal (drsp_lowarousal)\n",
+        "     = mean of: Loss of Interest (9), Difficulty Concentrating (10),\n",
+        "       Fatigue/Lethargy (11), Hypersomnia (14), Insomnia (15)\n\n\n",
+        "PHYSICAL COMPOSITES\n\n",
+        " \u25B6  Breast Sx (drsp_breastpain)\n",
+        "     = mean of: Breast Tenderness (18), Breast Swelling (19)\n\n",
+        " \u25B6  Eating Sx (drsp_eatsx)\n",
+        "     = mean of: Overeating (12), Specific Food Cravings (13)"
+      ),
+      gp = grid::gpar(fontsize = 10, lineheight = 1.15, fontfamily = "mono"),
+      just = "left", x = 0.05
+    )
+    gridExtra::grid.arrange(
+      comp_title, comp_body,
+      ncol = 1,
+      heights = grid::unit(c(0.08, 0.92), "npc")
+    )
   } else {
     grid::grid.newpage()
     grid::grid.text(
@@ -787,14 +846,16 @@ for (current_id in ids_to_run) {
   for (tv in time_vars) {
     message(sprintf("  ... time variable: %s", tv))
 
-    # Per-tv coverage gate — require ≥min_obs_per_quarter in each cycle quarter.
+    # Per-tv coverage gate — require 4/4 quarters with ≥1 obs, ≥3/4 with ≥2 obs.
     tv_vals_all <- datSX_id[[tv]]
     tv_vals_all <- tv_vals_all[!is.na(tv_vals_all)]
     tv_qcounts  <- quarter_bin_counts(tv_vals_all)
     if (is_quarter_sparse(tv_qcounts)) {
-      message(sprintf("    -> Skipping tv=%s: insufficient quarter coverage (Q1=%d, Q2=%d, Q3=%d, Q4=%d, min=%d)",
+      n_empty_tv  <- sum(tv_qcounts == 0)
+      n_sparse_tv <- sum(tv_qcounts < min_obs_per_quarter)
+      message(sprintf("    -> Skipping tv=%s: insufficient quarter coverage (Q1=%d, Q2=%d, Q3=%d, Q4=%d; empty=%d, sparse=%d)",
                       tv, tv_qcounts["Q1"], tv_qcounts["Q2"], tv_qcounts["Q3"], tv_qcounts["Q4"],
-                      min_obs_per_quarter))
+                      n_empty_tv, n_sparse_tv))
       next
     }
 
@@ -2497,6 +2558,16 @@ if (length(all_ids_signif) > 0) {
     colhead = list(fg_params = list(hjust = 0.5, x = 0.5, fontface = "bold"))
   )
 
+  # --- Composite outcome definitions (sourced from HERA_01_data_prep.Rmd) ---
+  composite_definitions <- list(
+    drsp_NA = "rowMeans of: Depression (1), Hopelessness (2), Worthlessness (3), Anxiety (4), Mood Swings (5), Rejection Sensitivity (6), Anger/Irritability (7), Interpersonal Conflicts (8), Loss of Interest (9), Feeling Overwhelmed (16), Feeling Out of Control (17)",
+    drsp_distress = "rowMeans of: Depression (1), Hopelessness (2), Worthlessness (3), Anxiety (4), Feeling Overwhelmed (16), Feeling Out of Control (17)",
+    drsp_labilsocsx = "rowMeans of: Mood Swings (5), Rejection Sensitivity (6), Anger/Irritability (7), Interpersonal Conflicts (8)",
+    drsp_lowarousal = "rowMeans of: Loss of Interest (9), Difficulty Concentrating (10), Fatigue/Lethargy (11), Hypersomnia (14), Insomnia (15)",
+    drsp_breastpain = "rowMeans of: Breast Tenderness (18), Breast Swelling (19)",
+    drsp_eatsx = "rowMeans of: Overeating (12), Specific Food Cravings (13)"
+  )
+
   for (target_var in all_outcome_vars) {
     cat(sprintf("\n=== Processing: %s ===\n", target_var))
 
@@ -2579,6 +2650,16 @@ if (length(all_ids_signif) > 0) {
       paste("Variable:", target_var),
       gp = grid::gpar(fontsize = 12, fontface = "italic")
     )
+
+    # Add composite definition if this is a composite variable
+    composite_note_grob <- NULL
+    if (target_var %in% names(composite_definitions)) {
+      composite_note_grob <- grid::textGrob(
+        paste0("Composite: ", composite_definitions[[target_var]]),
+        gp = grid::gpar(fontsize = 9, fontface = "italic", col = "grey30"),
+        just = "left", x = 0.03
+      )
+    }
 
     n_cpass <- sum(result$data$significant_num == 1 &
                     is.finite(result$data$range) &
@@ -2670,11 +2751,20 @@ if (length(all_ids_signif) > 0) {
       )
     }
 
-    gridExtra::grid.arrange(
-      title_grob, subtitle_grob, desc_tbl, thresh_header, thresh_tbl, note_grob,
-      ncol = 1,
-      heights = grid::unit(c(0.10, 0.05, 0.25, 0.08, 0.38, 0.08), "npc")
-    )
+    if (!is.null(composite_note_grob)) {
+      gridExtra::grid.arrange(
+        title_grob, subtitle_grob, composite_note_grob,
+        desc_tbl, thresh_header, thresh_tbl, note_grob,
+        ncol = 1,
+        heights = grid::unit(c(0.08, 0.04, 0.04, 0.24, 0.07, 0.38, 0.07), "npc")
+      )
+    } else {
+      gridExtra::grid.arrange(
+        title_grob, subtitle_grob, desc_tbl, thresh_header, thresh_tbl, note_grob,
+        ncol = 1,
+        heights = grid::unit(c(0.10, 0.05, 0.25, 0.08, 0.38, 0.08), "npc")
+      )
+    }
 
     # ---- PAGE 2: All curves — significant (vermillion) vs. non-significant (sky blue) ----
     for (tv in time_vars) {
