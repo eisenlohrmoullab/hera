@@ -504,12 +504,20 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
     # data mode: leave y_limits = NULL → ggplot auto-scales
   }
 
-  # Dynamic expansion for all outcomes: expand y_max to 5 or 6 if predictions exceed default 4.5
-  # Only expand when y_limits were computed internally (not passed by a shared-y caller).
-  if (!y_limits_from_caller && !is.null(y_limits) && any(is.finite(plot_df$estimate))) {
-    max_pred <- max(plot_df$estimate, na.rm = TRUE)
-    expanded_ymax <- expand_composite_ymax(y_limits[2], max_pred)
-    if (expanded_ymax > y_limits[2]) {
+  # Dynamic expansion for all outcomes: expand y_max to 5 or 6 if predictions or raw points exceed
+  # default 4.5.  Only expand when y_limits were computed internally (not passed by a shared-y caller).
+  if (!y_limits_from_caller && !is.null(y_limits)) {
+    raw_max <- if (!is.null(raw_pts) && nrow(raw_pts) > 0 && outcome_var %in% names(raw_pts)) {
+      vals <- raw_pts[[outcome_var]]
+      if (any(is.finite(vals))) max(vals[is.finite(vals)]) else NA_real_
+    } else {
+      NA_real_
+    }
+    pred_max <- if (any(is.finite(plot_df$estimate))) max(plot_df$estimate, na.rm = TRUE) else NA_real_
+    max_pred <- if (!is.na(raw_max) && !is.na(pred_max)) max(raw_max, pred_max) else
+                if (!is.na(raw_max)) raw_max else pred_max
+    expanded_ymax <- expand_ymax(y_limits[2], max_pred)
+    if (!is.na(expanded_ymax) && expanded_ymax > y_limits[2]) {
       y_limits[2] <- expanded_ymax
       y_fix_max <- expanded_ymax
     }
@@ -658,12 +666,12 @@ make_shared_id_y_limits <- function(plot_df, shared_total_range, lower_bound = 1
 }
 
 # --- Dynamic Y-axis expansion for all fixed-scale outcomes ---
-# All fixed-scale outcomes default to y_max = 4.5 but expand to 5 or 6 if predicted values exceed it.
-expand_composite_ymax <- function(y_max_current, max_predicted, absolute_max = 6) {
-  if (is.na(max_predicted) || !is.finite(max_predicted) || max_predicted <= y_max_current) {
+# All fixed-scale outcomes default to y_max = 4.5 but expand to 5 or 6 if predicted or raw values exceed it.
+expand_ymax <- function(y_max_current, max_observed, absolute_max = 6) {
+  if (is.na(max_observed) || !is.finite(max_observed) || max_observed <= y_max_current) {
     return(y_max_current)
   }
-  min(ceiling(max_predicted), absolute_max)
+  min(ceiling(max_observed), absolute_max)
 }
 ```
 
@@ -1083,7 +1091,7 @@ for (current_id in ids_to_run) {
       # Auto-expand y_max from 4.5 to 5 or 6 if data exceeds it (only for non-normalized axes)
       if (!normalize_01 && any(is.finite(ov_data$estimate))) {
         max_est <- max(ov_data$estimate, na.rm = TRUE)
-        expanded_ymax <- expand_composite_ymax(plot_ylim[2], max_est)
+        expanded_ymax <- expand_ymax(plot_ylim[2], max_est)
         if (expanded_ymax > plot_ylim[2]) {
           plot_ylim[2] <- expanded_ymax
         }
@@ -1985,8 +1993,7 @@ get_drsp_variables <- function(df) {
 # outcome_label: display label for the outcome
 # title_prefix: e.g., "Significant GAMs" or "Non-Significant GAMs"
 plot_overlay_gam <- function(fit_results_list, ids, tv, axis_meta_list,
-                             outcome_label, title_prefix,
-                             outcome_var = NULL) {
+                             outcome_label, title_prefix) {
   meta <- axis_meta_list[[tv]]
 
   overlay_data <- do.call(rbind, lapply(ids, function(qid) {
@@ -2005,7 +2012,7 @@ plot_overlay_gam <- function(fit_results_list, ids, tv, axis_meta_list,
   estimate_vals <- overlay_data$estimate
   finite_estimate_vals <- estimate_vals[is.finite(estimate_vals)]
   max_pred <- if (length(finite_estimate_vals) > 0) max(finite_estimate_vals) else NA_real_
-  ymax_final <- expand_composite_ymax(4.5, max_pred)
+  ymax_final <- expand_ymax(4.5, max_pred)
 
   p <- ggplot2::ggplot(overlay_data,
                        ggplot2::aes(x = .data[[tv]], y = estimate, group = id))
@@ -2031,7 +2038,7 @@ plot_overlay_gam <- function(fit_results_list, ids, tv, axis_meta_list,
       breaks = seq(-1, 1, by = 0.5),
       labels = meta$labels
     ) +
-    ggplot2::scale_y_continuous(breaks = seq(1, max(ymax_final, 6), by = 1)) +
+    ggplot2::scale_y_continuous(breaks = seq(1, ceiling(ymax_final), by = 1)) +
     ggplot2::coord_cartesian(ylim = c(1, ymax_final)) +
     ggplot2::labs(
       title    = paste0(title_prefix, ": ", outcome_label),
@@ -2084,7 +2091,7 @@ plot_overlay_gam_twogroup <- function(fit_results_list, group1_ids, group2_ids,
   # Compute y-axis limits: default 1–4.5, expand to 5 or 6 if predictions exceed 4.5
   finite_ests <- overlay_data$estimate[is.finite(overlay_data$estimate)]
   max_pred <- if (length(finite_ests) > 0) max(finite_ests) else NA_real_
-  ymax_final <- expand_composite_ymax(4.5, max_pred)
+  ymax_final <- expand_ymax(4.5, max_pred)
 
   p <- ggplot2::ggplot(
     overlay_data,
@@ -2115,7 +2122,7 @@ plot_overlay_gam_twogroup <- function(fit_results_list, group1_ids, group2_ids,
       breaks = seq(-1, 1, by = 0.5),
       labels = meta$labels
     ) +
-    ggplot2::scale_y_continuous(breaks = seq(1, max(ymax_final, 6), by = 1)) +
+    ggplot2::scale_y_continuous(breaks = seq(1, ceiling(ymax_final), by = 1)) +
     ggplot2::coord_cartesian(ylim = c(1, ymax_final)) +
     ggplot2::labs(
       title    = paste0(title_prefix, ": ", outcome_label),
@@ -2421,8 +2428,7 @@ if (length(all_ids_signif) > 0) {
         tv               = tv,
         axis_meta_list   = axis_meta,
         outcome_label    = outcome_label,
-        title_prefix     = "Significant GAMs (p < .05)",
-        outcome_var      = target_var
+        title_prefix     = "Significant GAMs (p < .05)"
       )
       if (!is.null(p_sig_overlay)) print(p_sig_overlay)
     }
@@ -2435,8 +2441,7 @@ if (length(all_ids_signif) > 0) {
         tv               = tv,
         axis_meta_list   = axis_meta,
         outcome_label    = outcome_label,
-        title_prefix     = "Non-Significant GAMs (p \u2265 .05)",
-        outcome_var      = target_var
+        title_prefix     = "Non-Significant GAMs (p \u2265 .05)"
       )
       if (!is.null(p_nonsig_overlay)) print(p_nonsig_overlay)
     }
