@@ -1385,6 +1385,7 @@ if (length(all_ids_signif) > 0) {
   grDevices::pdf(overall_pdf, width = 11, height = 8.5)
 
   # --- Page numbering helper ---
+  # NOTE: Update total_report_pages if pages are added/removed from this report.
   total_report_pages <- 11L
   page_counter <- 0L
   draw_page_number <- function() {
@@ -1635,21 +1636,30 @@ if (length(all_ids_signif) > 0) {
     )
 
   # --- Conditional color-coding for key columns ---
+  # Color thresholds and shading for table highlighting
+  HIGHLIGHT_BLUE_DARK  <- "#BBDEFB"   # >= 50%
+  HIGHLIGHT_BLUE_LIGHT <- "#E3F2FD"   # >= 25%
+  HIGHLIGHT_ORG_DARK   <- "#FFE0B2"   # >= 50%
+  HIGHLIGHT_ORG_MED    <- "#FFDDC1"   # median range >= 1.5
+  HIGHLIGHT_ORG_LIGHT  <- "#FFF3E0"   # >= 25% or median range >= 1.0
+  HIGHLIGHT_GRN_DARK   <- "#C8E6C9"   # >= 50%
+  HIGHLIGHT_GRN_LIGHT  <- "#E8F5E9"   # >= 25%
+
   n_desc_rows <- nrow(display_desc)
   n_desc_cols <- ncol(display_desc)
   fill_matrix <- matrix("white", nrow = n_desc_rows, ncol = n_desc_cols)
   # Median Range (col 3): orange shading for high values
-  fill_matrix[, 3] <- ifelse(outcome_desc$median_range >= 1.5, "#FFDDC1",
-                              ifelse(outcome_desc$median_range >= 1.0, "#FFF3E0", "white"))
+  fill_matrix[, 3] <- ifelse(outcome_desc$median_range >= 1.5, HIGHLIGHT_ORG_MED,
+                              ifelse(outcome_desc$median_range >= 1.0, HIGHLIGHT_ORG_LIGHT, "white"))
   # % Sig (col 9): blue shading for high rates
-  fill_matrix[, 9] <- ifelse(outcome_desc$pct_sig >= 50, "#BBDEFB",
-                              ifelse(outcome_desc$pct_sig >= 25, "#E3F2FD", "white"))
+  fill_matrix[, 9] <- ifelse(outcome_desc$pct_sig >= 50, HIGHLIGHT_BLUE_DARK,
+                              ifelse(outcome_desc$pct_sig >= 25, HIGHLIGHT_BLUE_LIGHT, "white"))
   # % >=1.5 (col 11): orange shading for high rates
-  fill_matrix[, 11] <- ifelse(outcome_desc$pct_range15 >= 50, "#FFE0B2",
-                               ifelse(outcome_desc$pct_range15 >= 25, "#FFF3E0", "white"))
+  fill_matrix[, 11] <- ifelse(outcome_desc$pct_range15 >= 50, HIGHLIGHT_ORG_DARK,
+                               ifelse(outcome_desc$pct_range15 >= 25, HIGHLIGHT_ORG_LIGHT, "white"))
   # % Either (col 13): green shading for high rates
-  fill_matrix[, 13] <- ifelse(outcome_desc$pct_sig_or_range15 >= 50, "#C8E6C9",
-                               ifelse(outcome_desc$pct_sig_or_range15 >= 25, "#E8F5E9", "white"))
+  fill_matrix[, 13] <- ifelse(outcome_desc$pct_sig_or_range15 >= 50, HIGHLIGHT_GRN_DARK,
+                               ifelse(outcome_desc$pct_sig_or_range15 >= 25, HIGHLIGHT_GRN_LIGHT, "white"))
 
   desc_theme <- gridExtra::ttheme_default(
     base_size = 7,
