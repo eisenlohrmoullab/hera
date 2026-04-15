@@ -815,33 +815,33 @@ for (current_id in ids_to_run) {
       )
     print(p_cover)
 
-    # ---- Page 0b: Interpretation Key (border colors & pink shading) ----
-    grid::grid.newpage()
+    # ---- Page 0b: Interpretation Key (visual elements) ----
     key_title <- grid::textGrob(
       paste0("How to Read This Report \u2014 ID: ", current_id),
       gp = grid::gpar(fontsize = 16, fontface = "bold")
     )
     key_body <- grid::textGrob(
       paste0(
-        "PLOT BORDER COLORS (individual DRSP item plots)\n\n",
-        " \u25B6  Red border:     GAM range \u2265 1.5 \u2014 equivalent to the C-PASS 30% change criterion\n",
-        "                     used to benchmark PMDD cyclical change\n\n",
-        " \u25B6  Salmon border:  GAM range \u2265 1.0 but < 1.5 \u2014 moderate cyclical fluctuation\n\n",
-        " \u25B6  Pink border:    GAM range \u2265 0.5 but < 1.0 \u2014 mild cyclical fluctuation\n\n",
-        " \u25B6  No border:      GAM range < 0.5 \u2014 minimal cyclical change\n\n\n",
-        "OTHER VISUAL ELEMENTS\n\n",
+        "VISUAL ELEMENTS\n\n",
         " \u25B6  Pink shaded region: Area above 4.5 on the y-axis, shown when the axis expands\n",
         "     beyond the default 1\u20134.5 range. Indicates values in the upper extreme of the\n",
         "     1\u20136 DRSP scale.\n\n",
         " \u25B6  Red dashed line:   Menses onset (cycle day 1)\n\n",
         " \u25B6  Green dashed line: Estimated ovulation\n\n",
-        " \u25B6  Red horizontal line (at y = 4): Reference line for DRSP individual items\n\n",
+        " \u25B6  Red horizontal line (at y = 4): Reference line of \"moderate\" severity for\n",
+        "     DRSP individual items\n\n",
         " \u25B6  Dots on GAM curve: Peak (highest) and trough (lowest) predicted values\n\n",
         " \u25B6  Faded points:     Raw daily data behind the GAM curve\n\n",
         " \u25B6  Annotation text:  Stars (*) indicate significance (p < .05); Range = max \u2212 min\n",
-        "                     of predicted values; EDF = effective degrees of freedom"
+        "                     of predicted values; EDF = effective degrees of freedom\n\n",
+        "PLOT BORDER COLORS (individual DRSP item plots)\n\n",
+        " \u25B6  Red border:     GAM range \u2265 1.5 \u2014 equivalent to the C-PASS 30% change criterion\n",
+        "                     used to benchmark PMDD cyclical change\n\n",
+        " \u25B6  Salmon border:  GAM range \u2265 1.0 but < 1.5\n\n",
+        " \u25B6  Pink border:    GAM range \u2265 0.5 but < 1.0\n\n",
+        " \u25B6  No border:      GAM range < 0.5"
       ),
-      gp = grid::gpar(fontsize = 10, lineheight = 1.15, fontfamily = "mono"),
+      gp = grid::gpar(fontsize = 9.5, lineheight = 1.1, fontfamily = "mono"),
       just = "left", x = 0.05
     )
     gridExtra::grid.arrange(
@@ -851,7 +851,6 @@ for (current_id in ids_to_run) {
     )
 
     # ---- Page 0c: Composite Outcome Definitions ----
-    grid::grid.newpage()
     comp_title <- grid::textGrob(
       paste0("Composite Outcome Definitions \u2014 ID: ", current_id),
       gp = grid::gpar(fontsize = 16, fontface = "bold")
@@ -1348,10 +1347,23 @@ for (current_id in ids_to_run) {
         }
         page_title_label <- gsub("_", " ", page_name)
         page_title <- paste(page_title_label, "\u2014 ID:", current_id, "| Time Variable:", tv)
+
+        # Add border color key as caption on DRSP individual item pages
+        is_drsp_page <- grepl("^DRSP_Page_", page_name)
+        border_key_caption <- if (is_drsp_page) {
+          "Border key:  \u25A0 Red = Range \u2265 1.5  |  \u25A0 Salmon = Range \u2265 1.0  |  \u25A0 Pink = Range \u2265 0.5  |  No border = Range < 0.5"
+        } else {
+          NULL
+        }
+
         final_page <- patchwork::wrap_plots(plotlist = plot_list, ncol = plots_per_col) +
           patchwork::plot_annotation(
             title = page_title,
-            theme = ggplot2::theme(plot.title = ggplot2::element_text(size = 12, face = "bold"))
+            caption = border_key_caption,
+            theme = ggplot2::theme(
+              plot.title = ggplot2::element_text(size = 12, face = "bold"),
+              plot.caption = ggplot2::element_text(size = 8, hjust = 0.5, color = "grey30")
+            )
           )
         print(final_page)
       }
@@ -1432,7 +1444,7 @@ if (length(all_ids_signif) > 0) {
       "     and with at most one quarter having fewer than 2 observations. All percentages\n",
       "     in this report use GAM-valid N as the denominator."
     ),
-    gp = grid::gpar(fontsize = 10, lineheight = 1.15), just = "left", x = 0.05
+    gp = grid::gpar(fontsize = 9.5, lineheight = 1.1), just = "left", x = 0.05
   )
   cover_toc <- grid::textGrob(
     paste0(
@@ -1447,12 +1459,12 @@ if (length(all_ids_signif) > 0) {
       "  Page  8 \u2014 Affective vs. Physical Symptom Comparison\n",
       "  Page  9 \u2014 Symptom Co-Occurrence Matrix"
     ),
-    gp = grid::gpar(fontsize = 10, lineheight = 1.2), just = "left", x = 0.05
+    gp = grid::gpar(fontsize = 9.5, lineheight = 1.15), just = "left", x = 0.05
   )
   gridExtra::grid.arrange(
     cover_title, cover_purpose, cover_defs, cover_toc,
     ncol = 1,
-    heights = grid::unit(c(0.07, 0.10, 0.55, 0.28), "npc"),
+    heights = grid::unit(c(0.07, 0.10, 0.52, 0.26), "npc"),
     padding = grid::unit(1, "lines")
   )
   draw_page_number()
@@ -2604,12 +2616,12 @@ if (length(all_ids_signif) > 0) {
 
   # Table themes for summary pages
   summary_table_theme <- gridExtra::ttheme_default(
-    base_size = 11,
+    base_size = 10,
     core    = list(fg_params = list(hjust = 0, x = 0.05)),
     colhead = list(fg_params = list(hjust = 0, x = 0.05, fontface = "bold"))
   )
   threshold_table_theme <- gridExtra::ttheme_default(
-    base_size = 10,
+    base_size = 9,
     core    = list(fg_params = list(hjust = 0.5, x = 0.5)),
     colhead = list(fg_params = list(hjust = 0.5, x = 0.5, fontface = "bold"))
   )
@@ -2804,13 +2816,13 @@ if (length(all_ids_signif) > 0) {
         title_grob, subtitle_grob, composite_note_grob,
         desc_tbl, thresh_header, thresh_tbl, note_grob,
         ncol = 1,
-        heights = grid::unit(c(0.08, 0.04, 0.04, 0.24, 0.07, 0.38, 0.07), "npc")
+        heights = grid::unit(c(0.07, 0.03, 0.03, 0.30, 0.06, 0.36, 0.06), "npc")
       )
     } else {
       gridExtra::grid.arrange(
         title_grob, subtitle_grob, desc_tbl, thresh_header, thresh_tbl, note_grob,
         ncol = 1,
-        heights = grid::unit(c(0.10, 0.05, 0.25, 0.08, 0.38, 0.08), "npc")
+        heights = grid::unit(c(0.08, 0.04, 0.32, 0.06, 0.36, 0.06), "npc")
       )
     }
 
@@ -2944,14 +2956,24 @@ if (length(all_ids_signif) > 0) {
                            rep(list(patchwork::plot_spacer()),
                                max_plots_per_page_exp - length(page_plots)))
           }
+          # Add border key caption for individual DRSP item pages
+          is_drsp_item <- grepl("^drsp_\\d+$", target_var)
+          border_caption <- if (is_drsp_item) {
+            "Border key:  \u25A0 Red = Range \u2265 1.5  |  \u25A0 Salmon = Range \u2265 1.0  |  \u25A0 Pink = Range \u2265 0.5  |  No border = Range < 0.5"
+          } else {
+            NULL
+          }
+
           final_page <- patchwork::wrap_plots(plotlist = page_plots,
                                               ncol = plots_per_col_exp) +
             patchwork::plot_annotation(
               title    = paste("Individual GAMs:", outcome_label),
               subtitle = paste("Sorted by descending range | Time variable:", tv),
+              caption  = border_caption,
               theme    = ggplot2::theme(
                 plot.title    = ggplot2::element_text(size = 12, face = "bold"),
-                plot.subtitle = ggplot2::element_text(size = 9)
+                plot.subtitle = ggplot2::element_text(size = 9),
+                plot.caption  = ggplot2::element_text(size = 8, hjust = 0.5, color = "grey30")
               )
             )
           print(final_page)
