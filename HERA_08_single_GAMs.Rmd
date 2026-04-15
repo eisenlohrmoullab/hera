@@ -882,10 +882,13 @@ for (current_id in ids_to_run) {
       for (cname in names(composite_specs)) {
         spec <- composite_specs[[cname]]
         if (spec$domain != domain) next
+        items_str <- paste(spec$components, collapse = ", ")
+        wrapped <- strwrap(paste0("= mean of: ", items_str),
+                           width = 90, indent = 5, exdent = 17)
         comp_lines <- paste0(
           comp_lines,
           " \u25B6  ", spec$label, " (", cname, ")\n",
-          "     = mean of: ", paste(spec$components, collapse = ", "), "\n\n"
+          paste(wrapped, collapse = "\n"), "\n\n"
         )
       }
     }
