@@ -459,19 +459,31 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
     if (nrow(raw_pts) == 0) raw_pts <- NULL
   }
 
-  # Dynamic expansion for all outcomes: expand y_max to 5 or 6 if predictions or raw points exceed
-  # default 4.5.  Only expand when y_limits were computed internally (not passed by a shared-y caller).
-  if (!y_limits_from_caller && !is.null(y_limits)) {
+  # Dynamic Y-axis expansion for fixed-scale outcomes (where y_limits is non-NULL).
+  # Data-mode outcomes leave y_limits = NULL and rely on ggplot auto-scaling instead.
+  #
+  # Two expansion paths:
+  #   1. Caller-provided y_limits (GAM-based global ymax for this ID):
+  #      Only expand further if raw data points for THIS outcome exceed the limit.
+  #   2. Internally-computed y_limits (no caller override):
+  #      Expand based on both GAM predictions and raw data.
+  if (!is.null(y_limits)) {
     raw_max <- if (!is.null(raw_pts) && nrow(raw_pts) > 0 && outcome_var %in% names(raw_pts)) {
       vals <- raw_pts[[outcome_var]]
       if (any(is.finite(vals))) max(vals[is.finite(vals)]) else NA_real_
     } else {
       NA_real_
     }
-    pred_max <- if (any(is.finite(plot_df$estimate))) max(plot_df$estimate, na.rm = TRUE) else NA_real_
-    max_pred <- if (!is.na(raw_max) && !is.na(pred_max)) max(raw_max, pred_max) else
-                if (!is.na(raw_max)) raw_max else pred_max
-    expanded_ymax <- expand_ymax(y_limits[2], max_pred)
+    if (y_limits_from_caller) {
+      # Caller already applied GAM-based global expansion; only expand further for raw data
+      expanded_ymax <- expand_ymax(y_limits[2], raw_max)
+    } else {
+      # No caller limits: expand for both predictions and raw data
+      pred_max <- if (any(is.finite(plot_df$estimate))) max(plot_df$estimate, na.rm = TRUE) else NA_real_
+      max_val <- if (!is.na(raw_max) && !is.na(pred_max)) max(raw_max, pred_max) else
+                  if (!is.na(raw_max)) raw_max else pred_max
+      expanded_ymax <- expand_ymax(y_limits[2], max_val)
+    }
     if (!is.na(expanded_ymax) && expanded_ymax > y_limits[2]) {
       y_limits[2] <- expanded_ymax
       y_fix_max <- expanded_ymax
@@ -581,37 +593,10 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
   p
 }
 
-# --- Compute shared per-ID y-limits for a plot, clamped to [1, 6] ---
-make_shared_id_y_limits <- function(plot_df, shared_total_range, lower_bound = 1, upper_bound = 6) {
-  this_ymin <- min(plot_df$estimate, na.rm = TRUE)
-  this_ymax <- max(plot_df$estimate, na.rm = TRUE)
-  this_mid  <- (this_ymin + this_ymax) / 2
-
-  half_span <- shared_total_range / 2
-  y_low  <- this_mid - half_span
-  y_high <- this_mid + half_span
-
-  # Clamp to allowed symptom scale
-  if (y_low < lower_bound) {
-    shift_up <- lower_bound - y_low
-    y_low  <- y_low + shift_up
-    y_high <- y_high + shift_up
-  }
-  if (y_high > upper_bound) {
-    shift_down <- y_high - upper_bound
-    y_low  <- y_low - shift_down
-    y_high <- y_high - shift_down
-  }
-
-  # Final safeguard in case shared_total_range is very large
-  y_low  <- max(y_low, lower_bound)
-  y_high <- min(y_high, upper_bound)
-
-  c(y_low, y_high)
-}
-
 # --- Dynamic Y-axis expansion for all fixed-scale outcomes ---
-# All fixed-scale outcomes default to y_max = 4.5 but expand to 5 or 6 if predicted or raw values exceed it.
+# All fixed-scale outcomes default to y_max = 4.5 but expand to 5 or 6 if observed values exceed it.
+# GAM predictions exceeding 4.5 drive global (all-outcome) expansion for the person.
+# Raw data points exceeding 4.5 drive per-outcome expansion only.
 expand_ymax <- function(y_max_current, max_observed, absolute_max = 6) {
   if (is.na(max_observed) || !is.finite(max_observed) || max_observed <= y_max_current) {
     return(y_max_current)
@@ -799,28 +784,16 @@ for (current_id in ids_to_run) {
   }
 
   # ---- Compute global ymax for this ID across ALL outcomes and time vars ----
-  # If any outcome/time-var combination needs the expanded 5 or 6 scale,
-  # ALL graphs for this person use that same expanded ymax (with pink shading).
+  # Only GAM predictions drive the global expansion: if any outcome's predicted
+  # curve exceeds 4.5, ALL plots for this person expand to the same ymax (5 or 6).
+  # Raw data points above 4.5 expand only the individual outcome plot where they
+  # occur (handled inside create_annotated_plot).
   global_max_val <- 4.5
-  # Check GAM predictions
+  # Check GAM predictions only (raw-data expansion is per-outcome, not global)
   for (tv_name in names(preds_by_tv)) {
     est_vals <- preds_by_tv[[tv_name]]$estimate
     finite_est <- est_vals[is.finite(est_vals)]
     if (length(finite_est) > 0) global_max_val <- max(global_max_val, max(finite_est))
-  }
-  # Check raw data (matching the inclusion criteria used by create_annotated_plot)
-  for (outcome_var in names(outcomes)) {
-    log_out <- paste0(outcome_var, "_Log")
-    if (!(outcome_var %in% names(datSX_id) && log_out %in% names(datSX_id))) next
-    for (tv_name in names(preds_by_tv)) {
-      if (!(tv_name %in% names(datSX_id))) next
-      raw_idx <- complete.cases(datSX_id[, c(log_out, tv_name)])
-      if (any(raw_idx)) {
-        vals <- datSX_id[[outcome_var]][raw_idx]
-        finite_vals <- vals[is.finite(vals)]
-        if (length(finite_vals) > 0) global_max_val <- max(global_max_val, max(finite_vals))
-      }
-    }
   }
   id_global_ymax <- expand_ymax(4.5, global_max_val)
   id_global_ylimits <- c(1, id_global_ymax)
@@ -1227,133 +1200,6 @@ for (current_id in ids_to_run) {
             theme = ggplot2::theme(plot.title = ggplot2::element_text(size = 12, face = "bold"))
           )
         print(final_page)
-      }
-    }
-  }
-
-  # ---- Symptom Trajectories with ID-specific shared y-range ----
-  # For each ID and time variable:
-  #   - find the largest predicted range per y_axis_mode group (fixed / data)
-  #   - add 0.25, then apply that shared total y-range to every outcome in the group
-  #   - fixed-scale outcomes (DRSP individual items): clamped to [1, 6]
-  #   - data-scale outcomes (DRSP composites): unclamped, data-driven bounds
-  for (tv in names(preds_by_tv)) {
-
-    combined_plot_data <- preds_by_tv[[tv]]
-    if (is.null(combined_plot_data) || nrow(combined_plot_data) == 0) next
-
-    id_range_df <- combined_plot_data %>%
-      dplyr::group_by(outcome_var, outcome_label) %>%
-      dplyr::summarise(
-        ymin = min(estimate, na.rm = TRUE),
-        ymax = max(estimate, na.rm = TRUE),
-        yrange = ymax - ymin,
-        .groups = "drop"
-      ) %>%
-      dplyr::left_join(
-        dplyr::select(outcome_plot_settings, variable, y_axis_mode, y_min, y_max),
-        by = c("outcome_var" = "variable")
-      ) %>%
-      dplyr::mutate(
-        y_axis_mode = dplyr::coalesce(y_axis_mode, "fixed"),
-        is_composite = !grepl(DRSP_VAR_PATTERN, outcome_var),
-        lower_bound = dplyr::if_else(
-          y_axis_mode == "fixed", dplyr::coalesce(y_min, 1), ymin - 0.5
-        ),
-        # For all fixed-scale outcomes (default y_max=4.5), expand upper_bound to 5 or 6 if predictions exceed 4.5
-        upper_bound = dplyr::if_else(
-          y_axis_mode == "fixed",
-          pmax(dplyr::coalesce(y_max, 4.5), pmin(ceiling(ymax), 6)),
-          ymax + 0.5
-        )
-      )
-
-    if (nrow(id_range_df) == 0) next
-
-    shared_range_by_mode <- id_range_df %>%
-      dplyr::group_by(y_axis_mode) %>%
-      dplyr::summarise(
-        shared_total_range = max(yrange, na.rm = TRUE) + 0.25,
-        .groups = "drop"
-      ) %>%
-      dplyr::mutate(
-        shared_total_range = dplyr::if_else(
-          y_axis_mode == "fixed",
-          pmin(shared_total_range, 5),
-          shared_total_range
-        )
-      )
-
-    for (page_name in names(page_definitions)) {
-      page_outcome_labels <- page_definitions[[page_name]]
-      page_outcome_labels <- page_outcome_labels[page_outcome_labels %in% id_range_df$outcome_label]
-      if (length(page_outcome_labels) == 0) next
-
-      page_data <- dplyr::filter(combined_plot_data, outcome_label %in% page_outcome_labels)
-      if (nrow(page_data) == 0) next
-
-      plot_list_shared <- lapply(page_outcome_labels, function(lab) {
-        plot_df <- dplyr::filter(page_data, outcome_label == lab)
-        if (nrow(plot_df) == 0) return(NULL)
-
-        ov        <- dplyr::first(plot_df$outcome_var)
-        mode_row  <- id_range_df[id_range_df$outcome_var == ov, ]
-        mode_str  <- if (nrow(mode_row) > 0) mode_row$y_axis_mode[1] else "fixed"
-        lb        <- if (nrow(mode_row) > 0) mode_row$lower_bound[1] else 1
-        ub        <- if (nrow(mode_row) > 0) mode_row$upper_bound[1] else 6
-        rng_row   <- shared_range_by_mode[shared_range_by_mode$y_axis_mode == mode_str, ]
-        str_range <- if (nrow(rng_row) > 0) rng_row$shared_total_range[1] else 5
-
-        shared_y_limits <- make_shared_id_y_limits(
-          plot_df = plot_df,
-          shared_total_range = str_range,
-          lower_bound = lb,
-          upper_bound = ub
-        )
-
-        create_annotated_plot(
-          plot_df = plot_df,
-          tv = tv,
-          axis_meta_list = axis_meta,
-          y_limits = shared_y_limits,
-          raw_data = datSX_id
-        )
-      })
-
-      plot_list_shared <- Filter(Negate(is.null), plot_list_shared)
-
-      if (length(plot_list_shared) > 0) {
-        if (length(plot_list_shared) < max_plots_per_page) {
-          plot_list_shared <- c(
-            plot_list_shared,
-            rep(list(patchwork::plot_spacer()), max_plots_per_page - length(plot_list_shared))
-          )
-        }
-
-        page_title_label <- gsub("_", " ", page_name)
-        page_title_shared <- paste(
-          "Symptom Trajectories (ID-Scaled Y Axis) \u2014", page_title_label,
-          "\u2014 ID:", current_id, "| Time Variable:", tv
-        )
-        page_subtitle_shared <- paste0(
-          "Shared y-range per scale group (items=Likert [1-6]; composites=[1-4, expands if needed]). ",
-          "Time variable: ", tv
-        )
-
-        final_page_shared <- patchwork::wrap_plots(
-          plotlist = plot_list_shared,
-          ncol = plots_per_col
-        ) +
-          patchwork::plot_annotation(
-            title = page_title_shared,
-            subtitle = page_subtitle_shared,
-            theme = ggplot2::theme(
-              plot.title = ggplot2::element_text(size = 12, face = "bold"),
-              plot.subtitle = ggplot2::element_text(size = 9)
-            )
-          )
-
-        print(final_page_shared)
       }
     }
   }
