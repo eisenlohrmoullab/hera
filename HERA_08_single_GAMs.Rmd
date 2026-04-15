@@ -1533,7 +1533,7 @@ if (length(all_ids_signif) > 0) {
       id_label = as.character(id)
     )
 
-  # Order IDs: included first (sorted by total obs descending), then excluded
+  # Order IDs: excluded first, then included (sorted by total obs descending within each group)
   id_order_incl <- cov_df %>%
     dplyr::filter(included) %>%
     dplyr::arrange(dplyr::desc(total_obs), id) %>%
@@ -1791,8 +1791,12 @@ if (length(all_ids_signif) > 0) {
   # Use only GAM-valid IDs for the median benchmark
   gam_valid_benchmarks <- id_benchmark_map[names(id_benchmark_map) %in% as.character(all_ids)]
   median_benchmark <- median(gam_valid_benchmarks, na.rm = TRUE)
+  # Shading tiers for Median Range column: dark orange if at or above the median
+  # benchmark, light orange if at or above two-thirds of the median benchmark
+  # (i.e., approaching the typical person's benchmark), white otherwise.
+  MEDIAN_RANGE_MODERATE_FRAC <- 2/3
   fill_matrix[, 3] <- ifelse(outcome_desc$median_range >= median_benchmark, HIGHLIGHT_ORG_MED,
-                              ifelse(outcome_desc$median_range >= median_benchmark * 0.67, HIGHLIGHT_ORG_LIGHT, "white"))
+                              ifelse(outcome_desc$median_range >= median_benchmark * MEDIAN_RANGE_MODERATE_FRAC, HIGHLIGHT_ORG_LIGHT, "white"))
   # % Sig (col 9): blue shading for high rates
   fill_matrix[, 9] <- ifelse(outcome_desc$pct_sig >= 50, HIGHLIGHT_BLUE_DARK,
                               ifelse(outcome_desc$pct_sig >= 25, HIGHLIGHT_BLUE_LIGHT, "white"))
@@ -1879,8 +1883,8 @@ if (length(all_ids_signif) > 0) {
   draw_page_number()
 
   # ---- PAGE 4 (was 6): % Significant and % meeting benchmark by outcome (faceted bars) ----
-  # Precompute ordering by % Sig OR meets benchmark (descending) before pivoting so all metrics
-  # share a consistent outcome order.
+  # Precompute ordering by % Sig OR meets benchmark (ascending, so highest values appear at the
+  # top of the coord_flip-ed plot) before pivoting so all metrics share a consistent outcome order.
   pct_data <- outcome_desc %>%
     dplyr::mutate(label = factor(label, levels = label[order(pct_sig_or_benchmark)])) %>%
     dplyr::select(label, pct_sig, pct_benchmark, pct_sig_or_benchmark) %>%
