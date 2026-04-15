@@ -696,9 +696,11 @@ for (current_id in ids_to_run) {
     }
 
     p_joint  <- make_raw_panel(datSX_id, tv0, meta0, "drsp_21",
-                               "Joint/Muscle Pain (DRSP 21)", "#CC6677")
+                               "Joint/Muscle Pain (DRSP 21)", "#CC6677") +
+      ggplot2::coord_cartesian(ylim = c(1, 6))
     p_drsp_na <- make_raw_panel(datSX_id, tv0, meta0, "drsp_NA",
-                                "DRSP Negative Affect Mean", "#D55E00")
+                                "DRSP Negative Affect Mean", "#D55E00") +
+      ggplot2::coord_cartesian(ylim = c(1, 6))
 
     tv0_vals <- datSX_id[[tv0]]
     tv0_vals <- tv0_vals[!is.na(tv0_vals)]
