@@ -176,35 +176,35 @@ if (length(missing_colors) > 0) {
 # y_axis_mode "data"  uses data-driven limits; no fixed reference line.
 outcome_plot_settings <- tribble(
   ~variable,          ~y_axis_mode, ~y_min, ~y_max, ~ref_line,
-  # DRSP composite outcomes — default 1-4 scale; expands to 5 or 6 if predictions exceed 4
-  "drsp_NA",          "fixed",       1,      4,     NA,
-  "drsp_distress",    "fixed",       1,      4,     NA,
-  "drsp_labilsocsx",  "fixed",       1,      4,     NA,
-  "drsp_breastpain",  "fixed",       1,      4,     NA,
-  "drsp_eatsx",       "fixed",       1,      4,     NA,
-  "drsp_lowarousal",  "fixed",       1,      4,     NA,
-  # DRSP individual items — fixed 1-6 Likert scale
-  "drsp_1",           "fixed",       1,      6,      4,
-  "drsp_2",           "fixed",       1,      6,      4,
-  "drsp_3",           "fixed",       1,      6,      4,
-  "drsp_4",           "fixed",       1,      6,      4,
-  "drsp_5",           "fixed",       1,      6,      4,
-  "drsp_6",           "fixed",       1,      6,      4,
-  "drsp_7",           "fixed",       1,      6,      4,
-  "drsp_8",           "fixed",       1,      6,      4,
-  "drsp_9",           "fixed",       1,      6,      4,
-  "drsp_16",          "fixed",       1,      6,      4,
-  "drsp_17",          "fixed",       1,      6,      4,
-  "drsp_10",          "fixed",       1,      6,      4,
-  "drsp_11",          "fixed",       1,      6,      4,
-  "drsp_14",          "fixed",       1,      6,      4,
-  "drsp_15",          "fixed",       1,      6,      4,
-  "drsp_12",          "fixed",       1,      6,      4,
-  "drsp_13",          "fixed",       1,      6,      4,
-  "drsp_18",          "fixed",       1,      6,      4,
-  "drsp_19",          "fixed",       1,      6,      4,
-  "drsp_20",          "fixed",       1,      6,      4,
-  "drsp_21",          "fixed",       1,      6,      4
+  # DRSP composite outcomes — default 1–4.5 scale; expands to 5 or 6 if predictions exceed 4.5
+  "drsp_NA",          "fixed",       1,      4.5,   NA,
+  "drsp_distress",    "fixed",       1,      4.5,   NA,
+  "drsp_labilsocsx",  "fixed",       1,      4.5,   NA,
+  "drsp_breastpain",  "fixed",       1,      4.5,   NA,
+  "drsp_eatsx",       "fixed",       1,      4.5,   NA,
+  "drsp_lowarousal",  "fixed",       1,      4.5,   NA,
+  # DRSP individual items — default 1–4.5 scale; expands to 5 or 6 if predictions exceed 4.5
+  "drsp_1",           "fixed",       1,      4.5,    4,
+  "drsp_2",           "fixed",       1,      4.5,    4,
+  "drsp_3",           "fixed",       1,      4.5,    4,
+  "drsp_4",           "fixed",       1,      4.5,    4,
+  "drsp_5",           "fixed",       1,      4.5,    4,
+  "drsp_6",           "fixed",       1,      4.5,    4,
+  "drsp_7",           "fixed",       1,      4.5,    4,
+  "drsp_8",           "fixed",       1,      4.5,    4,
+  "drsp_9",           "fixed",       1,      4.5,    4,
+  "drsp_16",          "fixed",       1,      4.5,    4,
+  "drsp_17",          "fixed",       1,      4.5,    4,
+  "drsp_10",          "fixed",       1,      4.5,    4,
+  "drsp_11",          "fixed",       1,      4.5,    4,
+  "drsp_14",          "fixed",       1,      4.5,    4,
+  "drsp_15",          "fixed",       1,      4.5,    4,
+  "drsp_12",          "fixed",       1,      4.5,    4,
+  "drsp_13",          "fixed",       1,      4.5,    4,
+  "drsp_18",          "fixed",       1,      4.5,    4,
+  "drsp_19",          "fixed",       1,      4.5,    4,
+  "drsp_20",          "fixed",       1,      4.5,    4,
+  "drsp_21",          "fixed",       1,      4.5,    4
 )
 
 # --- Normalization scale ranges for normalized overlay pages ---
@@ -475,6 +475,9 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
                                   raw_data = NULL) {
   if (is.null(plot_df) || nrow(plot_df) == 0) return(NULL)
 
+  # Track whether y_limits were provided by the caller (vs. computed internally)
+  y_limits_from_caller <- !is.null(y_limits)
+
   max_pt <- dplyr::slice_max(plot_df, order_by = estimate, n = 1, with_ties = FALSE)
   min_pt <- dplyr::slice_min(plot_df, order_by = estimate, n = 1, with_ties = FALSE)
   rng   <- dplyr::first(plot_df$raw_range)
@@ -491,7 +494,7 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
   mode      <- if (nrow(ps) > 0) ps$y_axis_mode[1] else "fixed"
   ref_line  <- if (nrow(ps) > 0) ps$ref_line[1]    else 4
   y_fix_min <- if (nrow(ps) > 0) ps$y_min[1]       else 1
-  y_fix_max <- if (nrow(ps) > 0) ps$y_max[1]       else 6
+  y_fix_max <- if (nrow(ps) > 0) ps$y_max[1]       else 4.5
 
   # Resolve y-axis limits when not explicitly supplied by the caller
   if (is.null(y_limits)) {
@@ -501,15 +504,20 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
     # data mode: leave y_limits = NULL → ggplot auto-scales
   }
 
-  # Dynamic expansion for composite outcomes: expand y_max to 5 or 6 if predictions exceed it
-  is_composite <- !grepl(DRSP_VAR_PATTERN, outcome_var)
-  if (is_composite && !is.null(y_limits) && any(is.finite(plot_df$estimate))) {
+  # Dynamic expansion for all outcomes: expand y_max to 5 or 6 if predictions exceed default 4.5
+  # Only expand when y_limits were computed internally (not passed by a shared-y caller).
+  if (!y_limits_from_caller && !is.null(y_limits) && any(is.finite(plot_df$estimate))) {
     max_pred <- max(plot_df$estimate, na.rm = TRUE)
     expanded_ymax <- expand_composite_ymax(y_limits[2], max_pred)
     if (expanded_ymax > y_limits[2]) {
       y_limits[2] <- expanded_ymax
       y_fix_max <- expanded_ymax
     }
+  }
+
+  # Sync y_fix_max to y_limits[2] so axis breaks always cover the full displayed range
+  if (mode == "fixed" && !is.null(y_limits)) {
+    y_fix_max <- max(y_fix_max, y_limits[2])
   }
 
   cpass_flag <- !is.null(rng) && is.finite(rng) && rng >= 1.5
@@ -540,18 +548,28 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
 
   p <- ggplot2::ggplot(plot_df, ggplot2::aes(x = .data[[tv]], y = estimate))
 
+  # Pink shading over the expanded y-axis region (above 4.5) — rendered first so it sits behind data
+  if (!is.null(y_limits) && y_limits[2] > 4.5) {
+    p <- p + ggplot2::annotate(
+      "rect",
+      xmin = -Inf, xmax = Inf,
+      ymin = 4.5,  ymax = y_limits[2],
+      fill = "pink", alpha = 0.25
+    )
+  }
+
   # Reference line only for outcomes that define one (Likert-scale outcomes)
   if (!is.na(ref_line)) {
     p <- p + ggplot2::geom_hline(yintercept = ref_line, color = "red",
                                  linewidth = 0.4, alpha = 0.4)
   }
 
-  # Overlay raw data points behind the GAM curve
+  # Overlay raw data points behind the GAM curve (slightly prominent for visibility)
   if (!is.null(raw_pts)) {
     p <- p + ggplot2::geom_point(
       data = raw_pts,
       ggplot2::aes(x = .data[[tv]], y = .data[[outcome_var]]),
-      color = line_col, alpha = 0.25, size = 1.2, shape = 16,
+      color = line_col, alpha = 0.45, size = 1.8, shape = 16,
       inherit.aes = FALSE
     )
   }
@@ -574,7 +592,7 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
       axis.text = ggplot2::element_text(size = 7)
     )
 
-  # For fixed-scale outcomes, show all integer breaks on the y-axis
+  # For fixed-scale outcomes, show integer breaks on the y-axis up to y_fix_max
   if (mode == "fixed" && !is.na(y_fix_min) && !is.na(y_fix_max)) {
     p <- p + ggplot2::scale_y_continuous(
       breaks = seq(y_fix_min, y_fix_max, by = 1)
@@ -639,8 +657,8 @@ make_shared_id_y_limits <- function(plot_df, shared_total_range, lower_bound = 1
   c(y_low, y_high)
 }
 
-# --- Dynamic Y-axis expansion for composite outcomes ---
-# Composites default to y_max = 4 but expand to 5 or 6 if predicted values exceed 4.
+# --- Dynamic Y-axis expansion for all fixed-scale outcomes ---
+# All fixed-scale outcomes default to y_max = 4.5 but expand to 5 or 6 if predicted values exceed it.
 expand_composite_ymax <- function(y_max_current, max_predicted, absolute_max = 6) {
   if (is.na(max_predicted) || !is.finite(max_predicted) || max_predicted <= y_max_current) {
     return(y_max_current)
@@ -1062,6 +1080,14 @@ for (current_id in ids_to_run) {
       plot_ylim <- c(max(0, y_min - y_pad), y_max + y_pad)
     } else {
       plot_ylim <- fixed_ylim
+      # Auto-expand y_max from 4.5 to 5 or 6 if data exceeds it (only for non-normalized axes)
+      if (!normalize_01 && any(is.finite(ov_data$estimate))) {
+        max_est <- max(ov_data$estimate, na.rm = TRUE)
+        expanded_ymax <- expand_composite_ymax(plot_ylim[2], max_est)
+        if (expanded_ymax > plot_ylim[2]) {
+          plot_ylim[2] <- expanded_ymax
+        }
+      }
     }
 
     range_label <- format(range_thresh, nsmall = 1)
@@ -1075,6 +1101,16 @@ for (current_id in ids_to_run) {
 
     p <- ggplot2::ggplot(ov_data,
            ggplot2::aes(x = .data[[tv]], y = estimate, color = outcome_var))
+
+    # Pink shading over the expanded y-axis region (above 4.5) — rendered first
+    if (!normalize_01 && plot_ylim[2] > 4.5) {
+      p <- p + ggplot2::annotate(
+        "rect",
+        xmin = -Inf, xmax = Inf,
+        ymin = 4.5,  ymax = plot_ylim[2],
+        fill = "pink", alpha = 0.25
+      )
+    }
 
     if (show_hline) {
       p <- p + ggplot2::geom_hline(yintercept = hline_y, color = "red",
@@ -1139,7 +1175,7 @@ for (current_id in ids_to_run) {
   # ---- Overlaid GAM pages by outcome category ----
   for (tv in names(preds_by_tv)) {
 
-    # (1) Individual DRSP items: sig OR range >= 0.5, Y scale 1-6
+    # (1) Individual DRSP items: sig OR range >= 0.5, Y scale default 1–4.5 (expands to 5 or 6)
     plot_overlay_page(
       sig_tv = sig_by_tv[[tv]], pred_tv = preds_by_tv[[tv]],
       tv = tv, meta = axis_meta[[tv]],
@@ -1147,21 +1183,14 @@ for (current_id in ids_to_run) {
       range_thresh   = 0.5,
       title_prefix   = "Overlaid GAM Curves (Individual DRSP Items)",
       subtitle_label = "Individual DRSP items",
-      ylim_strategy  = "fixed", fixed_ylim = c(1, 6),
+      ylim_strategy  = "fixed", fixed_ylim = c(1, 4.5),
       show_hline = TRUE, hline_y = 4,
       legend_ncol = 4,
       show_range_in_labels = TRUE
     )
 
-    # (2) DRSP composite outcomes: sig only, 1-4 Y scale (expands to 5 or 6 if needed)
+    # (2) DRSP composite outcomes: sig only, default 1–4.5 Y scale (expands to 5 or 6 if needed)
     composite_vars <- names(outcomes)[!grepl(DRSP_VAR_PATTERN, names(outcomes))]
-    # Compute dynamic Y-max for composites: default 4, expand if predictions exceed
-    composite_pred <- preds_by_tv[[tv]] %>% dplyr::filter(outcome_var %in% composite_vars)
-    composite_ymax <- 4
-    if (nrow(composite_pred) > 0 && any(is.finite(composite_pred$estimate))) {
-      max_est <- max(composite_pred$estimate, na.rm = TRUE)
-      composite_ymax <- expand_composite_ymax(4, max_est)
-    }
     plot_overlay_page(
       sig_tv = sig_by_tv[[tv]], pred_tv = preds_by_tv[[tv]],
       tv = tv, meta = axis_meta[[tv]],
@@ -1169,7 +1198,7 @@ for (current_id in ids_to_run) {
       range_thresh   = Inf,
       title_prefix   = "Overlaid GAM Curves (DRSP Composites)",
       subtitle_label = "DRSP composite outcomes",
-      ylim_strategy  = "fixed", fixed_ylim = c(1, composite_ymax),
+      ylim_strategy  = "fixed", fixed_ylim = c(1, 4.5),
       show_hline = FALSE,
       legend_ncol = 3,
       show_range_in_labels = TRUE
@@ -1260,10 +1289,10 @@ for (current_id in ids_to_run) {
         lower_bound = dplyr::if_else(
           y_axis_mode == "fixed", dplyr::coalesce(y_min, 1), ymin - 0.5
         ),
-        # For composites (y_max=4), expand upper_bound to 5 or 6 if predictions exceed 4
+        # For all fixed-scale outcomes (default y_max=4.5), expand upper_bound to 5 or 6 if predictions exceed 4.5
         upper_bound = dplyr::if_else(
           y_axis_mode == "fixed",
-          pmax(dplyr::coalesce(y_max, 6), pmin(ceiling(ymax), 6)),
+          pmax(dplyr::coalesce(y_max, 4.5), pmin(ceiling(ymax), 6)),
           ymax + 0.5
         )
       )
@@ -1972,8 +2001,26 @@ plot_overlay_gam <- function(fit_results_list, ids, tv, axis_meta_list,
 
   n_people <- length(unique(overlay_data$id))
 
+  # Compute y-axis limits: default 1–4.5, expand to 5 or 6 if predictions exceed 4.5
+  estimate_vals <- overlay_data$estimate
+  finite_estimate_vals <- estimate_vals[is.finite(estimate_vals)]
+  max_pred <- if (length(finite_estimate_vals) > 0) max(finite_estimate_vals) else NA_real_
+  ymax_final <- expand_composite_ymax(4.5, max_pred)
+
   p <- ggplot2::ggplot(overlay_data,
-                       ggplot2::aes(x = .data[[tv]], y = estimate, group = id)) +
+                       ggplot2::aes(x = .data[[tv]], y = estimate, group = id))
+
+  # Pink shading over expanded region (above 4.5) — rendered first
+  if (ymax_final > 4.5) {
+    p <- p + ggplot2::annotate(
+      "rect",
+      xmin = -Inf, xmax = Inf,
+      ymin = 4.5,  ymax = ymax_final,
+      fill = "pink", alpha = 0.25
+    )
+  }
+
+  p <- p +
     ggplot2::geom_vline(xintercept = meta$menses, color = "red",
                         linewidth = 0.8) +
     ggplot2::geom_vline(xintercept = meta$ov, color = "forestgreen",
@@ -1984,6 +2031,8 @@ plot_overlay_gam <- function(fit_results_list, ids, tv, axis_meta_list,
       breaks = seq(-1, 1, by = 0.5),
       labels = meta$labels
     ) +
+    ggplot2::scale_y_continuous(breaks = seq(1, max(ymax_final, 6), by = 1)) +
+    ggplot2::coord_cartesian(ylim = c(1, ymax_final)) +
     ggplot2::labs(
       title    = paste0(title_prefix, ": ", outcome_label),
       subtitle = paste0("N = ", n_people, " participants | Time variable: ", tv),
@@ -1996,16 +2045,91 @@ plot_overlay_gam <- function(fit_results_list, ids, tv, axis_meta_list,
       plot.subtitle = ggplot2::element_text(size = 12)
     )
 
-  # Apply composite-specific Y-axis limits (1-4, expanding to 5 or 6 if needed)
-  if (!is.null(outcome_var) && !grepl(DRSP_VAR_PATTERN, outcome_var)) {
-    estimate_vals <- overlay_data$estimate
-    finite_estimate_vals <- estimate_vals[is.finite(estimate_vals)]
-    max_pred <- if (length(finite_estimate_vals) > 0) max(finite_estimate_vals) else NA_real_
-    comp_ymax <- expand_composite_ymax(4, max_pred)
-    p <- p +
-      ggplot2::scale_y_continuous(breaks = seq(1, comp_ymax, by = 1)) +
-      ggplot2::coord_cartesian(ylim = c(1, comp_ymax))
+  p
+}
+
+# --- Combined overlay GAM plot coloring two groups of participants differently ---
+# group1_ids: IDs drawn in group1_color (e.g., significant participants)
+# group2_ids: IDs drawn in group2_color (e.g., non-significant participants)
+# group1_label / group2_label: legend labels for each group
+plot_overlay_gam_twogroup <- function(fit_results_list, group1_ids, group2_ids,
+                                      tv, axis_meta_list,
+                                      outcome_label, title_prefix,
+                                      group1_label = "Group 1",
+                                      group2_label = "Group 2",
+                                      group1_color = "#0072B2",
+                                      group2_color = "#999999") {
+  meta <- axis_meta_list[[tv]]
+
+  build_group_data <- function(ids, grp) {
+    do.call(rbind, lapply(ids, function(qid) {
+      res <- fit_results_list[[as.character(qid)]]
+      if (is.null(res)) return(NULL)
+      pred_df <- res$pred
+      pred_df$id    <- qid
+      pred_df$group <- grp
+      pred_df
+    }))
   }
+
+  d1 <- build_group_data(group1_ids, "group1")
+  d2 <- build_group_data(group2_ids, "group2")
+  overlay_data <- dplyr::bind_rows(d1, d2)
+
+  if (is.null(overlay_data) || nrow(overlay_data) == 0) return(NULL)
+
+  n1 <- length(unique(overlay_data$id[overlay_data$group == "group1"]))
+  n2 <- length(unique(overlay_data$id[overlay_data$group == "group2"]))
+
+  # Compute y-axis limits: default 1–4.5, expand to 5 or 6 if predictions exceed 4.5
+  finite_ests <- overlay_data$estimate[is.finite(overlay_data$estimate)]
+  max_pred <- if (length(finite_ests) > 0) max(finite_ests) else NA_real_
+  ymax_final <- expand_composite_ymax(4.5, max_pred)
+
+  p <- ggplot2::ggplot(
+    overlay_data,
+    ggplot2::aes(x = .data[[tv]], y = estimate, group = id, color = group)
+  )
+
+  # Pink shading over expanded region (above 4.5) — rendered first
+  if (ymax_final > 4.5) {
+    p <- p + ggplot2::annotate(
+      "rect",
+      xmin = -Inf, xmax = Inf,
+      ymin = 4.5,  ymax = ymax_final,
+      fill = "pink", alpha = 0.25
+    )
+  }
+
+  p <- p +
+    ggplot2::geom_vline(xintercept = meta$menses, color = "red",    linewidth = 0.8) +
+    ggplot2::geom_vline(xintercept = meta$ov,     color = "forestgreen", linewidth = 0.8) +
+    ggplot2::geom_line(alpha = 0.5, linewidth = 0.6) +
+    ggplot2::scale_color_manual(
+      values = c(group1 = group1_color, group2 = group2_color),
+      labels = c(group1 = paste0(group1_label, " (N=", n1, ")"),
+                 group2 = paste0(group2_label, " (N=", n2, ")"))
+    ) +
+    ggplot2::scale_x_continuous(
+      limits = c(-1, 1),
+      breaks = seq(-1, 1, by = 0.5),
+      labels = meta$labels
+    ) +
+    ggplot2::scale_y_continuous(breaks = seq(1, max(ymax_final, 6), by = 1)) +
+    ggplot2::coord_cartesian(ylim = c(1, ymax_final)) +
+    ggplot2::labs(
+      title    = paste0(title_prefix, ": ", outcome_label),
+      subtitle = paste0("Time variable: ", tv, "  |  N total = ", n1 + n2),
+      x        = "Cycle Phase",
+      y        = outcome_label,
+      color    = NULL
+    ) +
+    ggplot2::theme_minimal(base_size = 14) +
+    ggplot2::theme(
+      plot.title    = ggplot2::element_text(size = 16, face = "bold"),
+      plot.subtitle = ggplot2::element_text(size = 12),
+      legend.position = "bottom"
+    )
 
   p
 }
@@ -2136,6 +2260,17 @@ if (length(all_ids_signif) > 0) {
 
     nonsig_ids <- result$data %>%
       dplyr::filter(significant_num == 0) %>%
+      dplyr::arrange(dplyr::desc(range)) %>%
+      dplyr::pull(id)
+
+    # IDs where GAM is significant OR range >= 1.5 (for two-group colored overlay)
+    sig_or_range_ids <- result$data %>%
+      dplyr::filter(significant_num == 1 | (is.finite(range) & range >= 1.5)) %>%
+      dplyr::arrange(dplyr::desc(range)) %>%
+      dplyr::pull(id)
+
+    neither_ids <- result$data %>%
+      dplyr::filter(significant_num == 0 & !(is.finite(range) & range >= 1.5)) %>%
       dplyr::arrange(dplyr::desc(range)) %>%
       dplyr::pull(id)
 
@@ -2304,6 +2439,42 @@ if (length(all_ids_signif) > 0) {
         outcome_var      = target_var
       )
       if (!is.null(p_nonsig_overlay)) print(p_nonsig_overlay)
+    }
+
+    # ---- PAGE 3A: All curves — significant (blue) vs. non-significant (grey) ----
+    for (tv in time_vars) {
+      p_twocol_sig <- plot_overlay_gam_twogroup(
+        fit_results_list = all_fit_results_by_tv[[tv]],
+        group1_ids       = sig_ids,
+        group2_ids       = nonsig_ids,
+        tv               = tv,
+        axis_meta_list   = axis_meta,
+        outcome_label    = outcome_label,
+        title_prefix     = "All GAM Curves: Significant vs. Non-Significant",
+        group1_label     = "Significant (p < .05)",
+        group2_label     = "Non-Significant (p \u2265 .05)",
+        group1_color     = "#0072B2",
+        group2_color     = "#999999"
+      )
+      if (!is.null(p_twocol_sig)) print(p_twocol_sig)
+    }
+
+    # ---- PAGE 3B: All curves — significant OR range >= 1.5 (orange) vs. neither (grey) ----
+    for (tv in time_vars) {
+      p_twocol_range <- plot_overlay_gam_twogroup(
+        fit_results_list = all_fit_results_by_tv[[tv]],
+        group1_ids       = sig_or_range_ids,
+        group2_ids       = neither_ids,
+        tv               = tv,
+        axis_meta_list   = axis_meta,
+        outcome_label    = outcome_label,
+        title_prefix     = "All GAM Curves: Sig. or Range \u22651.5 vs. Neither",
+        group1_label     = "Sig. or Range \u22651.5",
+        group2_label     = "Neither",
+        group1_color     = "#E69F00",
+        group2_color     = "#999999"
+      )
+      if (!is.null(p_twocol_range)) print(p_twocol_range)
     }
 
     # ---- PAGE 4: Significance Probability Plot ----
