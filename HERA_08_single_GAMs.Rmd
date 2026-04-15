@@ -228,7 +228,7 @@ drsp_color_map <- c(
   "drsp_17" = "#117733",  # dark green 2
   # DRSP physical items
   "drsp_18" = "#44AA99",  # teal
-  "drsp_19" = "#88CCEE",  # light blue
+  "drsp_19" = "#882255",  # wine
   "drsp_20" = "#DDCC77",  # sand
   "drsp_21" = "#CC6677",  # rose
   # DRSP composite outcomes (Okabe-Ito colorblind-friendly palette)
