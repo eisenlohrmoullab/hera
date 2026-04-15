@@ -1232,7 +1232,7 @@ if (length(all_ids_signif) > 0) {
 
   # --- Page numbering helper ---
   # NOTE: Update total_report_pages if pages are added/removed from this report.
-  total_report_pages <- 11L
+  total_report_pages <- 9L
   page_counter <- 0L
   draw_page_number <- function() {
     page_counter <<- page_counter + 1L
@@ -1283,13 +1283,11 @@ if (length(all_ids_signif) > 0) {
       "  Page  2 \u2014 Key Metrics Summary with Interpretation Guide\n",
       "  Page  3 \u2014 Per-Outcome Descriptives Table (color-coded)\n",
       "  Page  4 \u2014 Distribution of Ranges by Outcome (histograms)\n",
-      "  Page  5 \u2014 Number of High-Range Outcomes per Participant\n",
-      "  Page  6 \u2014 Median Range by Outcome (bar chart)\n",
-      "  Page  7 \u2014 Significance & Range Rates by Outcome (grouped bars)\n",
-      "  Page  8 \u2014 Per-Person Range Distributions (dot + box plot)\n",
-      "  Page  9 \u2014 Significance/Range Heatmap (Outcome \u00d7 Participant)\n",
-      "  Page 10 \u2014 Affective vs. Physical Symptom Comparison\n",
-      "  Page 11 \u2014 Symptom Co-Occurrence Matrix"
+      "  Page  5 \u2014 Significance & Range Rates by Outcome (grouped bars)\n",
+      "  Page  6 \u2014 Per-Person Range Distributions (dot + box plot)\n",
+      "  Page  7 \u2014 Significance/Range Heatmap (Outcome \u00d7 Participant)\n",
+      "  Page  8 \u2014 Affective vs. Physical Symptom Comparison\n",
+      "  Page  9 \u2014 Symptom Co-Occurrence Matrix"
     ),
     gp = grid::gpar(fontsize = 10), just = "left", x = 0.05
   )
@@ -1583,72 +1581,7 @@ if (length(all_ids_signif) > 0) {
   print(p_range_dist)
   draw_page_number()
 
-  # ---- PAGE 4: Per-person count of outcomes meeting range >= 1.5 ----
-  ids_range15_count <- id_outcome_summary %>%
-    dplyr::filter(is.finite(best_range) & best_range >= 1.5) %>%
-    dplyr::group_by(id) %>%
-    dplyr::summarise(n_outcomes_range15 = dplyr::n(), .groups = "drop")
-
-  # Include IDs with zero qualifying outcomes
-  ids_range15_all <- tibble::tibble(id = all_ids) %>%
-    dplyr::left_join(ids_range15_count, by = "id") %>%
-    dplyr::mutate(n_outcomes_range15 = dplyr::coalesce(n_outcomes_range15, 0L))
-
-  p_count_hist <- ggplot2::ggplot(ids_range15_all,
-                                   ggplot2::aes(x = n_outcomes_range15)) +
-    ggplot2::geom_histogram(binwidth = 1, fill = "#0072B2", color = "white", alpha = 0.8) +
-    ggplot2::labs(
-      title = "Number of Outcomes with Range \u2265 1.5 per Participant",
-      subtitle = paste0("GAM-valid N = ", n_gam_valid, " participants; ",
-                        sprintf("%.1f%%", pct_any_range15),
-                        " have at least one outcome with range \u2265 1.5"),
-      x = "Number of outcomes with range \u2265 1.5",
-      y = "Number of participants",
-      caption = paste0(
-        "Each bar shows how many participants have that many outcomes with range \u2265 1.5.\n",
-        "A person at 0 has no outcomes with clinically meaningful cyclical variation;\n",
-        "higher counts suggest more pervasive cyclicity across multiple symptoms."
-      )
-    ) +
-    ggplot2::scale_x_continuous(breaks = seq(0, max(c(0, ids_range15_all$n_outcomes_range15), na.rm = TRUE))) +
-    ggplot2::theme_minimal(base_size = 12) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 14),
-      plot.caption = ggplot2::element_text(size = 9, hjust = 0, face = "italic")
-    )
-  print(p_count_hist)
-  draw_page_number()
-
-  # ---- PAGE 5: Median range by outcome (bar chart) ----
-  p_median_bar <- ggplot2::ggplot(outcome_desc,
-                                   ggplot2::aes(x = reorder(label, median_range),
-                                                y = median_range)) +
-    ggplot2::geom_col(fill = "#0072B2", alpha = 0.8) +
-    ggplot2::geom_text(ggplot2::aes(label = sprintf("%.2f", median_range)),
-                       hjust = -0.15, size = 3.0) +
-    ggplot2::geom_hline(yintercept = 1.5, color = "red", linetype = "dashed",
-                        linewidth = 0.6) +
-    ggplot2::coord_flip() +
-    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) +
-    ggplot2::labs(
-      title = "Median GAM Range by Outcome",
-      subtitle = "Red dashed line = range \u2265 1.5 threshold",
-      x = NULL,
-      y = "Median Range",
-      caption = paste0(
-        "Outcomes above the red dashed line have a typical cyclical swing of \u22651.5 points.\n",
-        "These represent symptoms where the average participant shows clinically meaningful variation."
-      )
-    ) +
-    ggplot2::theme_minimal(base_size = 10) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 14),
-      plot.caption = ggplot2::element_text(size = 9, hjust = 0, face = "italic")
-    )
-  print(p_median_bar)
-  draw_page_number()
-
-  # ---- PAGE 6: % Significant and % Range >= 1.5 by outcome (side-by-side bars) ----
+  # ---- PAGE 4 (was 6): % Significant and % Range >= 1.5 by outcome (side-by-side bars) ----
   # Precompute ordering by % Range >= 1.5 before pivoting so all metrics
   # share a consistent outcome order (rather than ordering by the mean of both).
   pct_data <- outcome_desc %>%
@@ -1703,7 +1636,7 @@ if (length(all_ids_signif) > 0) {
   print(p_pct_bars)
   draw_page_number()
 
-  # ---- PAGE 8: Dot/Strip Plot with Box-and-Whisker ----
+  # ---- PAGE 5 (was 8): Dot/Strip Plot with Box-and-Whisker ----
   p_dot_strip <- ggplot2::ggplot(
     range_plot_data,
     ggplot2::aes(x = reorder(label, best_range, FUN = median, na.rm = TRUE),
@@ -1744,7 +1677,7 @@ if (length(all_ids_signif) > 0) {
   print(p_dot_strip)
   draw_page_number()
 
-  # ---- PAGE 9: Significance/Range Heatmap (Outcome x Participant) ----
+  # ---- PAGE 6 (was 9): Significance/Range Heatmap (Outcome x Participant) ----
   heatmap_data <- id_outcome_summary %>%
     dplyr::left_join(
       tibble::enframe(outcomes, name = "variable", value = "label"),
@@ -1817,7 +1750,7 @@ if (length(all_ids_signif) > 0) {
   print(p_heatmap)
   draw_page_number()
 
-  # ---- PAGE 10: Affective vs. Physical Symptom Comparison ----
+  # ---- PAGE 7 (was 10): Affective vs. Physical Symptom Comparison ----
   phys_composites <- c("drsp_breastpain", "drsp_eatsx")
   all_physical_outcomes <- c(physical_symptoms, phys_composites)
 
@@ -1925,7 +1858,7 @@ if (length(all_ids_signif) > 0) {
   )
   draw_page_number()
 
-  # ---- PAGE 11: Symptom Co-Occurrence Matrix ----
+  # ---- PAGE 8 (was 11): Symptom Co-Occurrence Matrix ----
   # For each pair of outcomes, what % of GAM-valid participants meet
   # "sig OR range >= 1.5" in both outcomes?
   cooccur_data <- id_outcome_summary %>%
