@@ -837,7 +837,7 @@ for (current_id in ids_to_run) {
         " \u25B6  Annotation text:  Stars (*) indicate significance (p < .05); Range = max \u2212 min\n",
         "                     of predicted values; EDF = effective degrees of freedom\n\n",
         "PLOT BORDER COLORS (individual DRSP item plots)\n\n",
-        " \u25B6  Red border:     GAM range \u2265 1.5 \u2014 equivalent to the C-PASS 30% change criterion\n",
+        " \u25B6  Red border:     GAM range \u2265 1.5 \u2014 meets the C-PASS-equivalent 30% change criterion\n",
         "                     used to benchmark PMDD cyclical change\n\n",
         " \u25B6  Salmon border:  GAM range \u2265 1.0 but < 1.5\n\n",
         " \u25B6  Pink border:    GAM range \u2265 0.5 but < 1.0\n\n",
@@ -1431,8 +1431,8 @@ if (length(all_ids_signif) > 0) {
       " \u25B6  Significant GAM (p < .05): The cyclical pattern is statistically\n",
       "     distinguishable from a flat line \u2014 evidence symptoms truly vary across the cycle.\n",
       "     Higher % = more people show cyclical symptoms.\n\n",
-      " \u25B6  Range \u2265 1.5: A swing of 1.5+ points on the 1\u20136 DRSP scale, equivalent to\n",
-      "     the C-PASS 30% change criterion used to benchmark PMDD cyclical change.\n",
+      " \u25B6  Range \u2265 1.5: A swing of 1.5+ points on the 1\u20136 DRSP scale, meeting\n",
+      "     the C-PASS-equivalent 30% change criterion used to benchmark PMDD cyclical change.\n",
       "     This is a reference benchmark, not a validated clinical cutpoint.\n\n",
       " \u25B6  Affective outcomes: Mood/emotional symptoms (depression, anxiety,\n",
       "     irritability, etc.) and composites (Neg. Affect, Distress, Lability, Low Arousal).\n\n",
@@ -1686,7 +1686,7 @@ if (length(all_ids_signif) > 0) {
       "COLUMN GUIDE: N = participants with valid GAM data for this outcome; ",
       "Median Range = typical amount of cyclical variation;\n",
       "% Sig = % with statistically significant cyclicity (p < .05); ",
-      "% \u22651.5 = % with range meeting C-PASS benchmark (\u22651.5-point swing);\n",
+      "% \u22651.5 = % with range meeting C-PASS-equivalent change benchmark (\u22651.5-point swing);\n",
       "% Either = % meeting either criterion. ",
       "Shading: blue = high % Sig; orange = high Median Range or % \u22651.5; green = high % Either."
     ),
@@ -1727,7 +1727,7 @@ if (length(all_ids_signif) > 0) {
       y = "Count",
       caption = paste0(
         "Each panel shows one outcome. Blue bars = significant cyclicity (p < .05); grey = not significant.\n",
-        "Outcomes where most bars fall right of the red line have widespread variation meeting the C-PASS benchmark."
+        "Outcomes where most bars fall right of the red line have widespread variation meeting the C-PASS-equivalent change benchmark."
       )
     ) +
     ggplot2::theme_minimal(base_size = 8) +
@@ -1781,7 +1781,7 @@ if (length(all_ids_signif) > 0) {
       x = NULL,
       y = "Percentage",
       caption = paste0(
-        "Blue = statistically significant cyclicity (p < .05); orange = range meeting C-PASS benchmark (\u22651.5);\n",
+        "Blue = statistically significant cyclicity (p < .05); orange = range meeting C-PASS-equivalent change benchmark (\u22651.5);\n",
         "green = either criterion met. Outcomes ordered by % Sig OR Range \u2265 1.5 (bottom to top)."
       )
     ) +
@@ -1905,9 +1905,9 @@ if (length(all_ids_signif) > 0) {
                         "outcomes (rows) grouped by domain: affective (top), physical (bottom)"),
       caption = paste0(
         "Each cell shows one participant\u2019s result for one outcome.\n",
-        "Dark orange = both statistically significant AND range meeting C-PASS benchmark; ",
+        "Dark orange = both statistically significant AND range meeting C-PASS-equivalent change benchmark; ",
         "blue = significant only;\n",
-        "light orange = range meeting C-PASS benchmark but not significant; grey = neither."
+        "light orange = range meeting C-PASS-equivalent change benchmark but not significant; grey = neither."
       ),
       x = "Participants",
       y = NULL
@@ -1998,7 +1998,7 @@ if (length(all_ids_signif) > 0) {
       "Affective = individual mood/emotional DRSP items (excl. composites). ",
       "Physical = individual somatic DRSP items (excl. composites).\n",
       "% of outcome \u00d7 participant pairs meeting each criterion. ",
-      "Range \u2265 1.5 reference line corresponds to the C-PASS 30% change benchmark."
+      "Range \u2265 1.5 reference line corresponds to the C-PASS-equivalent 30% change benchmark."
     ),
     gp = grid::gpar(fontsize = 9, fontface = "italic"),
     just = "left", x = 0.02
