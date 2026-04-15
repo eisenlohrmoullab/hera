@@ -504,6 +504,16 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
     # data mode: leave y_limits = NULL → ggplot auto-scales
   }
 
+  # Prepare raw data overlay using the same inclusion rule as fit_outcome:
+  # require non-missing log-transformed outcome and time var, then plot on original scale.
+  raw_pts <- NULL
+  log_out <- paste0(outcome_var, "_Log")
+  if (!is.null(raw_data) && outcome_var %in% names(raw_data) &&
+      log_out %in% names(raw_data) && tv %in% names(raw_data)) {
+    raw_pts <- raw_data[complete.cases(raw_data[, c(log_out, tv)]), c(outcome_var, tv), drop = FALSE]
+    if (nrow(raw_pts) == 0) raw_pts <- NULL
+  }
+
   # Dynamic expansion for all outcomes: expand y_max to 5 or 6 if predictions or raw points exceed
   # default 4.5.  Only expand when y_limits were computed internally (not passed by a shared-y caller).
   if (!y_limits_from_caller && !is.null(y_limits)) {
@@ -543,16 +553,6 @@ create_annotated_plot <- function(plot_df, tv, axis_meta_list, y_limits = NULL,
     sprintf("%s%s Range = %.2f%s", cpass_label, stars, rng, edf_str)
   }
   meta  <- axis_meta_list[[tv]]
-
-  # Prepare raw data overlay using the same inclusion rule as fit_outcome:
-  # require non-missing log-transformed outcome and time var, then plot on original scale.
-  raw_pts <- NULL
-  log_out <- paste0(outcome_var, "_Log")
-  if (!is.null(raw_data) && outcome_var %in% names(raw_data) &&
-      log_out %in% names(raw_data) && tv %in% names(raw_data)) {
-    raw_pts <- raw_data[complete.cases(raw_data[, c(log_out, tv)]), c(outcome_var, tv), drop = FALSE]
-    if (nrow(raw_pts) == 0) raw_pts <- NULL
-  }
 
   p <- ggplot2::ggplot(plot_df, ggplot2::aes(x = .data[[tv]], y = estimate))
 
