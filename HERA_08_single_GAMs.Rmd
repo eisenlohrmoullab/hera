@@ -2716,12 +2716,13 @@ if (length(all_ids_signif) > 0) {
 
   # Table themes for summary pages
   summary_table_theme <- gridExtra::ttheme_default(
-    base_size = 10,
-    core    = list(fg_params = list(hjust = 0, x = 0.05)),
+    base_size = 9,
+    core    = list(fg_params = list(hjust = 0, x = 0.05),
+                   padding = grid::unit(c(3, 1.5), "mm")),
     colhead = list(fg_params = list(hjust = 0, x = 0.05, fontface = "bold"))
   )
   threshold_table_theme <- gridExtra::ttheme_default(
-    base_size = 9,
+    base_size = 8,
     core    = list(fg_params = list(hjust = 0.5, x = 0.5)),
     colhead = list(fg_params = list(hjust = 0.5, x = 0.5, fontface = "bold"))
   )
@@ -2936,13 +2937,13 @@ if (length(all_ids_signif) > 0) {
         title_grob, subtitle_grob, composite_note_grob,
         desc_tbl, thresh_header, thresh_tbl, note_grob,
         ncol = 1,
-        heights = grid::unit(c(0.06, 0.03, 0.03, 0.36, 0.05, 0.32, 0.05), "npc")
+        heights = grid::unit(c(0.06, 0.03, 0.04, 0.35, 0.04, 0.34, 0.04), "npc")
       )
     } else {
       gridExtra::grid.arrange(
         title_grob, subtitle_grob, desc_tbl, thresh_header, thresh_tbl, note_grob,
         ncol = 1,
-        heights = grid::unit(c(0.07, 0.03, 0.38, 0.05, 0.32, 0.05), "npc")
+        heights = grid::unit(c(0.06, 0.03, 0.38, 0.04, 0.34, 0.04), "npc")
       )
     }
 
