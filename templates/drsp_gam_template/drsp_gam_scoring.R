@@ -160,12 +160,13 @@ detect_and_rename_drsp_columns <- function(df) {
   columns_renamed <- character(0)
   columns_already_canonical <- character(0)
 
-  # Pattern: "drsp" (case-insensitive), then any non-digit separators,
-  # then a number (1-21), optionally followed by a non-digit or end-of-string
-  # so that "drsp_2" doesn't match as item 2 in "drsp_21".
-  #
-  # We capture the item number and use a word-boundary-like approach:
-  # the number must NOT be followed by another digit.
+  # Regex explanation (case-insensitive via (?i)):
+  #   ^.*drsp     — match anything up to "drsp" (or "DRSP", etc.)
+  #   [^0-9]*     — skip any non-digit separator(s): _, ., __, or none
+  #   (\d+)       — capture the item number
+  #   (?!\d)      — negative lookahead: the number must NOT be followed by
+  #                 another digit, so "drsp_21" doesn't falsely match as item 2
+  #   .*$         — allow any trailing suffix (e.g., "_depblue", "_raw")
   drsp_regex <- "(?i)^.*drsp[^0-9]*(\\d+)(?!\\d).*$"
 
   # Track which canonical names have been claimed (to handle duplicates)

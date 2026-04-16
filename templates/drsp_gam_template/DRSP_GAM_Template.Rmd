@@ -49,6 +49,16 @@ source("drsp_gam_functions.R")
 
 # Step 3: Load Data
 ```{r load-data}
+# Validate that the user has updated the config file
+if (grepl("^path/to/", data_file_path)) {
+  stop("Please edit drsp_gam_config.R and set 'data_file_path' to your actual data file.\n",
+       "  Current value: ", data_file_path)
+}
+if (grepl("^path/to/", gam_output_base)) {
+  stop("Please edit drsp_gam_config.R and set 'gam_output_base' to your desired output directory.\n",
+       "  Current value: ", gam_output_base)
+}
+
 # Load dataset
 if (grepl("\\.rds$", data_file_path, ignore.case = TRUE)) {
   df <- readRDS(data_file_path)
