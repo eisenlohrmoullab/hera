@@ -46,6 +46,67 @@ build_drsp_color_map <- function(outcomes) {
 }
 
 # =============================================================================
+# Domain color configuration
+# =============================================================================
+# Creates a self-contained domain-color helper list that can be used for
+# classifying/coloring outcomes by affective vs physical domain.
+# All downstream graphics code should use this object rather than relying
+# on separate global variables.
+#
+# Arguments:
+#   col_affective     — hex color for affective domain (default: "#0072B2")
+#   col_physical      — hex color for physical domain  (default: "#D55E00")
+#   all_physical      — character vector of all physical outcome variable names
+#   all_affective     — character vector of all affective outcome variable names
+#   outcomes_map      — named vector (variable → label) for reverse-lookup
+#
+# Returns a list with:
+#   $affective        — hex color string
+#   $physical         — hex color string
+#   $all_physical     — character vector of physical outcome names
+#   $all_affective    — character vector of affective outcome names
+#   $label_colors()   — function(labels) → vector of hex colors per label
+#   $fill_scale()     — ggplot2 scale_fill_manual for Affective/Physical
+#   $color_scale()    — ggplot2 scale_color_manual for Affective/Physical
+# =============================================================================
+build_domain_colors <- function(col_affective = "#0072B2",
+                                col_physical  = "#D55E00",
+                                all_physical  = character(0),
+                                all_affective = character(0),
+                                outcomes_map  = character(0)) {
+  # Closure-based label coloring function
+  label_colors_fn <- function(labels) {
+    vars <- names(outcomes_map)[match(labels, outcomes_map)]
+    vars <- ifelse(is.na(vars), labels, vars)
+    ifelse(vars %in% all_physical, col_physical, col_affective)
+  }
+
+  fill_scale_fn <- function(name = NULL) {
+    ggplot2::scale_fill_manual(
+      values = c("Affective" = col_affective, "Physical" = col_physical),
+      name = name
+    )
+  }
+
+  color_scale_fn <- function(name = NULL) {
+    ggplot2::scale_color_manual(
+      values = c("Affective" = col_affective, "Physical" = col_physical),
+      name = name
+    )
+  }
+
+  list(
+    affective     = col_affective,
+    physical      = col_physical,
+    all_physical  = all_physical,
+    all_affective = all_affective,
+    label_colors  = label_colors_fn,
+    fill_scale    = fill_scale_fn,
+    color_scale   = color_scale_fn
+  )
+}
+
+# =============================================================================
 # Axis metadata for cycle phasing
 # =============================================================================
 build_axis_meta <- function(time_vars, phasing_config) {
@@ -152,12 +213,12 @@ build_outcome_plot_settings <- function(outcomes) {
 # Core GAM fitting function
 # =============================================================================
 fit_outcome <- function(dat, outcome_var, tv, outcomes_map,
-                        pred_grid_list, sparse_cutoff = 2) {
+                        pred_grid_list, sparse_cutoff = 2, min_obs = 10) {
   log_out <- paste0(outcome_var, "_Log")
   keep <- c(log_out, tv)
   if (!all(keep %in% names(dat))) return(NULL)
   dat <- dat[stats::complete.cases(dat[, keep]), keep, drop = FALSE]
-  if (nrow(dat) < 10) return(NULL)
+  if (nrow(dat) < min_obs) return(NULL)
 
   # Check for no variability in the log-transformed outcome
   out_variance <- stats::var(dat[[log_out]], na.rm = TRUE)

@@ -7,9 +7,10 @@ output: html_document
 
 > **Template Purpose:** Automated, participant-centric analysis of DRSP symptom
 > cyclicity using cyclic GAMs. This template works with any dataset containing
-> some or all DRSP items (drsp_1 through drsp_21).
+> some or all DRSP items in **any naming convention** (e.g., `drsp_1`, `DRSP1`,
+> `DRSP1_depblue`, `drsp.1` — all automatically detected and standardized).
 >
-> 1. **Setup & Preparation** — load data, auto-detect DRSP items, compute composites, define outcomes.
+> 1. **Setup & Preparation** — load data, auto-detect & rename DRSP items, compute composites, define outcomes.
 > 2. **Automated Reporting** — one landscape PDF per participant with compact cover and paged plots.
 > 3. **Overall Summary** — sample-level summary PDF with key metrics and visualizations.
 > 4. **CSV Audit** — per-ID × outcome × time-var stats for triage/QC.
@@ -63,7 +64,7 @@ message(sprintf("Loaded data: %d rows, %d participants", nrow(df), length(unique
 
 # Step 4: Score DRSP Composites & Build Outcome Map
 ```{r score-composites}
-# Auto-detect DRSP items, score composites, build outcome map
+# Auto-detect DRSP items (any naming convention), rename to canonical, score composites
 scoring_result <- score_drsp_composites(df)
 df                  <- scoring_result$data
 items_found         <- scoring_result$items_found
@@ -71,6 +72,13 @@ items_missing       <- scoring_result$items_missing
 composites_created  <- scoring_result$composites_created
 composites_skipped  <- scoring_result$composites_skipped
 composite_specs     <- scoring_result$composite_specs
+columns_renamed     <- scoring_result$columns_renamed
+
+if (length(columns_renamed) > 0) {
+  message(sprintf("Columns renamed to canonical format: %s",
+                  paste(sprintf("'%s' -> '%s'", names(columns_renamed), columns_renamed),
+                        collapse = ", ")))
+}
 
 # Build the named outcome vector (composites first, then individual items)
 outcomes <- build_outcomes_map(items_found, composites_created)
@@ -86,10 +94,13 @@ all_physical_outcomes  <- domain_info$all_physical
 
 # Step 5: Setup Output, Colors, Axis Metadata
 ```{r setup-output}
-# --- Create dated output folder ---
+# --- Create study-specific, dated output folder ---
+# Format: <base>/<study_name>_GAM_<YYYYMMDD>/
 current_date <- format(Sys.Date(), "%Y%m%d")
-output_folder <- file.path(gam_output_base, paste0("GAM_Reports_", current_date))
+study_slug   <- gsub("[^A-Za-z0-9_-]", "_", study_name)   # sanitize for paths
+output_folder <- file.path(gam_output_base, paste0(study_slug, "_GAM_", current_date))
 dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
+message(sprintf("Output folder: %s", output_folder))
 
 # --- Verify time variables exist ---
 time_vars <- intersect(time_vars_to_run, names(df))
@@ -104,6 +115,15 @@ if (length(time_vars) < length(time_vars_to_run)) {
 
 # --- Build color map ---
 drsp_color_map <- build_drsp_color_map(outcomes)
+
+# --- Build domain color object (self-contained graphics config) ---
+domain_colors <- build_domain_colors(
+  col_affective = DOMAIN_COL_AFFECTIVE,
+  col_physical  = DOMAIN_COL_PHYSICAL,
+  all_physical  = all_physical_outcomes,
+  all_affective = all_affective_outcomes,
+  outcomes_map  = outcomes
+)
 
 # --- Build axis metadata ---
 axis_meta <- build_axis_meta(time_vars, default_cycle_phasing)
@@ -184,7 +204,7 @@ if (!generate_per_id_reports) {
   message("Skipping per-ID reports (generate_per_id_reports = FALSE)")
 } else {
 
-report_folder <- file.path(output_folder, "Participant_Reports_PDF_byID")
+report_folder <- file.path(output_folder, "per_id_reports")
 dir.create(report_folder, showWarnings = FALSE, recursive = TRUE)
 
 ids_to_run    <- unique(df$id)
@@ -218,7 +238,7 @@ for (current_id in ids_to_run) {
   message(sprintf("    Scale range: %.1f, Benchmark: %.2f", id_scale_range, id_benchmark))
 
   # ---- Open landscape PDF per participant ----
-  pdf_filename <- file.path(report_folder, sprintf("Report_ID_%s.pdf", current_id))
+  pdf_filename <- file.path(report_folder, sprintf("%s_ID_%s.pdf", study_slug, current_id))
   if (isTRUE(skip_existing_reports) && file.exists(pdf_filename)) {
     message("    -> File exists; skipping.")
     next
@@ -408,8 +428,8 @@ for (current_id in ids_to_run) {
           ggplot2::geom_boxplot(width = 0.6, outlier.size = 1, alpha = 0.7) +
           ggplot2::coord_flip() +
           ggplot2::scale_fill_manual(
-            values = c("Affective" = DOMAIN_COL_AFFECTIVE,
-                       "Physical"  = DOMAIN_COL_PHYSICAL),
+            values = c("Affective" = domain_colors$affective,
+                       "Physical"  = domain_colors$physical),
             name = NULL
           ) +
           ggplot2::scale_y_continuous(breaks = 1:6, limits = c(1, 6)) +
@@ -461,7 +481,8 @@ for (current_id in ids_to_run) {
 
     for (outcome_var in names(outcomes)) {
       res <- fit_outcome(datSX_id, outcome_var, tv, outcomes,
-                         pred_grid_list, sparse_cutoff = sparse_quarter_cutoff)
+                         pred_grid_list, sparse_cutoff = sparse_quarter_cutoff,
+                         min_obs = min_obs_for_gam)
       if (is.null(res)) next
       all_preds[[length(all_preds) + 1]] <- res$pred
       sig_list[[length(sig_list) + 1]]  <- res$sig
@@ -696,7 +717,7 @@ for (current_id in ids_to_run) {
 
 # ---- Write CSV summary ----
 if (generate_csv_summary && length(all_ids_signif)) {
-  eval_csv <- file.path(output_folder, paste0("participant_significance_summary_", current_date, ".csv"))
+  eval_csv <- file.path(output_folder, paste0(study_slug, "_gam_summary.csv"))
   write.csv(dplyr::bind_rows(all_ids_signif), eval_csv, row.names = FALSE)
   message(sprintf("Wrote summary CSV: %s", eval_csv))
 }
@@ -725,7 +746,7 @@ gam_summary_all <- dplyr::left_join(
   benchmark_df, by = "id"
 )
 
-overall_pdf <- file.path(output_folder, paste0("Overall_Sample_Summary_", current_date, ".pdf"))
+overall_pdf <- file.path(output_folder, paste0(study_slug, "_overall_summary.pdf"))
 if (isTRUE(capabilities("cairo"))) {
   grDevices::cairo_pdf(overall_pdf, width = pdf_width, height = pdf_height)
 } else {
@@ -748,11 +769,8 @@ draw_page_number <- function() {
 affective_composites <- intersect(domain_info$affective_composites, composites_created)
 phys_composites      <- intersect(domain_info$physical_composites, composites_created)
 
-label_domain_colors <- function(labels) {
-  vars <- names(outcomes)[match(labels, outcomes)]
-  vars <- ifelse(is.na(vars), labels, vars)
-  ifelse(vars %in% all_physical_outcomes, DOMAIN_COL_PHYSICAL, DOMAIN_COL_AFFECTIVE)
-}
+# Use the self-contained domain_colors object for label coloring
+label_domain_colors <- domain_colors$label_colors
 
 # --- Per-ID summary ---
 id_outcome_summary <- gam_summary_all %>%
@@ -1004,7 +1022,7 @@ p_hist <- ggplot2::ggplot(hist_data, ggplot2::aes(x = best_range, fill = sig)) +
   ggplot2::geom_histogram(bins = 20, alpha = 0.8, position = "stack") +
   ggplot2::facet_wrap(~ label, scales = "free_y", ncol = 4) +
   ggplot2::scale_fill_manual(
-    values = c("TRUE" = DOMAIN_COL_AFFECTIVE, "FALSE" = "grey70"),
+    values = c("TRUE" = domain_colors$affective, "FALSE" = "grey70"),
     labels = c("TRUE" = "Significant", "FALSE" = "Not sig."),
     name = NULL
   ) +
@@ -1041,7 +1059,7 @@ p_dot <- ggplot2::ggplot(dot_data, ggplot2::aes(x = label, y = best_range)) +
                        ggplot2::aes(color = sig)) +
   ggplot2::coord_flip() +
   ggplot2::scale_color_manual(
-    values = c("TRUE" = DOMAIN_COL_AFFECTIVE, "FALSE" = "grey60"),
+    values = c("TRUE" = domain_colors$affective, "FALSE" = "grey60"),
     labels = c("TRUE" = "Significant", "FALSE" = "Not sig."),
     name = NULL
   ) +
@@ -1078,7 +1096,7 @@ p_rates <- ggplot2::ggplot(rates_data,
   ggplot2::geom_col(position = "dodge", width = 0.7, alpha = 0.85) +
   ggplot2::coord_flip() +
   ggplot2::scale_fill_manual(
-    values = c("% Significant" = DOMAIN_COL_AFFECTIVE, "% Meets Benchmark" = DOMAIN_COL_PHYSICAL),
+    values = c("% Significant" = domain_colors$affective, "% Meets Benchmark" = domain_colors$physical),
     name = NULL
   ) +
   ggplot2::labs(

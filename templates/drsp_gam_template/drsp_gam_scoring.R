@@ -235,32 +235,39 @@ detect_and_rename_drsp_columns <- function(df) {
 # =============================================================================
 # score_drsp_composites()
 # =============================================================================
-# Detects which DRSP items are in the dataset, coerces them to numeric,
+# Detects which DRSP items are in the dataset (using flexible column-name
+# matching), renames them to canonical drsp_N format, coerces to numeric,
 # computes composites where all component items are present, and returns
 # metadata about what was found/created.
 #
 # Arguments:
-#   df              — data.frame with DRSP item columns
+#   df              — data.frame with DRSP item columns (any naming convention)
 #   compute_total   — logical; also compute drsp_total? (default FALSE, since
 #                     not always useful and requires all 21 items)
 #
 # Returns a list with:
-#   $data              — the modified data.frame with new composite columns
-#   $items_found       — character vector of DRSP items found in data
-#   $items_missing     — character vector of DRSP items NOT found
+#   $data              — the modified data.frame with renamed + new composite columns
+#   $items_found       — character vector of canonical DRSP items found in data
+#   $items_missing     — character vector of canonical DRSP items NOT found
 #   $composites_created — character vector of composite names added
 #   $composites_skipped — named list: name → character vector of missing items
 #   $composite_specs   — list of specs for created composites (for downstream use)
+#   $columns_renamed   — named character vector of original → canonical renames
 # =============================================================================
 score_drsp_composites <- function(df, compute_total = FALSE) {
+
+  # --- Step 1: Flexible column detection & rename to canonical drsp_N ---
+  detect_result <- detect_and_rename_drsp_columns(df)
+  df <- detect_result$data
 
   all_possible_items <- paste0("drsp_", 1:21)
   items_found   <- intersect(all_possible_items, names(df))
   items_missing <- setdiff(all_possible_items, names(df))
 
   if (length(items_found) == 0) {
-    stop("No DRSP items (drsp_1 ... drsp_21) found in the dataset. ",
-         "Please ensure your data contains columns named drsp_N where N is 1-21.")
+    stop("No DRSP items found in the dataset. ",
+         "Columns must contain 'drsp' or 'DRSP' followed by an item number (1-21).\n",
+         "Supported formats: drsp_1, drsp1, DRSP1, DRSP_1, DRSP1_depblue, drsp.1, etc.")
   }
 
   message(sprintf("DRSP Scoring: Found %d of 21 items: %s",
@@ -312,7 +319,8 @@ score_drsp_composites <- function(df, compute_total = FALSE) {
     items_missing      = items_missing,
     composites_created = composites_created,
     composites_skipped = composites_skipped,
-    composite_specs    = composite_specs
+    composite_specs    = composite_specs,
+    columns_renamed    = detect_result$columns_renamed
   )
 }
 

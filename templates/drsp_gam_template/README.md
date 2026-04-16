@@ -6,11 +6,16 @@ Originally derived from the [HERA project](https://github.com/eisenlohrmoullab/h
 
 ## Features
 
-- **Auto-detects DRSP items**: Works with any subset of `drsp_1` through `drsp_21`. If your dataset only has some items, the template automatically adapts.
+- **Flexible DRSP column detection**: Automatically recognizes DRSP items regardless of naming convention. Any column containing "drsp" (case-insensitive) plus an item number is detected and renamed to the canonical `drsp_N` format. Supported examples:
+  - `drsp_1`, `drsp1`, `DRSP1`, `DRSP_1`, `DRSP__1`, `drsp.1`
+  - `DRSP1_depblue`, `drsp_1_raw`, `DRSP.01`
+  - All automatically mapped to `drsp_1`, `drsp_2`, etc.
 - **Automatic composite scoring**: Computes standard DRSP composites (Negative Affect, Distress, Social/Affect Lability, Low Arousal, Breast Sx, Eating Sx) from available items. Composites requiring missing items are skipped gracefully.
 - **Per-participant PDF reports**: Landscape PDFs with raw data coverage, interpretation key, composite definitions, score distributions, overlaid GAM curves, significance tables, and individual outcome plots.
 - **Overall sample summary PDF**: Key metrics, quarter coverage, per-outcome descriptives, range distributions, and significance rates across the full sample.
 - **CSV audit file**: Per-ID × outcome × time-variable statistics for QC/triage.
+- **Study-aware output structure**: Output folders and filenames are prefixed with your study name for easy organization (e.g., `HERA_GAM_20260416/`).
+- **Self-contained graphics config**: All plotting functions accept their configuration via parameters — no hidden globals. The `build_domain_colors()` factory produces a self-contained color configuration object.
 - **Configurable**: All paths, time variables, quality gates, benchmark settings, and report options are set in a single configuration file.
 
 ## Requirements
@@ -31,10 +36,16 @@ Your input dataset (`.rds` or `.csv`) must contain:
 | Column | Description |
 |--------|-------------|
 | `id` | Participant identifier |
-| `drsp_1` … `drsp_21` | Some or all DRSP items (1–6 Likert scale) |
+| DRSP items | Some or all DRSP items 1–21 (any naming convention — see below) |
 | A cyclic time variable | Scaled to [−1, 1], e.g., `cyclic_time_impute` |
 
-The template will automatically detect which DRSP items are present and compute composites accordingly.
+**Flexible column detection:** DRSP columns don't need to follow any exact naming convention. The template will automatically detect and rename any column whose name contains "drsp" (case-insensitive) and an item number (1–21). For example, all of these are recognized as item 1:
+
+```
+drsp_1, drsp1, DRSP1, DRSP_1, DRSP__1, drsp.1, DRSP1_depblue
+```
+
+If multiple columns map to the same item, the first match is kept and others are skipped with a warning.
 
 ## Quick Start
 
@@ -44,21 +55,35 @@ The template will automatically detect which DRSP items are present and compute 
    templates/drsp_gam_template/
    ├── DRSP_GAM_Template.Rmd     # Main analysis template
    ├── drsp_gam_config.R          # User configuration (edit this!)
-   ├── drsp_gam_scoring.R         # DRSP composite scoring functions
+   ├── drsp_gam_scoring.R         # DRSP detection & composite scoring
    ├── drsp_gam_functions.R       # Core GAM fitting & plotting functions
    └── README.md                  # This file
    ```
 
-2. **Edit `drsp_gam_config.R`**: Set your data file path, output directory, study label, and time variable names. At minimum, change:
+2. **Edit `drsp_gam_config.R`**: Set your data file path, output directory, study name, and time variable names. At minimum, change:
 
    ```r
-   data_file_path <- "path/to/your_data.rds"
-   gam_output_base <- "path/to/output/"
-   study_label <- "My Study"
+   data_file_path   <- "path/to/your_data.rds"
+   gam_output_base  <- "path/to/output/"
+   study_name       <- "HERA"         # Short slug for folder/filenames
+   study_label      <- "HERA Study"   # Human-readable for report titles
    time_vars_to_run <- c("cyclic_time_impute")
    ```
 
-3. **Knit `DRSP_GAM_Template.Rmd`** (or run chunk-by-chunk in RStudio). Reports will be generated in a dated subfolder under your output directory.
+3. **Knit `DRSP_GAM_Template.Rmd`** (or run chunk-by-chunk in RStudio). Reports will be generated in a study-specific, dated subfolder.
+
+## Output Structure
+
+```
+output/
+└── HERA_GAM_20260416/                    # <study_name>_GAM_<date>
+    ├── per_id_reports/                    # Per-participant PDFs
+    │   ├── HERA_ID_P001.pdf
+    │   ├── HERA_ID_P002.pdf
+    │   └── ...
+    ├── HERA_overall_summary.pdf           # Sample-level summary
+    └── HERA_gam_summary.csv              # Per-ID × outcome stats
+```
 
 ## File Descriptions
 
@@ -67,31 +92,34 @@ The template will automatically detect which DRSP items are present and compute 
 User-facing configuration file. Edit this to customize:
 
 - **Data input**: Path to your `.rds` or `.csv` file
-- **Output directory**: Where PDF reports and CSV summaries are saved
-- **Study label**: Used in report titles
+- **Output directory**: Where reports and CSV summaries are saved
+- **Study identification**: `study_name` (short slug for filenames/folders) and `study_label` (human-readable for titles)
 - **Time variables**: Cyclic time variable name(s) in your data
 - **Cycle phasing**: Whether time is centered on menses or ovulation
-- **GAM quality gates**: Sparse quarter cutoff, minimum observations
+- **GAM quality gates**: `sparse_quarter_cutoff` (obs per quarter) and `min_obs_for_gam` (total obs per outcome)
 - **Benchmark settings**: C-PASS-equivalent change percentage (default 30%)
 - **Report layout**: PDF dimensions, plots per page
 - **Report toggles**: Which outputs to generate
+- **Domain colors**: Colorblind-safe color scheme for affective/physical domains
 
 ### `drsp_gam_scoring.R`
 
-DRSP composite scoring module. Provides:
+DRSP detection and composite scoring module. Provides:
 
-- `score_drsp_composites(df)`: Detects DRSP items, computes composites, returns metadata
+- `detect_and_rename_drsp_columns(df)`: Fuzzy-matches DRSP columns in any naming convention and renames to canonical `drsp_N` format
+- `score_drsp_composites(df)`: Auto-detects, renames, and scores composites; returns metadata including rename log
 - `build_outcomes_map(items_found, composites_created)`: Builds the outcome label map
 - `classify_outcomes(items_found, composite_specs)`: Classifies outcomes into affective/physical domains
 
 ### `drsp_gam_functions.R`
 
-Core analysis functions:
+Core analysis and plotting functions (all self-contained — no global dependencies):
 
-- `build_drsp_color_map()`: Colorblind-safe color assignments
+- `build_drsp_color_map()`: Colorblind-safe color assignments for individual items and composites
+- `build_domain_colors()`: Self-contained domain color configuration factory (produces an object with `$affective`, `$physical`, `$label_colors()`, `$fill_scale()`, `$color_scale()`)
 - `build_axis_meta()`: Cycle phase axis labels and reference lines
 - `quarter_bin_counts()` / `check_quarter_coverage()`: Coverage quality checks
-- `fit_outcome()`: Fits cyclic GAM with quality gates
+- `fit_outcome()`: Fits cyclic GAM with configurable quality gates (`sparse_cutoff`, `min_obs`)
 - `create_annotated_plot()`: Individual outcome plot with annotations
 - `plot_overlay_page()`: Multi-outcome overlay plot
 - `expand_ymax()`: Dynamic Y-axis expansion
@@ -101,7 +129,7 @@ Core analysis functions:
 Main analysis template. Runs through:
 
 1. Load configuration and functions
-2. Load data and auto-score DRSP composites
+2. Load data, auto-detect & rename DRSP columns, score composites
 3. Set up output directories, colors, axis metadata
 4. Generate per-participant PDF reports
 5. Generate overall sample summary PDF
@@ -129,7 +157,8 @@ Each composite is computed as `rowMeans(component_items, na.rm = TRUE)`.
 - **Fitting method**: fREML with `discrete = TRUE` and `select = TRUE`
 - **Transformation**: `log(y + 1)` → fit → back-transform with `exp(η) − 1`
 - **Coverage rule**: All 4 cycle quarters must have ≥1 observation; at most 1 quarter may have < `sparse_quarter_cutoff` (default: 2) observations
-- **Benchmark**: Per-person C-PASS-equivalent 30% change criterion based on each participant's observed DRSP scale range
+- **Minimum observations**: Outcomes with fewer than `min_obs_for_gam` (default: 10) complete observations are skipped
+- **Benchmark**: Per-person C-PASS-equivalent change criterion (default 30%) based on each participant's observed DRSP scale range
 
 ## Adapting for a New Repository
 

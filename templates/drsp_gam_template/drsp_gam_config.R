@@ -11,19 +11,33 @@
 # The data MUST contain:
 #   - An 'id' column identifying each participant
 #   - At least one cyclic time variable scaled to [-1, 1]
-#   - Some or all DRSP items named drsp_1 through drsp_21
+#   - Some or all DRSP items (1-21)
+#
+# DRSP columns are detected flexibly — ANY naming convention works as long as
+# the column contains "drsp" (case-insensitive) and an item number.
+# Examples that all map to drsp_1:
+#   drsp_1, drsp1, DRSP1, DRSP_1, DRSP__1, drsp.1, DRSP1_depblue
+#
 # Composites will be computed automatically from available items.
 data_file_path <- "path/to/your_data.rds"   # CHANGE THIS
 
 # ---- 2. OUTPUT DIRECTORY ----
 
-# Base directory where all PDF reports and CSV summaries will be saved.
-# A dated subfolder (GAM_Reports_YYYYMMDD/) will be created automatically.
+# Base directory where all reports will be saved.
+# A study-specific, dated subfolder will be created automatically:
+#   <gam_output_base>/<study_name>_GAM_Reports_YYYYMMDD/
 gam_output_base <- "path/to/output/"   # CHANGE THIS
 
-# ---- 3. STUDY / REPORT LABEL ----
+# ---- 3. STUDY IDENTIFICATION ----
 
-# A short label for your study, used in report titles and filenames.
+# study_name: A short identifier/slug for your study (no spaces recommended).
+#   Used in output folder names and filenames.
+#   Examples: "HERA", "TIDES", "MyStudy"
+study_name <- "MyStudy"   # CHANGE THIS
+
+# study_label: A human-readable label for your study.
+#   Used in report titles, cover pages, and annotations.
+#   Examples: "HERA Menstrual Cycle Study", "TIDES Project"
 study_label <- "My Study"   # CHANGE THIS
 
 # ---- 4. TIME VARIABLES ----
@@ -51,6 +65,10 @@ default_cycle_phasing <- "menses"   # CHANGE THIS if your phasing differs
 # Inclusion rule: ALL 4 quarters must have >= 1 observation, AND at most
 # 1 quarter may have < sparse_quarter_cutoff observations.
 sparse_quarter_cutoff <- 2
+
+# Minimum total observations required per outcome to attempt a GAM fit.
+# Outcomes with fewer than this many complete (non-NA) observations are skipped.
+min_obs_for_gam <- 10
 
 # ---- 7. BENCHMARK SETTINGS ----
 
