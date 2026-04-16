@@ -300,10 +300,11 @@ score_drsp_composites <- function(df, compute_total = FALSE) {
       n_negative <- sum(vals < 0)
       if (n_negative > 0) {
         warning(sprintf(
-          "DRSP Scoring: %s has %d negative value(s) (min = %.2f). ",
+          paste0("DRSP Scoring: %s has %d negative value(s) (min = %.2f); ",
+                 "these will produce NaN in log(x+1) transformation — ",
+                 "consider checking data quality."),
           item, n_negative, min(vals)
-        ), "These will produce NaN in log(x+1) transformation. ",
-        "Consider checking data quality.", call. = FALSE)
+        ), call. = FALSE)
       }
     }
   }
