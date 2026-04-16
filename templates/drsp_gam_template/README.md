@@ -35,9 +35,18 @@ Your input dataset (`.rds` or `.csv`) must contain:
 
 | Column | Description |
 |--------|-------------|
-| `id` | Participant identifier |
+| Participant ID | Named `id`, `ID`, `subject_id`, `participant_id`, `subject`, or `participant` (case-sensitive match; auto-renamed to `id`) |
 | DRSP items | Some or all DRSP items 1–21 (any naming convention — see below) |
 | A cyclic time variable | Scaled to [−1, 1], e.g., `cyclic_time_impute` |
+
+**Format robustness:** The template handles common data quirks automatically:
+
+- **Column name whitespace** is trimmed (e.g., `" drsp_1 "` → `drsp_1`)
+- **Factor columns** are safely coerced to numeric via `as.character()` first
+- **Tibbles and data.tables** are converted to plain `data.frame`
+- **Participant IDs** (factor, numeric, or character) are coerced to character
+- **Time variables** stored as factor/character are coerced to numeric
+- **Negative DRSP values** trigger a warning and are clamped to 0 before log-transform
 
 **Flexible column detection:** DRSP columns don't need to follow any exact naming convention. The template will automatically detect and rename any column whose name contains "drsp" (case-insensitive) and an item number (1–21). For example, all of these are recognized as item 1:
 

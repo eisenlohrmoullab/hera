@@ -69,8 +69,53 @@ if (grepl("\\.rds$", data_file_path, ignore.case = TRUE)) {
   stop("Unsupported file format. Please provide an .rds or .csv file.")
 }
 
-stopifnot("id" %in% names(df))
+# Ensure we have a plain data.frame (not tibble/data.table)
+df <- as.data.frame(df)
+
+# Trim whitespace from column names (common in CSV exports)
+names(df) <- trimws(names(df))
+
+# --- Flexible id column detection ---
+# Look for the id column case-insensitively and with common aliases
+id_col <- NULL
+for (candidate in c("id", "ID", "Id", "subject_id", "Subject_ID",
+                     "participant_id", "Participant_ID", "participant",
+                     "subject", "Subject")) {
+  if (candidate %in% names(df)) {
+    id_col <- candidate
+    break
+  }
+}
+if (is.null(id_col)) {
+  stop("No participant ID column found. Expected one of: id, ID, subject_id, participant_id, etc.")
+}
+if (id_col != "id") {
+  message(sprintf("Using '%s' as participant ID column (renamed to 'id')", id_col))
+  names(df)[names(df) == id_col] <- "id"
+}
+
+# Coerce id to character (handles factor, numeric, integer)
+df$id <- as.character(df$id)
+
 message(sprintf("Loaded data: %d rows, %d participants", nrow(df), length(unique(df$id))))
+
+# --- Coerce time variables to numeric ---
+# Time variables may be stored as factor or character in some datasets
+for (tv_name in time_vars_to_run) {
+  if (tv_name %in% names(df)) {
+    if (!is.numeric(df[[tv_name]])) {
+      original_class <- class(df[[tv_name]])[1]
+      if (is.factor(df[[tv_name]])) {
+        df[[tv_name]] <- as.numeric(as.character(df[[tv_name]]))
+      } else {
+        df[[tv_name]] <- suppressWarnings(as.numeric(df[[tv_name]]))
+      }
+      n_na <- sum(is.na(df[[tv_name]]))
+      message(sprintf("Coerced time variable '%s' from %s to numeric (%d NA values)",
+                       tv_name, original_class, n_na))
+    }
+  }
+}
 ```
 
 # Step 4: Score DRSP Composites & Build Outcome Map
@@ -201,10 +246,13 @@ if (length(page_definitions) > 1) {
 }
 
 # --- Pre-calculate log-transformations ---
+# Clamp values to >= 0 before log(x+1) to prevent NaN from negative values
 for (var in names(outcomes)) {
   if (var %in% names(df)) {
     log_var_name <- paste0(var, "_Log")
-    df[[log_var_name]] <- log(df[[var]] + 1)
+    vals <- df[[var]]
+    vals <- ifelse(is.finite(vals) & vals < 0, 0, vals)
+    df[[log_var_name]] <- log(vals + 1)
   }
 }
 ```

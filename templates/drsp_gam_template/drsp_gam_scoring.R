@@ -156,6 +156,9 @@ physical_symptom_items <- c("drsp_12", "drsp_13", "drsp_14", "drsp_15",
 # =============================================================================
 detect_and_rename_drsp_columns <- function(df) {
 
+  # Trim whitespace from column names (defensive; may already be trimmed)
+  names(df) <- trimws(names(df))
+
   col_names <- names(df)
   columns_renamed <- character(0)
   columns_already_canonical <- character(0)
@@ -288,6 +291,21 @@ score_drsp_composites <- function(df, compute_total = FALSE) {
         as.numeric(item_values)
       }
     )
+  }
+
+  # Warn about values that would break log(x+1) transformation downstream
+  for (item in items_found) {
+    vals <- df[[item]][is.finite(df[[item]])]
+    if (length(vals) > 0) {
+      n_negative <- sum(vals < 0)
+      if (n_negative > 0) {
+        warning(sprintf(
+          "DRSP Scoring: %s has %d negative value(s) (min = %.2f). ",
+          item, n_negative, min(vals)
+        ), "These will produce NaN in log(x+1) transformation. ",
+        "Consider checking data quality.", call. = FALSE)
+      }
+    }
   }
 
   # Determine which composites to compute
