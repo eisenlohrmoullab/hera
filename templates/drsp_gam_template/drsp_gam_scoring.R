@@ -1,10 +1,16 @@
 # =============================================================================
 # DRSP GAM Template — Composite Scoring
 # =============================================================================
-# Automatically detects which DRSP items (drsp_1 ... drsp_21) are present in
-# the dataset and computes composite scores for any composite whose component
-# items are all available. Also handles the case where only a subset of items
-# exists — composites requiring missing items are skipped with a message.
+# Automatically detects which DRSP items are present in the dataset using
+# flexible column-name matching. Any column containing "drsp" or "DRSP" plus
+# a number 1-21 is recognized and renamed to the canonical form drsp_N.
+#
+# Supported formats (all map to drsp_1):
+#   drsp_1, drsp1, DRSP1, DRSP_1, DRSP__1, drsp.1, DRSP1_depblue, etc.
+#
+# After renaming, composite scores are computed for any composite whose
+# component items are all available. Composites requiring missing items
+# are skipped with a message.
 #
 # Usage:
 #   source("drsp_gam_scoring.R")
@@ -12,6 +18,7 @@
 #   df <- result$data
 #   available_composites <- result$composites_created
 #   available_items      <- result$items_found
+#   rename_log           <- result$columns_renamed
 # =============================================================================
 
 # --- Master DRSP item labels (1-6 Likert scale) ---
@@ -120,6 +127,110 @@ drsp_composite_defs <- list(
 # --- Physical symptom items (for domain classification) ---
 physical_symptom_items <- c("drsp_12", "drsp_13", "drsp_14", "drsp_15",
                             "drsp_18", "drsp_19", "drsp_20", "drsp_21")
+
+# =============================================================================
+# detect_and_rename_drsp_columns()
+# =============================================================================
+# Scans all column names in a data.frame for any that look like DRSP items
+# (contain "drsp" or "DRSP" plus a number 1-21) and renames them to the
+# canonical format drsp_N.
+#
+# The regex is case-insensitive and tolerant of any separator (or none)
+# between "drsp" and the item number.  Examples of recognized patterns:
+#   drsp_1, drsp1, DRSP1, DRSP_1, DRSP__1, drsp.1,
+#   DRSP1_depblue, drsp_1_raw, drsp.01, DRSP_01
+#
+# When a column's suffix (everything after the number) is non-empty, the
+# function assumes the first matching column is the item of interest.
+# If multiple columns map to the same drsp_N, only the first is kept and
+# the user is warned.
+#
+# Arguments:
+#   df — data.frame whose columns may contain DRSP items in any naming format
+#
+# Returns a list:
+#   $data            — the data.frame with DRSP columns renamed to drsp_N
+#   $columns_renamed — named character vector (original_name → canonical_name)
+#                      for columns that were renamed (excludes already-canonical)
+#   $columns_already_canonical — character vector of columns that were already drsp_N
+# =============================================================================
+detect_and_rename_drsp_columns <- function(df) {
+
+  col_names <- names(df)
+  columns_renamed <- character(0)
+  columns_already_canonical <- character(0)
+
+  # Pattern: "drsp" (case-insensitive), then any non-digit separators,
+  # then a number (1-21), optionally followed by a non-digit or end-of-string
+  # so that "drsp_2" doesn't match as item 2 in "drsp_21".
+  #
+  # We capture the item number and use a word-boundary-like approach:
+  # the number must NOT be followed by another digit.
+  drsp_regex <- "(?i)^.*drsp[^0-9]*(\\d+)(?!\\d).*$"
+
+  # Track which canonical names have been claimed (to handle duplicates)
+  claimed <- list()   # canonical_name → original_col_name
+
+  for (col in col_names) {
+    if (!grepl(drsp_regex, col, perl = TRUE)) next
+
+    # Extract the item number
+    item_num <- as.integer(sub(drsp_regex, "\\1", col, perl = TRUE))
+
+    # Only recognize items 1-21
+    if (is.na(item_num) || item_num < 1 || item_num > 21) next
+
+    canonical <- paste0("drsp_", item_num)
+
+    # Check if this column IS already canonical
+    if (col == canonical) {
+      columns_already_canonical <- c(columns_already_canonical, col)
+      claimed[[canonical]] <- col
+      next
+    }
+
+    # Check for duplicates: another column already maps to the same canonical
+    if (!is.null(claimed[[canonical]])) {
+      existing <- claimed[[canonical]]
+      warning(sprintf(
+        "DRSP Detection: Multiple columns map to %s: '%s' (kept) and '%s' (skipped). ",
+        canonical, existing, col
+      ), call. = FALSE)
+      next
+    }
+
+    # Also check if the canonical name already exists as a different column
+    if (canonical %in% col_names && canonical != col) {
+      # The canonical column already exists natively — skip this fuzzy match
+      warning(sprintf(
+        "DRSP Detection: Column '%s' looks like %s, but '%s' already exists natively. Skipping rename.",
+        col, canonical, canonical
+      ), call. = FALSE)
+      next
+    }
+
+    # Rename: copy data to canonical name and drop the original
+    names(df)[names(df) == col] <- canonical
+    columns_renamed[col] <- canonical
+    claimed[[canonical]] <- col
+
+    message(sprintf("DRSP Detection: Renamed '%s' -> '%s'", col, canonical))
+  }
+
+  n_found <- length(columns_renamed) + length(columns_already_canonical)
+  if (n_found > 0) {
+    message(sprintf(
+      "DRSP Detection: Found %d DRSP item column(s) (%d renamed, %d already canonical)",
+      n_found, length(columns_renamed), length(columns_already_canonical)
+    ))
+  }
+
+  list(
+    data                      = df,
+    columns_renamed           = columns_renamed,
+    columns_already_canonical = columns_already_canonical
+  )
+}
 
 # =============================================================================
 # score_drsp_composites()
