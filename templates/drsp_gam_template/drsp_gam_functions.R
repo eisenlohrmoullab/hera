@@ -178,7 +178,7 @@ fit_outcome <- function(dat, outcome_var, tv, outcomes_map,
   if (!qcov$passes) {
     message(glue::glue(
       "Skipping GAM for {outcome_var}: quarter coverage requirement not met ",
-      "(need 4/4 quarters with \u22651 obs & \u22653/4 with \u2265{sparse_cutoff} obs; ",
+      "(need 4/4 quarters with \u22651 obs & at most 1 quarter with <{sparse_cutoff} obs; ",
       "empty={qcov$n_empty}, sparse={qcov$n_sparse})"
     ))
     return(NULL)

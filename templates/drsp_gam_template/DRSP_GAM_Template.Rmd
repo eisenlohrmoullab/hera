@@ -127,7 +127,8 @@ DRSP_VAR_PATTERN <- "^drsp_\\d+$"
 all_raw_drsp <- names(outcomes)[grepl(DRSP_VAR_PATTERN, names(outcomes))]
 
 # --- Border key caption ---
-BORDER_KEY_CAPTION <- "Border key:  \u25A0 Red = GAM range meets person-specific 30% change benchmark  |  No border = below benchmark"
+BORDER_KEY_CAPTION <- paste0("Border key:  \u25A0 Red = GAM range meets person-specific ",
+  sprintf("%.0f%%", cpass_change_pct * 100), " change benchmark  |  No border = below benchmark")
 
 # --- Max possible counts per category ---
 n_physical_max <- length(intersect(all_raw_drsp, physical_symptoms))
@@ -334,9 +335,10 @@ for (current_id in ids_to_run) {
         " \u25B6  Annotation text:  Stars (*) indicate significance (p < .05); Range = max \u2212 min\n",
         "                     of predicted values; EDF = effective degrees of freedom\n\n",
         "PLOT BORDER COLORS (individual DRSP item plots)\n\n",
-        " \u25B6  Red border:     GAM range meets this person\u2019s C-PASS-equivalent 30% change\n",
+        " \u25B6  Red border:     GAM range meets this person's C-PASS-equivalent ",
+        sprintf("%.0f%%", cpass_change_pct * 100), " change\n",
         "                     benchmark (", sprintf("%.2f", id_benchmark), " = scale range ",
-        sprintf("%.0f", id_scale_range), " \u00d7 30%)\n\n",
+        sprintf("%.0f", id_scale_range), " x ", sprintf("%.0f%%", cpass_change_pct * 100), ")\n\n",
         " \u25B6  No border:      GAM range below person-specific benchmark"
       ),
       gp = grid::gpar(fontsize = 9.5, lineheight = 1.1, fontfamily = "mono"),
