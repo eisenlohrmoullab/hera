@@ -150,8 +150,10 @@ build_pred_grids <- function(time_vars) {
 # =============================================================================
 quarter_bin_counts <- function(vals) {
   vals <- vals[!is.na(vals)]
+  breaks <- seq(-1, 1, length.out = 5)
+  breaks[length(breaks)] <- breaks[length(breaks)] + 1e-8
   qbin <- cut(vals,
-              breaks = seq(-1, 1, length.out = 5),
+              breaks = breaks,
               labels = paste0("Q", 1:4),
               include.lowest = TRUE, right = FALSE)
   counts <- as.integer(table(factor(qbin, levels = paste0("Q", 1:4))))
@@ -191,10 +193,6 @@ expand_ymax <- function(y_max_current, max_observed, absolute_max = 6) {
 # Build outcome plot settings
 # =============================================================================
 build_outcome_plot_settings <- function(outcomes) {
-  tibble::tribble(
-    ~variable, ~y_axis_mode, ~y_min, ~y_max, ~ref_line
-  ) -> base_settings
-
   rows <- lapply(names(outcomes), function(v) {
     is_composite <- !grepl("^drsp_\\d+$", v)
     tibble::tibble(

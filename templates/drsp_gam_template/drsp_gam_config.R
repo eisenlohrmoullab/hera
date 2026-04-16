@@ -25,13 +25,13 @@ data_file_path <- "path/to/your_data.rds"   # CHANGE THIS
 
 # Base directory where all reports will be saved.
 # A study-specific, dated subfolder will be created automatically:
-#   <gam_output_base>/<study_name>_GAM_Reports_YYYYMMDD/
+#   <gam_output_base>/<study_name>_GAM_<YYYYMMDD>/
 gam_output_base <- "path/to/output/"   # CHANGE THIS
 
 # ---- 3. STUDY IDENTIFICATION ----
 
 # study_name: A short identifier/slug for your study (no spaces recommended).
-#   Used in output folder names and filenames.
+#   This slug is used in output folder names and filenames.
 #   Examples: "HERA", "TIDES", "MyStudy"
 study_name <- "MyStudy"   # CHANGE THIS
 

@@ -81,6 +81,10 @@ output/
     │   ├── HERA_ID_P001.pdf
     │   ├── HERA_ID_P002.pdf
     │   └── ...
+    ├── per_outcome_reports/               # Per-outcome exploration PDFs
+    │   ├── HERA_outcome_drsp_1.pdf
+    │   ├── HERA_outcome_drsp_NA.pdf
+    │   └── ...
     ├── HERA_overall_summary.pdf           # Sample-level summary
     └── HERA_gam_summary.csv              # Per-ID × outcome stats
 ```

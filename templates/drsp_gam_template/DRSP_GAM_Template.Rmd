@@ -13,7 +13,8 @@ output: html_document
 > 1. **Setup & Preparation** — load data, auto-detect & rename DRSP items, compute composites, define outcomes.
 > 2. **Automated Reporting** — one landscape PDF per participant with compact cover and paged plots.
 > 3. **Overall Summary** — sample-level summary PDF with key metrics and visualizations.
-> 4. **CSV Audit** — per-ID × outcome × time-var stats for triage/QC.
+> 4. **Per-Outcome Reports** — one PDF per outcome showing all participants' GAM fits.
+> 5. **CSV Audit** — per-ID × outcome × time-var stats for triage/QC.
 
 ---
 
@@ -217,7 +218,7 @@ if (!generate_per_id_reports) {
 report_folder <- file.path(output_folder, "per_id_reports")
 dir.create(report_folder, showWarnings = FALSE, recursive = TRUE)
 
-ids_to_run    <- unique(df$id)
+ids_to_run    <- unique(df$id[!is.na(df$id)])
 all_ids_signif <- list()
 id_global_ymax_map <- c()
 id_benchmark_map   <- c()
@@ -707,7 +708,11 @@ for (current_id in ids_to_run) {
         is_drsp_page <- grepl("^DRSP_Page_", page_name)
         border_key_caption <- if (is_drsp_page) BORDER_KEY_CAPTION else NULL
 
-        final_page <- patchwork::wrap_plots(plotlist = plot_list, ncol = plots_per_col) +
+        final_page <- patchwork::wrap_plots(
+          plotlist = plot_list,
+          ncol = plots_per_col,
+          nrow = plots_per_row
+        ) +
           patchwork::plot_annotation(
             title = page_title,
             caption = border_key_caption,
@@ -1126,6 +1131,203 @@ grDevices::dev.off()
 message(sprintf("\u2705 Overall summary saved: %s", overall_pdf))
 
 } # end if generate_overall_summary
+```
+
+# Step 8: Per-Outcome Exploration Reports
+```{r per-outcome-reports, results='hide', message=FALSE}
+if (!generate_per_outcome_pdfs) {
+  message("Skipping per-outcome reports (generate_per_outcome_pdfs = FALSE)")
+} else if (!exists("all_ids_signif") || length(all_ids_signif) == 0) {
+  message("No per-ID results available; skipping per-outcome reports.")
+} else {
+
+outcome_folder <- file.path(output_folder, "per_outcome_reports")
+dir.create(outcome_folder, showWarnings = FALSE, recursive = TRUE)
+message(sprintf("Generating per-outcome reports in: %s", outcome_folder))
+
+gam_outcome_df <- dplyr::bind_rows(all_ids_signif)
+gam_outcome_df$id <- as.character(gam_outcome_df$id)
+
+# Attach person-specific benchmark
+bm_df <- data.frame(
+  id = names(id_benchmark_map),
+  id_benchmark = unname(id_benchmark_map),
+  stringsAsFactors = FALSE
+)
+gam_outcome_df <- dplyr::left_join(gam_outcome_df, bm_df, by = "id")
+
+# Per-outcome: one PDF per outcome variable (across all IDs and time variables)
+for (target_var in names(outcomes)) {
+  outcome_label <- outcomes[[target_var]]
+  message(sprintf("  Per-outcome report: %s (%s)", target_var, outcome_label))
+
+  # Filter to this outcome
+  oc_data <- dplyr::filter(gam_outcome_df, variable == target_var)
+  if (nrow(oc_data) == 0) {
+    message(sprintf("    No GAM results for %s; skipping.", target_var))
+    next
+  }
+
+  # Summary statistics across all IDs for this outcome
+  n_total_oc  <- length(unique(oc_data$id))
+  n_sig_oc    <- sum(oc_data$p.value < 0.05 & is.finite(oc_data$p.value), na.rm = TRUE)
+  n_bench_oc  <- sum(!is.na(oc_data$id_benchmark) &
+                       is.finite(oc_data$range) &
+                       oc_data$range >= oc_data$id_benchmark, na.rm = TRUE)
+  med_range   <- median(oc_data$range[is.finite(oc_data$range)], na.rm = TRUE)
+
+  # Open PDF
+  pdf_path <- file.path(outcome_folder,
+                         paste0(study_slug, "_outcome_", target_var, ".pdf"))
+  grDevices::pdf(pdf_path, width = pdf_width, height = pdf_height)
+
+  # ---- Page 1: Outcome summary ----
+  grid::grid.newpage()
+  grid::pushViewport(grid::viewport(layout = grid::grid.layout(
+    nrow = 6, ncol = 1,
+    heights = grid::unit(c(0.8, 0.6, 0.5, 3, 3, 0.5), "null")
+  )))
+
+  # Title
+  grid::pushViewport(grid::viewport(layout.pos.row = 1))
+  grid::grid.text(
+    paste0(study_label, " \u2014 Per-Outcome Report: ", outcome_label),
+    gp = grid::gpar(fontsize = 18, fontface = "bold")
+  )
+  grid::popViewport()
+
+  # Subtitle with variable name
+  grid::pushViewport(grid::viewport(layout.pos.row = 2))
+  grid::grid.text(
+    paste0("Variable: ", target_var, "  |  Date: ", format(Sys.Date(), "%B %d, %Y")),
+    gp = grid::gpar(fontsize = 11, col = "grey30")
+  )
+  grid::popViewport()
+
+  # Key metrics text
+  grid::pushViewport(grid::viewport(layout.pos.row = 3))
+  metrics_text <- sprintf(
+    "N participants = %d  |  N significant (p < .05) = %d (%.0f%%)  |  N meets benchmark = %d (%.0f%%)  |  Median range = %.2f",
+    n_total_oc,
+    n_sig_oc, 100 * n_sig_oc / max(n_total_oc, 1),
+    n_bench_oc, 100 * n_bench_oc / max(n_total_oc, 1),
+    if (is.finite(med_range)) med_range else 0
+  )
+  grid::grid.text(metrics_text, gp = grid::gpar(fontsize = 10))
+  grid::popViewport()
+
+  # Range distribution histogram
+  if (any(is.finite(oc_data$range))) {
+    grid::pushViewport(grid::viewport(layout.pos.row = 4))
+    range_hist <- ggplot2::ggplot(
+      oc_data[is.finite(oc_data$range), ],
+      ggplot2::aes(x = range)
+    ) +
+    ggplot2::geom_histogram(bins = 20, fill = domain_colors$affective, alpha = 0.7) +
+    ggplot2::labs(
+      title = "Distribution of GAM Ranges",
+      x = "GAM Range (max - min predicted)", y = "Count"
+    ) +
+    ggplot2::theme_minimal(base_size = 10)
+    print(range_hist, vp = grid::viewport(layout.pos.row = 4))
+    grid::popViewport()
+  }
+
+  # Composite definition note (if applicable)
+  if (target_var %in% names(composite_specs)) {
+    comp_spec <- composite_specs[[target_var]]
+    grid::pushViewport(grid::viewport(layout.pos.row = 6))
+    grid::grid.text(
+      paste0("Components: ", paste(comp_spec$components_display, collapse = ", ")),
+      gp = grid::gpar(fontsize = 8, col = "grey40"),
+      just = "left", x = 0.03
+    )
+    grid::popViewport()
+  }
+
+  grid::popViewport()
+
+  # ---- Pages 2+: Individual GAM plots for each time variable ----
+  for (tv in time_vars) {
+    tv_data <- dplyr::filter(oc_data, time_var == tv)
+    if (nrow(tv_data) == 0) next
+
+    # Sort IDs by descending range
+    ids_sorted <- tv_data %>%
+      dplyr::arrange(dplyr::desc(range)) %>%
+      dplyr::pull(id) %>%
+      unique()
+
+    # Fit GAMs for all IDs and collect plots
+    plot_list_oc <- list()
+    for (qid in ids_sorted) {
+      dat_id <- subset(df, as.character(id) == qid)
+      if (nrow(dat_id) == 0) next
+
+      id_bm <- id_benchmark_map[as.character(qid)]
+      if (is.null(id_bm)) id_bm <- NA_real_
+
+      res <- tryCatch(
+        fit_outcome(dat_id, target_var, tv, outcomes,
+                     pred_grid_list, sparse_cutoff = sparse_quarter_cutoff,
+                     min_obs = min_obs_for_gam),
+        error = function(e) NULL
+      )
+      if (is.null(res)) next
+
+      plot_df <- res$pred
+      p <- create_annotated_plot(
+        plot_df, tv, axis_meta, outcome_plot_settings,
+        drsp_color_map, raw_data = dat_id, benchmark = id_bm
+      )
+      if (!is.null(p)) {
+        p <- p + ggplot2::labs(subtitle = paste("ID:", qid))
+        plot_list_oc[[length(plot_list_oc) + 1]] <- p
+      }
+    }
+
+    if (length(plot_list_oc) == 0) next
+
+    # Paginate: plots_per_row × plots_per_col per page
+    max_per_page <- plots_per_row * plots_per_col
+    n_pages <- ceiling(length(plot_list_oc) / max_per_page)
+
+    for (pg_i in seq_len(n_pages)) {
+      start_idx <- (pg_i - 1) * max_per_page + 1
+      end_idx   <- min(pg_i * max_per_page, length(plot_list_oc))
+      page_plots <- plot_list_oc[start_idx:end_idx]
+
+      # Pad with spacers
+      if (length(page_plots) < max_per_page) {
+        page_plots <- c(page_plots,
+                         rep(list(patchwork::plot_spacer()),
+                             max_per_page - length(page_plots)))
+      }
+
+      pg_title <- sprintf("%s \u2014 %s (TV: %s, Page %d/%d)",
+                           outcome_label, target_var, tv, pg_i, n_pages)
+      final_pg <- patchwork::wrap_plots(
+        plotlist = page_plots,
+        ncol = plots_per_col,
+        nrow = plots_per_row
+      ) +
+      patchwork::plot_annotation(
+        title = pg_title,
+        theme = ggplot2::theme(
+          plot.title = ggplot2::element_text(size = 12, face = "bold")
+        )
+      )
+      print(final_pg)
+    }
+  }
+
+  grDevices::dev.off()
+  message(sprintf("    \u2705 Saved: %s", pdf_path))
+}
+
+message(sprintf("\u2705 Per-outcome reports complete: %s", outcome_folder))
+
+} # end if generate_per_outcome_pdfs
 ```
 
 # Done

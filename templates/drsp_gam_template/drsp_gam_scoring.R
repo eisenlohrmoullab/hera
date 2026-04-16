@@ -210,7 +210,7 @@ detect_and_rename_drsp_columns <- function(df) {
       next
     }
 
-    # Rename: copy data to canonical name and drop the original
+    # Rename the existing column in place to its canonical name
     names(df)[names(df) == col] <- canonical
     columns_renamed[col] <- canonical
     claimed[[canonical]] <- col
@@ -278,9 +278,16 @@ score_drsp_composites <- function(df, compute_total = FALSE) {
                     length(items_missing), paste(items_missing, collapse = ", ")))
   }
 
-  # Coerce found items to numeric
+  # Coerce found items to numeric (handle factors safely via as.character first)
   for (item in items_found) {
-    df[[item]] <- suppressWarnings(as.numeric(df[[item]]))
+    item_values <- df[[item]]
+    df[[item]] <- suppressWarnings(
+      if (is.factor(item_values)) {
+        as.numeric(as.character(item_values))
+      } else {
+        as.numeric(item_values)
+      }
+    )
   }
 
   # Determine which composites to compute
@@ -306,8 +313,9 @@ score_drsp_composites <- function(df, compute_total = FALSE) {
       next
     }
 
-    # Compute rowMeans with na.rm = TRUE
+    # Compute rowMeans with na.rm = TRUE (convert NaN to NA for all-missing rows)
     df[[comp_name]] <- rowMeans(df[, needed_items, drop = FALSE], na.rm = TRUE)
+    df[[comp_name]][is.nan(df[[comp_name]])] <- NA_real_
     composites_created <- c(composites_created, comp_name)
     composite_specs[[comp_name]] <- spec
     message(sprintf("DRSP Scoring: Created %s (%s) from %d items",
